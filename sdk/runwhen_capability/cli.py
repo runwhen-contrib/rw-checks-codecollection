@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -20,8 +21,23 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve_p = sub.add_parser("serve", help="long-poll the runner and execute requests")
-    serve_p.add_argument("--relay", required=True, help="the runner's relay base URL")
-    serve_p.add_argument("--pool", required=True, dest="pool_id", help="this executor's pool id")
+    # --relay/--pool are optional on the CLI and default to RELAY_URL/POOL_ID,
+    # mirroring --token-file/EXECUTOR_TOKEN_FILE. The runner launches this image
+    # with no args at all -- it injects these as env vars, because a runner that
+    # had to pass capability CLI flags would be encoding knowledge of the
+    # capability, which the executor contract forbids. The image's own CMD
+    # supplies only --capability-dir.
+    serve_p.add_argument(
+        "--relay",
+        default=None,
+        help="the runner's relay base URL; default: the RELAY_URL env var",
+    )
+    serve_p.add_argument(
+        "--pool",
+        default=None,
+        dest="pool_id",
+        help="this executor's pool id; default: the POOL_ID env var",
+    )
     serve_p.add_argument("--workdir", default="/work", help="scope directory root (default: /work)")
     serve_p.add_argument(
         "--capability-dir",
@@ -74,9 +90,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         from .serve import serve
 
+        relay = args.relay or os.environ.get("RELAY_URL")
+        pool_id = args.pool_id or os.environ.get("POOL_ID")
+        missing = [
+            name
+            for name, value in (("--relay/RELAY_URL", relay), ("--pool/POOL_ID", pool_id))
+            if not value
+        ]
+        if missing:
+            parser.error(
+                "serve needs "
+                + " and ".join(missing)
+                + ". The runner injects RELAY_URL and POOL_ID as env vars; pass the "
+                "flags only when running the image by hand."
+            )
+
         serve(
-            relay=args.relay,
-            pool_id=args.pool_id,
+            relay=relay,
+            pool_id=pool_id,
             workdir=Path(args.workdir),
             capability_dir=Path(args.capability_dir) if args.capability_dir else None,
             token_file=Path(args.token_file) if args.token_file else None,

@@ -1,0 +1,74 @@
+{
+  "$defs": {
+    "Finding": {
+      "description": "One static-check finding. `fingerprint` is None until\nContext.findings.fingerprint() has run over it -- see CONTRACT.md's\nfingerprint formula, ported byte-identical in findings.py.",
+      "properties": {
+        "fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fingerprint"
+        },
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "line": {
+          "default": 0,
+          "title": "Line",
+          "type": "integer"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "note"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "title": "Context",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability",
+        "operation",
+        "rule",
+        "path",
+        "severity"
+      ],
+      "title": "Finding",
+      "type": "object"
+    }
+  },
+  "items": {
+    "$ref": "#/$defs/Finding"
+  },
+  "type": "array"
+}

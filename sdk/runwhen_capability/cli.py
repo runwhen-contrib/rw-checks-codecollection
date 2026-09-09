@@ -29,6 +29,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="capability directory to serve; default: auto-discover the single "
         "capabilities/*/manifest.yaml the image ships",
     )
+    serve_p.add_argument(
+        "--token-file",
+        default=None,
+        help="path to the executor bearer token; default: the EXECUTOR_TOKEN_FILE "
+        "env var, else /var/run/executor/token",
+    )
 
     run_p = sub.add_parser("run", help="run a request against a capability directory, locally")
     run_p.add_argument(
@@ -73,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             pool_id=args.pool_id,
             workdir=Path(args.workdir),
             capability_dir=Path(args.capability_dir) if args.capability_dir else None,
+            token_file=Path(args.token_file) if args.token_file else None,
         )
         return 0
 

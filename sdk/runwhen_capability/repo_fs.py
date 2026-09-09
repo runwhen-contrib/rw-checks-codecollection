@@ -55,6 +55,24 @@ class BinaryFileError(ValueError):
     """`read` was asked to read a file that sniffs as binary."""
 
 
+class TreeNotMaterializedError(RuntimeError):
+    """`tree` is not a usable checkout -- it does not exist, is not a
+    directory, or is an empty directory. Raised by read/grep/ls before any
+    of their real work, so an infrastructure failure (a reaped scope, a
+    fresh pod, a checkout that never ran) can never be silently reported
+    as a genuine zero-match/zero-entry result -- see the module docstring
+    for why that distinction matters."""
+
+
+def _check_tree_materialized(tree: Path) -> None:
+    if not tree.exists():
+        raise TreeNotMaterializedError(f"tree not materialized: {tree} does not exist")
+    if not tree.is_dir():
+        raise TreeNotMaterializedError(f"tree not materialized: {tree} is not a directory")
+    if not any(tree.iterdir()):
+        raise TreeNotMaterializedError(f"tree not materialized: {tree} is empty")
+
+
 def _confined(tree: Path, path: str) -> Path:
     rel = normalize_path(path or "")
     resolved = safe_path(tree, rel)
@@ -78,6 +96,7 @@ def read_lines(
     out-of-range value defaults to the whole file) from `path`, stopping
     early -- and reporting `truncated` -- the instant the joined content
     would push the response past READ_BUDGET."""
+    _check_tree_materialized(tree)
     full = _confined(tree, path)
     if not full.is_file():
         raise FileNotFoundError(f"file not found: {path!r}")
@@ -223,6 +242,7 @@ def grep_tree(
     `pattern` is a regular expression (Python's `re`, not Go's RE2 -- most
     patterns behave identically, but this is not a byte-for-byte port of
     the regex *engine*, only of the walk/glob/cap behaviour around it)."""
+    _check_tree_materialized(Path(tree))
     try:
         compiled = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
     except re.error as exc:
@@ -284,6 +304,7 @@ def ls_tree(tree: Path, path: str | None = None, depth: int | None = None) -> Ls
     `path` (repo root when omitted) up to `depth` levels deep (default 1:
     immediate children only), sorted lexically per directory, skipping
     ".git" entirely and capping the total at MAX_LS_ENTRIES."""
+    _check_tree_materialized(Path(tree))
     root = _confined(tree, path or "")
     if not root.is_dir():
         raise NotADirectoryError(f"not a directory: {path!r}")

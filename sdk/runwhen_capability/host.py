@@ -115,17 +115,27 @@ def _save_setup_cache(
 def _cached_setup_outputs(
     cache: dict[str, Any] | None, task: str, inputs: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """None unless `cache` was saved for this exact (task, inputs) --
-    validated, not just trusted, so a cache for a different (repoUrl, sha)
-    is a miss rather than plausible content from the wrong commit."""
+    """None unless `cache` was saved for this exact (task, inputs) AND
+    every path-typed output still exists on disk -- validated, not just
+    trusted, so a cache for a different (repoUrl, sha) is a miss rather
+    than plausible content from the wrong commit, and so is a cache whose
+    materialised tree is gone (pod replaced, scope reaped, fresh volume).
+    Every key in `pathKeys` is checked, not just one named "tree" -- a
+    `cached` result pointing at a vanished path is exactly the state that
+    let repo_fs report a false "no matches" in production."""
     if cache is None:
         return None
     if cache.get("task") != task or cache.get("inputs") != _to_jsonable(inputs):
         return None
     outputs = dict(cache.get("outputs", {}))
-    for key in cache.get("pathKeys", []):
+    path_keys = cache.get("pathKeys", [])
+    for key in path_keys:
         if key in outputs:
             outputs[key] = Path(outputs[key])
+    for key in path_keys:
+        value = outputs.get(key)
+        if isinstance(value, Path) and not value.exists():
+            return None
     return outputs
 
 

@@ -4,6 +4,7 @@ kwarg mapping, and the "one task raising must not lose the others" guarantee.
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from runwhen_capability.host import run_request
@@ -208,6 +209,27 @@ def test_cache_miss_when_the_request_names_a_different_repo_or_sha(tmp_path):
     result = run_request(capability, other, credentials={}, scope_dir=tmp_path)
 
     assert result.setup.status == "not_materialized"
+
+
+def test_cache_miss_when_the_cached_tree_has_been_deleted(tmp_path):
+    """PROD-1416: a cache recording outputs.tree as an absolute path that
+    no longer exists (pod replaced, scope reaped, fresh volume) must be
+    treated as a miss, not served as 'cached' -- a `cached` result whose
+    tree is gone is exactly the state that let a review agent's grep_repo
+    report a false 'no matches' and mislead the agent into claiming code
+    didn't exist. With no credentials on the sync path, the retry must
+    fail not_materialized rather than lie about a stale cache being good."""
+    capability = load_capability(FIXTURES / "worktree_sync")
+    request = RequestEnvelope.model_validate(_WORKTREE_REQUEST)
+
+    leased = run_request(capability, request, credentials={"repo": "tok"}, scope_dir=tmp_path)
+    assert leased.setup.status == "ok"
+
+    shutil.rmtree(tmp_path / "tree")
+
+    synced = run_request(capability, request, credentials={}, scope_dir=tmp_path)
+
+    assert synced.setup.status == "not_materialized"
 
 
 def test_stateless_leased_requests_are_unaffected_by_setup_caching(tmp_path):

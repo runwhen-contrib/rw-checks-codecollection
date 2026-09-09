@@ -12,6 +12,7 @@ import pytest
 from runwhen_capability.repo_fs import (
     BinaryFileError,
     PathEscapesTreeError,
+    TreeNotMaterializedError,
     grep_tree,
     ls_tree,
     read_lines,
@@ -57,7 +58,9 @@ def test_read_line_range(tmp_path):
 
 
 def test_read_missing_file_raises(tmp_path):
-    tree = make_tree(tmp_path, {})
+    # A real (non-empty) tree missing the requested file -- distinct from
+    # the tree itself being empty/not materialized, covered below.
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
 
     with pytest.raises(FileNotFoundError):
         read_lines(tree, "nope.py")
@@ -92,6 +95,26 @@ def test_read_rejects_symlink_escaping_the_tree(tmp_path):
 
     with pytest.raises(PathEscapesTreeError):
         read_lines(tree, "link.py")
+
+
+# --- tree not materialized (PROD-1416: a missing/empty tree must never be
+# indistinguishable from a genuine zero-match/zero-entry result) -----------
+
+
+def test_read_missing_tree_raises_typed_error(tmp_path):
+    tree = tmp_path / "never-checked-out"
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        read_lines(tree, "a.py")
+    assert str(tree) in str(exc_info.value)
+
+
+def test_read_empty_tree_raises_typed_error(tmp_path):
+    tree = make_tree(tmp_path, {})
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        read_lines(tree, "a.py")
+    assert str(tree) in str(exc_info.value)
 
 
 # --- grep ------------------------------------------------------------------
@@ -134,12 +157,32 @@ def test_grep_glob_narrows_the_file_set(tmp_path):
 
 
 def test_grep_zero_matches_is_an_empty_list_not_none(tmp_path):
+    """PIN: this is the distinction the whole tree-not-materialized fix is
+    about -- a real, non-empty tree searched for a pattern that isn't
+    there returns matches: [], no error. Only a missing/empty *tree*
+    (below) is an error."""
     tree = make_tree(tmp_path, {"a.py": "nothing here\n"})
 
     got = grep_tree(tree, "no-such-pattern-anywhere")
 
     assert got.matches == []
     assert isinstance(got.matches, list)
+
+
+def test_grep_missing_tree_raises_typed_error(tmp_path):
+    tree = tmp_path / "never-checked-out"
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        grep_tree(tree, "anything")
+    assert str(tree) in str(exc_info.value)
+
+
+def test_grep_empty_tree_raises_typed_error(tmp_path):
+    tree = make_tree(tmp_path, {})
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        grep_tree(tree, "anything")
+    assert str(tree) in str(exc_info.value)
 
 
 def test_grep_max_matches_caps_and_reports_truncated(tmp_path):
@@ -229,13 +272,33 @@ def test_ls_depth_recurses(tmp_path):
     assert "sub/deeper/c.py" in paths
 
 
-def test_ls_empty_directory_is_an_empty_list_not_none(tmp_path):
-    tree = make_tree(tmp_path, {})
+def test_ls_empty_subdirectory_within_a_real_tree_is_an_empty_list_not_none(tmp_path):
+    """A legitimately empty subdirectory *inside* a real, materialised
+    tree is a valid zero-entry result -- distinct from the tree itself
+    being empty (below), which means the checkout never happened."""
+    tree = make_tree(tmp_path, {"a.py": "x"})
+    (tree / "empty").mkdir()
 
-    got = ls_tree(tree)
+    got = ls_tree(tree, path="empty")
 
     assert got.entries == []
     assert isinstance(got.entries, list)
+
+
+def test_ls_missing_tree_raises_typed_error(tmp_path):
+    tree = tmp_path / "never-checked-out"
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        ls_tree(tree)
+    assert str(tree) in str(exc_info.value)
+
+
+def test_ls_empty_tree_raises_typed_error(tmp_path):
+    tree = make_tree(tmp_path, {})
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        ls_tree(tree)
+    assert str(tree) in str(exc_info.value)
 
 
 def test_ls_skips_dot_git(tmp_path):

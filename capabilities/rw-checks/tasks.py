@@ -11,6 +11,17 @@ tool at tests/fixtures/sample-repo's own layout (a hardcoded "src"/"docs"/
 "policy" subdirectory), the task below points at "." or discovers files
 instead -- a real target repo does not share that fixture's layout -- and
 says so in a comment.
+
+Four tasks (`pylint`, `checkov`, `sqlfluff`, `vale`) call a guards.py
+function before running their tool at all: each of those tools' OWN config
+can make the tool itself execute code or fetch and run untrusted content --
+see guards.py's module docstring for the confirmed pylint exploit. A refusal
+skips the tool entirely and surfaces as a single `rw-checks/unsafe-config`
+finding via `_unsafe_config_finding` below, never a silent empty result. The
+7 SARIF tasks pass a per-tool `severity` callback (capabilities/rw-checks/
+severity.py) to ctx.sarif.parse: SARIF's own `level` means a different thing
+-- or nothing at all -- for every one of these tools; see that module's
+docstring.
 """
 
 from __future__ import annotations
@@ -27,6 +38,8 @@ from runwhen_capability import Context, setup, task
 # same fix tests/test_adapters.py uses to import the same module directly.
 sys.path.insert(0, str(Path(__file__).parent))
 import adapters  # noqa: E402
+import guards  # noqa: E402
+import severity  # noqa: E402
 
 
 @setup(outputs=["tree", "changed"])
@@ -36,10 +49,35 @@ def checkout(ctx: Context, repo_url: str, sha: str, base_sha: str | None = None)
     return {"tree": tree, "changed": changed}
 
 
+def _unsafe_config_finding(ctx: Context, tree: Path, reason: str) -> list:
+    # SECURITY (Part A): a guards.* refusal means the tool is NEVER invoked
+    # -- silently returning no findings would look identical to "the repo is
+    # clean", which is worse than reporting nothing at all. `reason` always
+    # begins "<repo-relative path>: ..." (see guards.py's module docstring);
+    # splitting on the first ": " recovers the offending file for the
+    # finding's own `path` so a reviewer lands on the config that tripped
+    # this, not just a generic warning. Not diff-filtered: an unsafe config
+    # already in the repo is exactly as dangerous when the PR didn't touch
+    # it as when it did.
+    path, _, _ = reason.partition(": ")
+    return ctx.findings.from_records(
+        [
+            {
+                "path": path,
+                "rule": "rw-checks/unsafe-config",
+                "line": 0,
+                "severity": "warning",
+                "message": f"{reason}; check skipped",
+            }
+        ],
+        root=tree,
+    )
+
+
 @task(outputs={"findings": "rw.findings.v1"})
 def ruff(ctx: Context, tree: Path, changed: list[str] | None):
     proc = ctx.run(["ruff", "check", "--output-format=sarif", "."], cwd=tree)
-    findings = ctx.sarif.parse(proc.stdout, root=tree)
+    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=severity.ruff)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
     return {"findings": findings}
@@ -73,7 +111,7 @@ def gitleaks(ctx: Context, tree: Path):
         ],
         cwd=tree,
     )
-    findings = ctx.sarif.parse(report.read_text(), root=tree)
+    findings = ctx.sarif.parse(report.read_text(), root=tree, severity=severity.gitleaks)
     return {"findings": findings}
 
 
@@ -86,7 +124,7 @@ def trivy(ctx: Context, tree: Path):
         ["trivy", "fs", "--format", "sarif", "--quiet", "--scanners", "vuln,misconfig,secret", "."],
         cwd=tree,
     )
-    findings = ctx.sarif.parse(proc.stdout, root=tree)
+    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=severity.trivy)
     return {"findings": findings}
 
 
@@ -98,12 +136,20 @@ def osv_scanner(ctx: Context, tree: Path):
     # findings, not a tool failure. Dependency vulns are not diff-filtered,
     # for the same reason as gitleaks/trivy above.
     proc = ctx.run(["osv-scanner", "--format", "sarif", "-r", "."], cwd=tree)
-    findings = ctx.sarif.parse(proc.stdout, root=tree)
+    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=severity.osv_scanner)
     return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def checkov(ctx: Context, tree: Path):
+    # SECURITY: checkov's own config can point it at an external directory
+    # or git repo of check PLUGINS it imports and runs (see guards.py's
+    # module docstring) -- refuse to invoke checkov at all rather than run
+    # it against an untrusted repo's config and hope external-checks-dir/
+    # external-checks-git are absent.
+    reason = guards.checkov(tree)
+    if reason:
+        return {"findings": _unsafe_config_finding(ctx, tree, reason)}
     # checkov's `-o/--output sarif` prints a banner to stdout and writes
     # nothing there -- the SARIF report lands on disk at
     # <--output-file-path>/results_sarif.sarif (tests/fixtures/tools/
@@ -119,7 +165,7 @@ def checkov(ctx: Context, tree: Path):
         cwd=tree,
     )
     report = out_dir / "results_sarif.sarif"
-    findings = ctx.sarif.parse(report.read_text(), root=tree)
+    findings = ctx.sarif.parse(report.read_text(), root=tree, severity=severity.checkov)
     return {"findings": findings}
 
 
@@ -131,7 +177,7 @@ def zizmor(ctx: Context, tree: Path):
         ["zizmor", "--format", "sarif", "--no-progress", ".github/workflows"],
         cwd=tree,
     )
-    findings = ctx.sarif.parse(proc.stdout, root=tree)
+    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=severity.zizmor)
     return {"findings": findings}
 
 
@@ -143,7 +189,7 @@ def tflint(ctx: Context, tree: Path, changed: list[str] | None):
     # is correct here: a non-zero exit is the tool reporting findings, not
     # a tool failure.
     proc = ctx.run(["tflint", "--format", "sarif", "--chdir", "infra"], cwd=tree)
-    findings = ctx.sarif.parse(proc.stdout, root=tree)
+    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=severity.tflint)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
     return {"findings": findings}
@@ -218,6 +264,13 @@ def actionlint(ctx: Context, tree: Path, changed: list[str] | None):
 
 @task(outputs={"findings": "rw.findings.v1"})
 def pylint(ctx: Context, tree: Path, changed: list[str] | None):
+    # SECURITY: pylint's own config can make IT run arbitrary code before it
+    # lints anything (see guards.py's module docstring for the verified
+    # exploit) -- refuse to invoke pylint at all rather than run it against
+    # an untrusted repo's config and hope init-hook/load-plugins are absent.
+    reason = guards.pylint(tree)
+    if reason:
+        return {"findings": _unsafe_config_finding(ctx, tree, reason)}
     # "." replaces capture.log's fixture-specific "src" dir. --recursive=y
     # (pylint >=2.14) is required for that to actually walk the whole repo --
     # without it a bare directory argument is only linted when it is itself
@@ -233,6 +286,14 @@ def pylint(ctx: Context, tree: Path, changed: list[str] | None):
 
 @task(outputs={"findings": "rw.findings.v1"})
 def sqlfluff(ctx: Context, tree: Path, changed: list[str] | None):
+    # SECURITY: sqlfluff's own config can point its jinja templater's
+    # library_path at a directory it imports Python modules from (see
+    # guards.py's module docstring) -- refuse to invoke sqlfluff at all
+    # rather than run it against an untrusted repo's config and hope
+    # library_path is absent.
+    reason = guards.sqlfluff(tree)
+    if reason:
+        return {"findings": _unsafe_config_finding(ctx, tree, reason)}
     # "." replaces capture.log's fixture-specific "db" dir; sqlfluff lint
     # recurses into whatever path it is given.
     proc = ctx.run(["sqlfluff", "lint", "--format", "json", "."], cwd=tree)
@@ -278,6 +339,14 @@ def regal(ctx: Context, tree: Path, changed: list[str] | None):
 
 @task(outputs={"findings": "rw.findings.v1"})
 def vale(ctx: Context, tree: Path, changed: list[str] | None):
+    # SECURITY: vale's own config can set a Packages key that makes it
+    # download and install a style package from a URL before it lints
+    # anything (see guards.py's module docstring) -- refuse to invoke vale
+    # at all rather than run it against an untrusted repo's config and hope
+    # Packages is empty.
+    reason = guards.vale(tree)
+    if reason:
+        return {"findings": _unsafe_config_finding(ctx, tree, reason)}
     # "." replaces capture.log's fixture-specific "docs" dir.
     proc = ctx.run(["vale", "--output=JSON", "."], cwd=tree)
     findings = ctx.findings.from_records(adapters.vale(proc.stdout), root=tree)

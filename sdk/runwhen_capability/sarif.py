@@ -14,17 +14,16 @@ changed-files filter or be fingerprinted meaningfully.
 from __future__ import annotations
 
 import json
-import os
-import posixpath
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlparse
 
-from .findings import normalize_context, normalize_path
+from .findings import (
+    normalize_context,
+    normalize_uri,  # noqa: F401 -- re-exported: `sarif.normalize_uri` is a public import path
+    resolve_base_uri,
+    resolve_context,
+)
 from .models import Finding
-from .pathsafe import safe_path
-
-_READ_LINE_TIMEOUT_MSG = "line out of range"
 
 
 @dataclass
@@ -48,67 +47,6 @@ def severity(level: str) -> str:
     return "note"
 
 
-def normalize_uri(uri: str, worktree_root: str) -> tuple[str, bool]:
-    """Converts a SARIF artifactLocation URI (after any uriBaseId
-    resolution) into the CONTRACT.md path shape: repo-relative, forward
-    slashes, no leading './'. Returns ("", False) when uri is empty, names a
-    scheme this does not understand (anything but "file" or no scheme at
-    all), or resolves outside worktree_root -- callers must drop the finding
-    rather than fingerprint or diff-filter it against such a path."""
-    if not uri:
-        return "", False
-
-    p = uri
-    try:
-        parsed = urlparse(uri)
-    except ValueError:
-        parsed = None
-    if parsed is not None:
-        if parsed.scheme in ("", "file"):
-            if parsed.path:
-                p = unquote(parsed.path)  # percent-decoded, mirrors url.Parse
-        else:
-            return "", False
-    p = p.replace("\\", "/")
-
-    if not posixpath.isabs(p):
-        stripped = p[2:] if p.startswith("./") else p
-        clean = posixpath.normpath(stripped) if stripped else "."
-        if clean in (".", "..") or clean.startswith("../"):
-            return "", False
-        return clean, True
-
-    abs_root = os.path.abspath(worktree_root).replace("\\", "/")
-    try:
-        rel = posixpath.relpath(p, abs_root)
-    except ValueError:
-        return "", False
-    if rel == ".." or rel.startswith("../"):
-        return "", False
-    return rel[2:] if rel.startswith("./") else rel, True
-
-
-def _resolve_base_uri(loc: dict, bases: dict[str, dict]) -> str:
-    """Resolves an artifactLocation's uriBaseId against the enclosing run's
-    originalUriBaseIds, per the SARIF spec: uriBaseId names an entry whose
-    own uri is the base a relative artifactLocation.uri is resolved against.
-    Returns the raw uri unresolved when there is no uriBaseId, the name is
-    unknown, or either URI fails to parse."""
-    uri = loc.get("uri", "") or ""
-    base_id = loc.get("uriBaseId")
-    if not base_id:
-        return uri
-    base = bases.get(base_id)
-    if not base or not base.get("uri"):
-        return uri
-    try:
-        from urllib.parse import urljoin
-
-        return urljoin(base["uri"], uri)
-    except ValueError:
-        return uri
-
-
 def _flatten(report: dict, worktree_root: str, log) -> list[_RawFinding]:
     out: list[_RawFinding] = []
     for run in report.get("runs", []) or []:
@@ -125,7 +63,7 @@ def _flatten(report: dict, worktree_root: str, log) -> list[_RawFinding]:
             phys = (locations[0] or {}).get("physicalLocation") or {}
             artifact = phys.get("artifactLocation") or {}
             region = phys.get("region") or {}
-            raw_uri = _resolve_base_uri(artifact, bases)
+            raw_uri = resolve_base_uri(artifact, bases)
             normalized, ok = normalize_uri(raw_uri, worktree_root)
             if not ok:
                 _warn_skipped_location(log, rule_id, artifact.get("uri", ""))
@@ -151,39 +89,6 @@ def _warn_skipped_location(log, rule_id: str, raw_uri: str) -> None:
     log.warning("sarif: %s: skipped finding with unresolvable location: %r", rule_id, raw_uri)
 
 
-def _warn_rejected_path(log, op_name: str, path: str) -> None:
-    if log is None:
-        return
-    log.warning("sarif: %s: rejected path outside worktree: %r", op_name, path)
-
-
-def _read_line(path: Path, n: int) -> str:
-    data = path.read_text(errors="replace")
-    lines = data.split("\n")
-    if n < 1 or n > len(lines):
-        raise ValueError(_READ_LINE_TIMEOUT_MSG)
-    return lines[n - 1].rstrip("\r")
-
-
-def _resolve_context(rf: _RawFinding, worktree: Path, op_name: str, log) -> str:
-    """CONTRACT's normalized_context source rule: prefer the SARIF snippet,
-    otherwise read the anchored line from the worktree, otherwise ""."""
-    if rf.snippet:
-        return rf.snippet
-    if rf.line <= 0 or not rf.path:
-        return ""
-    safe = safe_path(worktree, normalize_path(rf.path))
-    if safe is None:
-        _warn_rejected_path(log, op_name, rf.path)
-        return ""
-    try:
-        return _read_line(safe, rf.line)
-    except OSError:
-        return ""
-    except ValueError:
-        return ""
-
-
 class SarifClient:
     """`ctx.sarif` -- SARIF -> findings, tagged with the owning Context's
     capability and operation."""
@@ -198,7 +103,7 @@ class SarifClient:
 
         findings: list[Finding] = []
         for rf in raw_findings:
-            context = _resolve_context(rf, root, self._ctx.operation, self._ctx.log)
+            context = resolve_context(root, rf.path, rf.line, rf.snippet, self._ctx.operation, self._ctx.log)
             findings.append(
                 Finding(
                     capability=self._ctx.capability,

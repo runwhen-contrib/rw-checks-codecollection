@@ -94,3 +94,39 @@ def test_unknown_task_becomes_a_failed_entry(tmp_path):
 
     assert result.tasks[0].status == "failed"
     assert "unknown task" in result.tasks[0].error
+
+
+def test_unresolved_required_credential_fails_the_task_naming_it(tmp_path):
+    """Part 1 fix: an unresolved, non-optional credential is a hard
+    failure -- the task's error must name the credential, and the request
+    must not silently proceed anonymously."""
+    capability = load_capability(FIXTURES / "needs_credential")
+    request = RequestEnvelope.model_validate(
+        {"version": 1, "tasks": [{"task": "need_token", "inputs": {}}]}
+    )
+
+    result = run_request(capability, request, credentials={}, scope_dir=tmp_path)
+
+    assert result.tasks[0].status == "failed"
+    assert "token" in result.tasks[0].error
+
+
+def test_allow_anonymous_credentials_degrades_an_unresolved_credential(tmp_path):
+    """rwtask run --allow-anonymous (run_request(allow_anonymous_credentials=True))
+    is the only path that may turn an unresolved REQUIRED credential into
+    None instead of failing the task -- a deliberate local-dev override."""
+    capability = load_capability(FIXTURES / "needs_credential")
+    request = RequestEnvelope.model_validate(
+        {"version": 1, "tasks": [{"task": "need_token", "inputs": {}}]}
+    )
+
+    result = run_request(
+        capability,
+        request,
+        credentials={},
+        scope_dir=tmp_path,
+        allow_anonymous_credentials=True,
+    )
+
+    assert result.tasks[0].status == "ok"
+    assert result.tasks[0].outputs == {"token": None}

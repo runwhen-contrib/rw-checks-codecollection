@@ -10,8 +10,6 @@ import base64
 from dataclasses import dataclass
 from pathlib import Path
 
-from .errors import CredentialNotFoundError
-
 GIT_TIMEOUT = 300  # seconds; generous for a shallow single-commit fetch
 
 
@@ -38,20 +36,28 @@ class GitClient:
         self._ctx = ctx
         self._checkouts: dict[str, _Checkout] = {}
 
-    def checkout(self, repo_url: str, sha: str, credential: str | None = None) -> Path:
+    def checkout(
+        self, repo_url: str, sha: str, credential: str | None = None, optional: bool = False
+    ) -> Path:
+        """`credential` is a declared credential *name*, resolved through
+        Context.credential() -- never a raw token. A name that cannot be
+        resolved is a HARD failure by default: CredentialNotFoundError
+        propagates, naming the credential. Degrading to an anonymous fetch
+        is a broken-credential-pipeline bug hiding itself -- it succeeds
+        silently against a public repo in testing and fails only later,
+        against a real private customer repo, exactly where it matters.
+
+        Pass `optional=True` (mirroring the manifest's
+        `needs.credentials[].optional: true`) to degrade to anonymous when
+        this specific credential is legitimately absent -- an explicit,
+        deliberate opt-in at the call site, never automatic. Pass
+        `credential=None` outright for a checkout that was never going to
+        need one. This method adds no fallback beyond that: local dev's
+        `--allow-anonymous` escape hatch lives in Context.credential()
+        itself, not here."""
         token = None
         if credential:
-            try:
-                token = self._ctx.credential(credential)
-            except CredentialNotFoundError:
-                # Not every checkout needs auth (a public repo works fine
-                # anonymously) -- degrade to a tokenless fetch rather than
-                # fail a request whose platform simply had nothing to bind.
-                self._ctx.log.info(
-                    "git.checkout: no credential resolved for %r, fetching anonymously",
-                    credential,
-                )
-                token = None
+            token = self._ctx.credential(credential, optional=optional)
 
         dest = self._ctx.workdir / "tree"
         dest.mkdir(parents=True, exist_ok=True)

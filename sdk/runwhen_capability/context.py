@@ -14,6 +14,7 @@ from pathlib import Path
 from .errors import CredentialNotFoundError
 from .findings import FindingsClient
 from .git import GitClient
+from .repo_fs import RepoFsClient
 from .sarif import SarifClient
 
 DEFAULT_RUN_TIMEOUT = 600  # seconds
@@ -47,25 +48,48 @@ class Context:
         workdir: Path,
         credentials: dict[str, str] | None = None,
         log: logging.Logger | None = None,
+        allow_anonymous_credentials: bool = False,
     ) -> None:
         self.capability = capability
         self.operation = operation
         self.workdir = Path(workdir)
         self.log = log or logging.getLogger(f"runwhen_capability.{capability}.{operation}")
         self._credentials = dict(credentials or {})
+        # `rwtask run --allow-anonymous` only -- see cli.py/run_local.py.
+        # Never set by `rwtask serve`: an operator degrading a REQUIRED
+        # credential to anonymous must be a deliberate local-dev act, not
+        # something reachable from a running pod.
+        self._allow_anonymous_credentials = allow_anonymous_credentials
 
         self.git = GitClient(self)
         self.sarif = SarifClient(self)
         self.findings = FindingsClient(self)
         self.storage = StorageClient(self)
+        self.repo_fs = RepoFsClient(self)
 
-    def credential(self, name: str) -> str:
+    def credential(self, name: str, optional: bool = False) -> str | None:
         """The resolved value for a declared credential -- in memory, never
-        in os.environ. Raises CredentialNotFoundError if `name` was not
-        resolved for this request."""
+        in os.environ. When `name` was not resolved for this request:
+        `optional=True` (the caller's own deliberate opt-in, mirroring the
+        manifest's `needs.credentials[].optional: true`) returns None;
+        otherwise raises CredentialNotFoundError naming `name` -- a
+        declared credential that cannot be resolved is a hard failure, not
+        a silent degrade. `--allow-anonymous` (`rwtask run` only) also
+        returns None instead of raising, as a blanket local-dev override --
+        see `_allow_anonymous_credentials` above."""
         try:
             return self._credentials[name]
         except KeyError:
+            if optional:
+                return None
+            if self._allow_anonymous_credentials:
+                self.log.warning(
+                    "credential %r not resolved; --allow-anonymous is degrading this "
+                    "request to anonymous -- a deliberate local-dev override, never "
+                    "the platform default",
+                    name,
+                )
+                return None
             raise CredentialNotFoundError(f"no credential resolved for {name!r}") from None
 
     def run(

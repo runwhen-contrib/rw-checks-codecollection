@@ -1,0 +1,111 @@
+# Capability manifest for rw-worktree -- shape defined by
+# docs/static-checks/CAPABILITY-CONTRACT.md Part 1 (manifest) and
+# docs/static-checks/EXECUTOR-CONTRACT.md ("Execution modes", "Addressing
+# and caching") in runwhen-auto. Both are binding; if this needs to diverge
+# from them, stop and raise it there first.
+#
+# This is the ONE stateful capability -- the deep-review read path: the
+# agent reads repository files during a review. A materialised tree is a
+# CACHE ENTRY keyed by (repoUrn, sha), never a leased handle: papi derives
+# an opaque routingKey from that pair, the runner routes on it without
+# parsing it, and `open` (below) re-materialises for whatever key it is
+# handed. Eviction is normal and invisible -- a reaped pod simply
+# re-materialises on the next request; there is no lease, no release, no
+# expiry error, and nothing here may surface a "handle expired" condition
+# to a caller.
+#
+# `image` below is a build-time placeholder -- see rw-checks/manifest.yaml's
+# comment; CI rewrites it to the published digest. Do not hand-edit it.
+apiVersion: capability/v1
+capability: rw-worktree
+version: "0.1.0"
+description: Read-only repository tree cache for deep PR review (agent reads)
+image: ghcr.io/runwhen-contrib/rw-worktree-codecollection@sha256:INJECTED_BY_CI
+
+# --- generic scheduling knobs; papi forwards these to the runner verbatim -------------
+execution:
+  mode: stateful                         # the only stateful capability -- see comment above
+  maxPodsPerPool: 3                      # same POC ceiling as rw-checks; [A] CAPABILITY-CONTRACT.md's open decision #1
+  # read/grep/ls are cheap, read-only filesystem operations -- no subprocess
+  # per call, unlike ruff/gitleaks -- and the agent may fire several back
+  # to back (or in parallel across independent reviews sharing a pod)
+  # while composing one review. Much higher than rw-checks's
+  # maxConcurrentPerPod: 1, which throttles CPU-heavy lint/secret-scan runs.
+  maxConcurrentPerPod: 8
+  # A deep review reads its tree in bursts across the minutes it takes the
+  # agent to write one review, with real pauses between tool calls (model
+  # think time). 1800s (30m) keeps a tree warm across a typical review's
+  # lifetime -- including a workflow that stalls and resumes -- without
+  # holding a pod (and its checked-out storage) indefinitely once the
+  # review is actually done. Re-materialising on a miss is always correct
+  # (see "Addressing and caching" above), so this is a latency/cost
+  # tradeoff, never a correctness one.
+  idleTtlSeconds: 1800
+  # `open` does a shallow clone, bounded by git.py's own GIT_TIMEOUT
+  # (300s); read/grep/ls each finish in a small fraction of that.
+  requestTimeoutSeconds: 300
+
+# --- which subjects this capability applies to; ANY entry matching => applies ----------
+appliesTo:
+  - platform: github
+    type: repository                     # every repo, not just python -- deep review reads any tree
+
+# --- what the platform must supply ----------------------------------------------------
+needs:
+  credentials:
+    - name: repo                         # the local name a task reads it by
+      kind: github.installation          # provider-bound kind; papi binds it
+      access: contents:read              # least privilege the platform must satisfy
+  egress:                                # papi resolves to CIDRs for the NetworkPolicy
+    - github.com
+
+# --- runs once per (repoUrn, sha) cache key, before read/grep/ls ----------------------
+setup:
+  task: open
+  inputs:
+    repoUrl: { from: request }
+    sha:     { from: request }
+  outputs:
+    tree: { type: path }                 # tasks reference it as ${setup.tree}
+
+# --- the tasks themselves -- all read-only, all confined to ${setup.tree} -------------
+tasks:
+  - name: read
+    description: Read a slice of a file from the checked-out tree
+    inputs:
+      tree:      { from: "${setup.tree}" }
+      path:      { from: request }
+      startLine: { from: request, optional: true }
+      endLine:   { from: request, optional: true }
+    outputs:
+      result:
+        kind: rw.repo_read.v1
+        schema: ./schemas/read.json
+
+  - name: grep
+    description: Search the checked-out tree for a pattern
+    inputs:
+      tree:       { from: "${setup.tree}" }
+      pattern:    { from: request }
+      glob:       { from: request, optional: true }
+      maxMatches: { from: request, optional: true }
+      ignoreCase: { from: request, optional: true }
+    outputs:
+      result:
+        kind: rw.repo_grep.v1
+        schema: ./schemas/grep.json
+
+  - name: ls
+    description: List a directory in the checked-out tree
+    inputs:
+      tree:  { from: "${setup.tree}" }
+      path:  { from: request, optional: true }
+      depth: { from: request, optional: true }
+    outputs:
+      result:
+        kind: rw.repo_ls.v1
+        schema: ./schemas/ls.json
+
+retention:
+  pod: on_failure                        # all | on_failure | none
+  result: 30d

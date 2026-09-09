@@ -39,6 +39,57 @@ class Finding(BaseModel):
     context: str = ""  # normalized_context; "" if no region/line
 
 
+# --- rw-worktree task outputs -----------------------------------------------
+# Wire-3 output shapes for the rw-worktree capability's read/grep/ls tasks,
+# ported from internal/rwcheck/serve/{read,grep,ls}.go's response structs in
+# runwhen-runner (the v1 worktree host). Field names are camelCase directly
+# on the model (no snake_case + alias) -- same convention as
+# TaskHostRequest/TaskHostResult below -- because these are the exact field
+# names agentfarm's agents/pr_review_agent/tools.py reads out of papi's
+# unwrapped worktree-invoke `result` (read_repo_file / grep_repo /
+# list_repo_dir): "startLine"/"endLine" for read, "matches"/"truncated" for
+# grep, "entries" for ls. `matches`/`entries` default to `[]`, never omitted
+# or null -- agentfarm's tools treat a missing/non-list value as a malformed
+# response, not an empty result (a previously-fixed bug in exactly this
+# shape is what that guard exists to catch).
+
+
+class ReadResult(BaseModel):
+    """Output of the `read` task."""
+
+    path: str
+    content: str
+    startLine: int
+    endLine: int
+    totalLines: int
+    truncated: bool = False
+
+
+class GrepMatch(BaseModel):
+    path: str
+    line: int
+    text: str
+
+
+class GrepResult(BaseModel):
+    """Output of the `grep` task."""
+
+    matches: list[GrepMatch] = Field(default_factory=list)
+    truncated: bool = False
+
+
+class LsEntry(BaseModel):
+    path: str
+    type: Literal["file", "dir", "other"]
+    size: int = 0
+
+
+class LsResult(BaseModel):
+    """Output of the `ls` task."""
+
+    entries: list[LsEntry] = Field(default_factory=list)
+
+
 # --- Wire 3 (papi <-> capability): the request/result envelope -------------
 
 

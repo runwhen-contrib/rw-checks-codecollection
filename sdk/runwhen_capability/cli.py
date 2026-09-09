@@ -48,6 +48,13 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="don't delete the scope directory after the request completes",
     )
+    run_p.add_argument(
+        "--allow-anonymous",
+        action="store_true",
+        help="degrade every unresolved credential to anonymous instead of failing the "
+        "request -- a deliberate local-dev escape hatch for testing against public "
+        "repos without a credentials.json; never available to `rwtask serve`",
+    )
 
     return parser
 
@@ -78,6 +85,7 @@ def main(argv: list[str] | None = None) -> int:
             credentials_path=Path(args.credentials) if args.credentials else None,
             workdir=Path(args.workdir) if args.workdir else None,
             keep_workdir=args.keep_workdir,
+            allow_anonymous=args.allow_anonymous,
         )
         print(json.dumps(result.model_dump(mode="json"), indent=2))
         return 0

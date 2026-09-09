@@ -10,6 +10,11 @@ from .context import Context
 from .decorators import setup, task
 from .models import (
     Finding,
+    GrepMatch,
+    GrepResult,
+    LsEntry,
+    LsResult,
+    ReadResult,
     RequestEnvelope,
     ResultEnvelope,
     SetupResult,
@@ -25,6 +30,11 @@ __all__ = [
     "setup",
     "task",
     "Finding",
+    "GrepMatch",
+    "GrepResult",
+    "LsEntry",
+    "LsResult",
+    "ReadResult",
     "RequestEnvelope",
     "ResultEnvelope",
     "SetupResult",

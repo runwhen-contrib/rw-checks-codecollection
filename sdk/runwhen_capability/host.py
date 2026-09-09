@@ -69,6 +69,7 @@ def run_request(
     credentials: dict[str, str],
     scope_dir: Path,
     log: logging.Logger | None = None,
+    allow_anonymous_credentials: bool = False,
 ) -> ResultEnvelope:
     log = log or logging.getLogger("runwhen_capability.host")
     result = ResultEnvelope()
@@ -87,6 +88,7 @@ def run_request(
                 workdir=scope_dir,
                 credentials=credentials,
                 log=log.getChild(request.setup.task),
+                allow_anonymous_credentials=allow_anonymous_credentials,
             )
             try:
                 kwargs = _kwargs_from_inputs(request.setup.inputs)
@@ -113,6 +115,7 @@ def run_request(
             workdir=scope_dir,
             credentials=credentials,
             log=log.getChild(task_spec.task),
+            allow_anonymous_credentials=allow_anonymous_credentials,
         )
         try:
             resolved_inputs = _resolve_placeholders(task_spec.inputs, setup_outputs)

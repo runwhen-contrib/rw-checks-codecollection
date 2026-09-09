@@ -1,0 +1,39 @@
+{
+  "description": "Output of the `read` task.",
+  "properties": {
+    "path": {
+      "title": "Path",
+      "type": "string"
+    },
+    "content": {
+      "title": "Content",
+      "type": "string"
+    },
+    "startLine": {
+      "title": "Startline",
+      "type": "integer"
+    },
+    "endLine": {
+      "title": "Endline",
+      "type": "integer"
+    },
+    "totalLines": {
+      "title": "Totallines",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "path",
+    "content",
+    "startLine",
+    "endLine",
+    "totalLines"
+  ],
+  "title": "ReadResult",
+  "type": "object"
+}

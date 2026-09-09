@@ -22,6 +22,7 @@ from urllib.parse import unquote, urlparse
 
 from .findings import normalize_context, normalize_path
 from .models import Finding
+from .pathsafe import safe_path
 
 _READ_LINE_TIMEOUT_MSG = "line out of range"
 
@@ -154,47 +155,6 @@ def _warn_rejected_path(log, op_name: str, path: str) -> None:
     if log is None:
         return
     log.warning("sarif: %s: rejected path outside worktree: %r", op_name, path)
-
-
-def confined_to(base: Path, target: Path) -> bool:
-    """Reports whether target is inside (or equal to) base."""
-    try:
-        rel = os.path.relpath(str(target), str(base))
-    except ValueError:
-        return False
-    return rel != ".." and not rel.startswith(".." + os.sep)
-
-
-def safe_path(worktree: Path, path: str) -> Path | None:
-    """Confines a SARIF-reported path to worktree before it is read from
-    disk. `path` must already be normalize_path()'d. On success, returns the
-    joined, worktree-confined path; on any attempt to escape worktree,
-    returns None. Ported from internal/rwcheck/runner/path.go's SafePath."""
-    clean = os.path.normpath(path)
-    if os.path.isabs(clean) or clean == ".." or clean.startswith(".." + os.sep):
-        return None
-
-    full = worktree / clean
-    if not confined_to(worktree, full):
-        return None
-
-    try:
-        resolved_full = full.resolve(strict=True)
-    except FileNotFoundError:
-        # A missing file isn't an escape attempt -- let the caller's
-        # line-read fail closed instead.
-        return full
-    except OSError:
-        return None
-
-    try:
-        resolved_worktree = worktree.resolve(strict=True)
-    except OSError:
-        return None
-    if not confined_to(resolved_worktree, resolved_full):
-        return None
-
-    return full
 
 
 def _read_line(path: Path, n: int) -> str:

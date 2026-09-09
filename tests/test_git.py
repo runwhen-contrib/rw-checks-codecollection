@@ -8,7 +8,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
 from runwhen_capability import Context
+from runwhen_capability.errors import CredentialNotFoundError
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -92,3 +94,53 @@ def test_changed_files_raises_for_a_tree_not_from_this_context(tmp_path):
         assert "was not produced by this Context" in str(exc)
     else:
         raise AssertionError("expected RuntimeError")
+
+
+def test_checkout_raises_when_a_declared_credential_is_unresolved(tmp_path):
+    """A required credential that papi never bound is a hard failure --
+    checkout() must not silently degrade to an anonymous fetch (that hides
+    a broken credential pipeline behind a public repo passing in testing).
+    The error must name the credential."""
+    origin, _base_sha, head_sha = _make_origin(tmp_path)
+    scope_dir = tmp_path / "scope"
+    scope_dir.mkdir()
+    ctx = Context(capability="rw-checks", operation="checkout", workdir=scope_dir, credentials={})
+
+    with pytest.raises(CredentialNotFoundError) as exc_info:
+        ctx.git.checkout(str(origin), head_sha, credential="repo")
+
+    assert "repo" in str(exc_info.value)
+
+
+def test_checkout_optional_credential_degrades_to_anonymous(tmp_path):
+    """A credential the caller explicitly marks optional=True degrades to
+    an anonymous fetch instead of raising -- the deliberate opt-in this
+    contrasts with the (removed) automatic degrade."""
+    origin, _base_sha, head_sha = _make_origin(tmp_path)
+    scope_dir = tmp_path / "scope"
+    scope_dir.mkdir()
+    ctx = Context(capability="rw-checks", operation="checkout", workdir=scope_dir, credentials={})
+
+    tree = ctx.git.checkout(str(origin), head_sha, credential="repo", optional=True)
+
+    assert tree.is_dir()
+
+
+def test_checkout_allow_anonymous_context_degrades_a_required_credential(tmp_path):
+    """rwtask run --allow-anonymous (Context(allow_anonymous_credentials=True))
+    degrades even a credential the call site did NOT mark optional -- the
+    blanket local-dev override."""
+    origin, _base_sha, head_sha = _make_origin(tmp_path)
+    scope_dir = tmp_path / "scope"
+    scope_dir.mkdir()
+    ctx = Context(
+        capability="rw-checks",
+        operation="checkout",
+        workdir=scope_dir,
+        credentials={},
+        allow_anonymous_credentials=True,
+    )
+
+    tree = ctx.git.checkout(str(origin), head_sha, credential="repo")
+
+    assert tree.is_dir()

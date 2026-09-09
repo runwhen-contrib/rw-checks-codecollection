@@ -1,27 +1,15 @@
-# Base runtime image — rw-base-runtime ships:
-#   - Python 3 + the worker binary + the standard CLI tooling
-#     (kubectl, aws, az, gcloud, helm, istioctl, gh, pwsh, jq, yq, skopeo,
-#      linear-cli, claude, cursor)
-#   - rw-core-keywords pip-installed system-wide (RW.Core / RW.platform /
-#     RW.fetchsecrets / etc.)
-#   - The robot-runtime helper scripts at /home/runwhen/robot-runtime/
-#     (entrypoint.sh, runrobot.{sh,py}, RWP.py, metrics_daemon.py, ...)
+# rw-checks-codecollection: a capability image, not a Robot codebundle image.
 #
-# Source: https://github.com/runwhen-contrib/rw-base-runtime
+# It ships:
+#   - the runwhen_capability SDK and its rwtask task host (sdk/)
+#   - the rw-checks capability's tasks (capabilities/rw-checks/)
+#   - the pinned static-check tools each task's argv invokes: ruff, gitleaks
 #
-# Override at build time to pin a specific runtime sha (production tag
-# suffix) or to test against a BYO base, e.g.:
-#
-#   docker build \
-#     --build-arg BASE_IMAGE=ghcr.io/runwhen-contrib/rw-base-runtime:<sha7> \
-#     ...
-#
-# The CI workflow (.github/workflows/build-push.yaml) resolves the
-# `runtime_ref` dispatch input to an rw-base-runtime commit sha and
-# bakes that sha into the resulting image tag suffix.
-ARG BASE_IMAGE=ghcr.io/runwhen-contrib/rw-base-runtime:latest
-FROM ${BASE_IMAGE}
-USER root
+# There is no Go binary and no self-install init container here -- the
+# runner (see docs/static-checks/EXECUTOR-CONTRACT.md) dials `rwtask serve`
+# as a warm executor over plain HTTP/JSON; it never execs into this
+# container to run a per-operation argv the way v1's rwcheck harness did.
+FROM python:3.12-slim
 
 # Populated by buildx for the platform currently being built (amd64/arm64).
 # Used below to pick the right gitleaks release tarball.
@@ -32,13 +20,24 @@ ARG TARGETARCH
 ARG RUFF_VERSION=0.16.6
 ARG GITLEAKS_VERSION=8.30.1
 
-ENV RUNWHEN_HOME=/home/runwhen
-ENV PATH "$PATH:/usr/local/bin:/home/runwhen/.local/bin"
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-# Install ruff — pinned, from PyPI.
+# git: ctx.git.checkout()/changed_files() shell out to the git CLI (see
+# sdk/runwhen_capability/git.py). ca-certificates: TLS for git fetches
+# against real remotes. curl: fetching the pinned gitleaks release tarball
+# below (build-time only; not needed at runtime, but the slim base has no
+# apt cache to prune around it either way).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ruff -- pinned, from PyPI.
 RUN pip install --no-cache-dir "ruff==${RUFF_VERSION}"
 
-# Install gitleaks — pinned, from the official release tarball for
+# Install gitleaks -- pinned, from the official release tarball for
 # TARGETARCH, sha256-verified against the checksums gitleaks publishes
 # alongside each release (no `go install`, no unverified curl-pipe).
 RUN set -eux; \
@@ -54,39 +53,28 @@ RUN set -eux; \
     chmod +x /usr/local/bin/gitleaks; \
     rm -f /tmp/gitleaks.tar.gz
 
-# Set up directories and permissions.
-#
-# Codecollection contents MUST land at ${RUNWHEN_HOME}/collection (NOT
-# /codecollection). PAPI emits RW_PATH_TO_ROBOT=$(RUNWHEN_HOME)/collection/
-# codebundles/<bundle>/sli.robot and runrobot.{sh,py} only know how to
-# resolve under /home/runwhen/collection — a mismatch surfaces as
-# `FileNotFoundError: Could not find the robot file in any known locations.`
-RUN mkdir -p $RUNWHEN_HOME/collection
-WORKDIR $RUNWHEN_HOME/collection
+# Install the SDK (and its rwtask console script) as a real package, then
+# lay the capability(ies) on top. Copying pyproject.toml + sdk/ before
+# capabilities/ keeps the pip-install layer cacheable across capability-only
+# edits.
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE /app/
+COPY sdk /app/sdk
+RUN pip install --no-cache-dir /app
 
-# Copy files into container with correct ownership
-COPY --chown=runwhen:0 . .
+COPY capabilities /app/capabilities
 
-# Check and install requirements if requirements.txt exists
-RUN if [ -f "requirements.txt" ]; then pip install --no-cache-dir -r requirements.txt; else echo "requirements.txt not found, skipping pip install"; fi
-
-# Add runwhen user to sudoers with no password prompt
-RUN echo "runwhen ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-
-# Set RunWhen Temp Dir
-RUN mkdir -p /var/tmp/runwhen && chmod 1777 /var/tmp/runwhen
-ENV TMPDIR=/var/tmp/runwhen
-
-# Adjust permissions for runwhen user
-RUN chown runwhen:0 -R $RUNWHEN_HOME/collection
-
-# rw-base-runtime's ENTRYPOINT (entrypoint.sh) unconditionally launches the
-# robot runtime / worker regardless of CMD — correct for Robot codebundle
-# images, but this collection has no Robot content. Its operations are
-# plain argv commands (see the CONTRACT's `run:` field, e.g.
-# ["ruff", "check", ...]) meant to be executed directly via
-# `docker run <image> <argv...>`, so reset the entrypoint to none.
-ENTRYPOINT []
-
-# Switch to runwhen user
+# Non-root. /work is rwtask serve's default --workdir -- every request's
+# scope directory (<workdir>/<scopeId>/) is created and wiped under it, so
+# it's the one directory this user needs to write.
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin runwhen \
+    && mkdir -p /work \
+    && chown -R runwhen:runwhen /work /app
 USER runwhen
+
+# rwtask's argv IS the container command -- no Robot runtime, nothing to
+# reset. ENTRYPOINT [] is kept explicit (rather than simply absent) so a
+# `docker run <image> <anything>` never surprises anyone who expects the
+# rw-base-runtime convention from this org's other collections.
+ENTRYPOINT []
+CMD ["rwtask", "serve"]

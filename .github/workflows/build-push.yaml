@@ -1,24 +1,27 @@
 name: Build And Push
 
-# Builds the rw-checks-codecollection image and pushes a multi-arch manifest
-# to GHCR with the tag schema the cc-registry-v2 image catalog expects:
+# Builds the rw-checks-codecollection capability image and pushes a
+# multi-arch manifest to GHCR with the tag schema the cc-registry-v2 image
+# catalog expects:
 #
-#     <sanitized-ref>-<cc_sha7>-<rt_sha7>
+#     <sanitized-ref>-<cc_sha7>
 #
 # Where:
 #   sanitized-ref = github.ref_name with '/' -> '-' (e.g. "main", "feature-foo", "pr-42")
 #   cc_sha7       = first 7 chars of github.sha (this repo's commit)
-#   rt_sha7       = first 7 chars of rw-base-runtime at `runtime_ref`
-#                   (https://github.com/runwhen-contrib/rw-base-runtime)
+#
+# Unlike this org's Robot codecollections, this image is not built FROM
+# rw-base-runtime (see Dockerfile) -- there is no runtime sha to embed in the
+# tag, and no BYO-base build-arg to plumb through.
 #
 # Architecture
 # ------------
 # The build is split across three jobs so each platform is built natively
-# rather than under QEMU emulation (mirrors the rw-base-runtime workflow):
+# rather than under QEMU emulation:
 #
-#   prepare        -- compute tag set + push flag + build args ONCE,
-#                     share with downstream jobs so they can't drift; also
-#                     validates the capability manifest shape once
+#   prepare        -- compute tag set + push flag ONCE, share with
+#                     downstream jobs so they can't drift; also validates
+#                     the capability manifest shape once
 #   build (matrix) -- one job per platform, each on its own native runner:
 #                       linux/amd64 -> ubuntu-latest
 #                       linux/arm64 -> ubuntu-24.04-arm
@@ -29,23 +32,25 @@ name: Build And Push
 #                       4. on push, builds again push-by-digest (no tags)
 #                          and exports the per-platform digest as an artifact
 #   merge          -- pulls the per-platform digests and uses
-#                     `docker buildx imagetools create` to stitch them
-#                     into a single multi-arch manifest under every tag
-#                     prepare computed. Pure registry-side metadata op.
+#                     `docker buildx imagetools create` to stitch them into
+#                     a single multi-arch manifest under every tag prepare
+#                     computed, then renders capabilities/rw-checks/manifest.yaml
+#                     with the resolved digest and uploads it as a build
+#                     artifact -- "CI resolves the digest ... and rewrites
+#                     this field" per the manifest's own header comment.
+#
+# `test` runs independently and gates `build`: the SDK's own pytest/ruff
+# suite is cheap and fast, and a broken task host should never reach an
+# image push.
 #
 # Build triggers:
 #   - push to ANY branch  -> produces a CodeCollectionVersion image for that branch
 #   - pull_request to ANY base branch -> produces a "pr-<n>" preview image
-#   - workflow_dispatch  -> manual build (e.g. to validate against a BYO base)
+#   - workflow_dispatch  -> manual build
 #
 # We build off non-main branches on purpose: each branch is a candidate CCV
 # the catalog can pin to. Path filters below skip rebuilds for pure
 # docs / config-only diffs.
-#
-# The base image is overridable so we can:
-#   - Build against rw-base-runtime:latest (default, production target)
-#   - Pin to a specific rw-base-runtime sha7 (reproducible builds)
-#   - Build against a customer-supplied BYO base (validation runs)
 
 on:
   push:
@@ -81,16 +86,6 @@ on:
       - 'docs/**'
   workflow_dispatch:
     inputs:
-      base_image:
-        description: "Base image (FROM ref) to build against. Leave blank to use the Dockerfile default."
-        required: false
-        default: ""
-        type: string
-      runtime_ref:
-        description: "rw-base-runtime ref to embed in the tag suffix (branch / tag / sha). Default: main."
-        required: false
-        default: "main"
-        type: string
       push:
         description: "Push the resulting image to GHCR."
         required: false
@@ -100,9 +95,6 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE: ${{ github.repository }}
-  # The repo we resolve the rt_sha tag suffix from. This MUST match the
-  # base image we FROM in Dockerfile (currently rw-base-runtime).
-  RUNTIME_REPO: runwhen-contrib/rw-base-runtime
 
 permissions:
   contents: read
@@ -110,9 +102,39 @@ permissions:
 
 jobs:
   # ===========================================================================
-  # prepare — single source of truth for the tag set, push flag and build
-  # args so the matrix builds and the final merge job don't drift. Also
-  # validates the capability manifest shape once, up front.
+  # test — the SDK's own suite. Independent of prepare/build so it starts
+  # immediately; `build` depends on it so a broken task host never reaches
+  # an image push.
+  # ===========================================================================
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: python3 -m pip install --quiet -e ".[dev]"
+
+      - name: pytest
+        run: python3 -m pytest -q
+
+      - name: ruff check
+        run: ruff check .
+
+      - name: ruff format --check
+        run: ruff format --check .
+
+  # ===========================================================================
+  # prepare — single source of truth for the tag set and push flag so the
+  # matrix builds and the final merge job don't drift. Also validates the
+  # capability manifest shape once, up front.
   # ===========================================================================
   prepare:
     runs-on: ubuntu-latest
@@ -123,9 +145,6 @@ jobs:
       repo_lc: ${{ steps.meta.outputs.repo_lc }}
       sanitized_ref: ${{ steps.meta.outputs.sanitized_ref }}
       cc_sha: ${{ steps.meta.outputs.cc_sha }}
-      rt_sha: ${{ steps.meta.outputs.rt_sha }}
-      runtime_ref: ${{ steps.meta.outputs.runtime_ref }}
-      base_image_arg: ${{ steps.args.outputs.base_image_arg }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,9 +165,6 @@ jobs:
 
       - name: Compute tag set
         id: meta
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RUNTIME_REF_INPUT: ${{ inputs.runtime_ref }}
         run: |
           set -euo pipefail
 
@@ -167,16 +183,11 @@ jobs:
           # so refs like "release/1.2" survive intact.
           sanitized_ref="$(echo "${ref_name}" | tr '/' '-' | tr -c 'A-Za-z0-9_.-' '-' | sed 's/^-*//;s/-*$//')"
 
-          # --- runtime sha (defaults to rw-base-runtime@main) ---
-          runtime_ref="${RUNTIME_REF_INPUT:-main}"
-          rt_sha="$(gh api "repos/${RUNTIME_REPO}/commits/${runtime_ref}" --jq '.sha')"
-          rt_sha7="${rt_sha:0:7}"
-
           # --- repo path (GHCR rejects uppercase) ---
           repo_lc="$(echo "${{ env.REGISTRY }}/${{ env.IMAGE }}" | tr '[:upper:]' '[:lower:]')"
 
           # --- canonical immutable tag the catalog uses for discovery ---
-          canonical_tag="${sanitized_ref}-${cc_sha7}-${rt_sha7}"
+          canonical_tag="${sanitized_ref}-${cc_sha7}"
 
           # --- moving-pointer aliases (these get re-pointed on every build) ---
           tags=( "${repo_lc}:${canonical_tag}" )
@@ -188,10 +199,6 @@ jobs:
               # behaves the same as an auto-push to main.
               tags+=( "${repo_lc}:${sanitized_ref}" )
               # Move ":latest" whenever the destination branch is main.
-              # Previously this only fired for `push`, so workflow_dispatch
-              # builds on main never updated ":latest" — leaving consumers
-              # that pull ":latest" with a stale image and skewing the
-              # cc-catalog-svc / cc-registry-v2 view of which tag is newest.
               if [ "${{ github.ref_name }}" = "main" ]; then
                 tags+=( "${repo_lc}:latest" )
               fi
@@ -203,8 +210,6 @@ jobs:
 
           {
             echo "cc_sha=${cc_sha}"
-            echo "rt_sha=${rt_sha}"
-            echo "runtime_ref=${runtime_ref}"
             echo "sanitized_ref=${sanitized_ref}"
             echo "repo_lc=${repo_lc}"
             echo "canonical_tag=${canonical_tag}"
@@ -217,22 +222,7 @@ jobs:
             for t in "${tags[@]}"; do echo "- \`${t}\`"; done
             echo
             echo "- Codecollection sha: \`${cc_sha}\`"
-            echo "- Runtime ref:        \`${runtime_ref}\`"
-            echo "- Runtime sha:        \`${rt_sha}\`"
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Resolve build args
-        id: args
-        env:
-          INPUT_BASE_IMAGE: ${{ inputs.base_image }}
-        run: |
-          set -euo pipefail
-          if [ -n "${INPUT_BASE_IMAGE:-}" ]; then
-            echo "base_image_arg=BASE_IMAGE=${INPUT_BASE_IMAGE}" >> "$GITHUB_OUTPUT"
-          else
-            # Empty -> docker/build-push-action ignores blank build-args lines
-            echo "base_image_arg=" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Validate capability manifest
         run: |
@@ -242,14 +232,14 @@ jobs:
           import sys
           import yaml
 
-          # Keys the CONTRACT (docs/static-checks/CONTRACT.md) requires on
+          # Keys docs/static-checks/CAPABILITY-CONTRACT.md Part 1 requires on
           # every capability manifest. Keep this list in sync with that file.
           REQUIRED_KEYS = {
-              "capability", "version", "image", "scope", "execution",
-              "retention", "applies_to", "needs", "outputs", "operations",
+              "apiVersion", "capability", "version", "description", "image",
+              "execution", "appliesTo", "needs", "setup", "tasks", "retention",
           }
 
-          with open(".runwhen/capabilities/rw-checks.yaml") as f:
+          with open("capabilities/rw-checks/manifest.yaml") as f:
               manifest = yaml.safe_load(f)
 
           missing = REQUIRED_KEYS - manifest.keys()
@@ -257,6 +247,8 @@ jobs:
               sys.exit(f"capability manifest missing required keys: {sorted(missing)}")
           if manifest["capability"] != "rw-checks":
               sys.exit(f"capability manifest 'capability' must be 'rw-checks', got {manifest['capability']!r}")
+          if manifest["execution"].get("mode") != "stateless":
+              sys.exit(f"capability manifest execution.mode must be 'stateless', got {manifest['execution'].get('mode')!r}")
 
           print("capability manifest has all required top-level keys")
           PY
@@ -264,12 +256,10 @@ jobs:
   # ===========================================================================
   # build — parallel native builds. Each matrix leg runs on a runner whose
   # architecture matches the platform it is building, so there's no QEMU
-  # emulation cost. The smoke test consequently runs on real hardware for
-  # each arch (the previous single-runner workflow only ever exercised
-  # amd64 even though we shipped arm64 manifests).
+  # emulation cost.
   # ===========================================================================
   build:
-    needs: prepare
+    needs: [prepare, test]
     strategy:
       fail-fast: false
       matrix:
@@ -313,20 +303,19 @@ jobs:
           tags: rw-checks-codecollection:smoke
           cache-from: type=gha,scope=rw-checks-codecollection-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=rw-checks-codecollection-${{ matrix.arch }}
-          build-args: |
-            ${{ needs.prepare.outputs.base_image_arg }}
 
       - name: Smoke test image
         run: |
           set -euo pipefail
           # Native-arch exec of the image -- verifies the pinned static-check
-          # tools are on PATH and callable as plain argv (no ENTRYPOINT
-          # override needed -- see the Dockerfile's `ENTRYPOINT []`), and
-          # that the capability manifest is well-formed.
+          # tools and rwtask are on PATH and callable as plain argv (no
+          # ENTRYPOINT override needed -- see the Dockerfile's `ENTRYPOINT []`),
+          # and that the capability manifest is well-formed.
           docker run --rm rw-checks-codecollection:smoke ruff --version
           docker run --rm rw-checks-codecollection:smoke gitleaks version
+          docker run --rm rw-checks-codecollection:smoke rwtask --help
           docker run --rm -v "${{ github.workspace }}:/w" -w /w rw-checks-codecollection:smoke \
-            python3 -c "import yaml, sys; d = yaml.safe_load(open('.runwhen/capabilities/rw-checks.yaml')); assert d['capability'] == 'rw-checks'"
+            python3 -c "import yaml, sys; d = yaml.safe_load(open('capabilities/rw-checks/manifest.yaml')); assert d['capability'] == 'rw-checks'"
 
       # ----------------------------------------------------------------
       # Phase 2: only on push -- rebuild push-by-digest. This writes the
@@ -350,12 +339,8 @@ jobs:
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             io.runwhen.codecollection.commit=${{ github.sha }}
-            io.runwhen.runtime.commit=${{ needs.prepare.outputs.rt_sha }}
-            io.runwhen.runtime.ref=${{ needs.prepare.outputs.runtime_ref }}
           cache-from: type=gha,scope=rw-checks-codecollection-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=rw-checks-codecollection-${{ matrix.arch }}
-          build-args: |
-            ${{ needs.prepare.outputs.base_image_arg }}
 
       - name: Stage digest for merge job
         if: needs.prepare.outputs.should_push == 'true'
@@ -378,14 +363,20 @@ jobs:
 
   # ===========================================================================
   # merge — combine the per-arch digests into the final multi-arch manifest
-  # under every tag prepare computed. `buildx imagetools create` is a
-  # registry-side metadata operation -- no image rebuild.
+  # under every tag prepare computed (`docker buildx imagetools create` is a
+  # registry-side metadata operation -- no image rebuild), then render
+  # capabilities/rw-checks/manifest.yaml with the resolved digest.
   # ===========================================================================
   merge:
     needs: [prepare, build]
     if: needs.prepare.outputs.should_push == 'true'
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
       - name: Download digests
         uses: actions/download-artifact@v4
         with:
@@ -427,18 +418,59 @@ jobs:
           docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
 
       - name: Inspect resulting manifest
+        id: inspect
         env:
-          TAG_CSV: ${{ needs.prepare.outputs.tags }}
+          REPO_LC: ${{ needs.prepare.outputs.repo_lc }}
+          CANONICAL_TAG: ${{ needs.prepare.outputs.canonical_tag }}
         run: |
           set -euo pipefail
-          IFS=',' read -ra TAGS <<< "${TAG_CSV}"
-          docker buildx imagetools inspect "${TAGS[0]}"
+          out="$(docker buildx imagetools inspect "${REPO_LC}:${CANONICAL_TAG}")"
+          echo "${out}"
+          digest="$(echo "${out}" | awk '/^Digest:/ {print $2; exit}')"
+          if [ -z "${digest}" ]; then
+            echo "could not parse the multi-arch manifest digest from imagetools inspect output" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+
+      # docs/static-checks/CAPABILITY-CONTRACT.md Part 1: "Digest-pinned
+      # image. CI injects it at publish; a tag is not a version." The
+      # manifest's own header comment documents this same contract. This
+      # does not commit back to the repo -- it publishes the resolved
+      # manifest as a build artifact for whatever picks it up into the
+      # capability catalog next (that step is not yet defined in this repo).
+      - name: Render capability manifest with the resolved digest
+        env:
+          REPO_LC: ${{ needs.prepare.outputs.repo_lc }}
+          DIGEST: ${{ steps.inspect.outputs.digest }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/manifest
+          sed -E "s|^image: .*|image: ${REPO_LC}@${DIGEST}|" \
+            capabilities/rw-checks/manifest.yaml > /tmp/manifest/manifest.yaml
+          python3 -m pip install --quiet pyyaml
+          python3 - <<'PY'
+          import sys
+          import yaml
+          with open("/tmp/manifest/manifest.yaml") as f:
+              m = yaml.safe_load(f)
+          assert "INJECTED_BY_CI" not in m["image"], f"digest was not injected: {m['image']!r}"
+          print(f"rendered manifest image: {m['image']}")
+          PY
+
+      - name: Upload rendered manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: capability-manifest
+          path: /tmp/manifest/manifest.yaml
+          retention-days: 30
 
       - name: Summary
         env:
           REPO_LC: ${{ needs.prepare.outputs.repo_lc }}
           CANONICAL_TAG: ${{ needs.prepare.outputs.canonical_tag }}
           TAG_CSV: ${{ needs.prepare.outputs.tags }}
+          DIGEST: ${{ steps.inspect.outputs.digest }}
         run: |
           {
             echo "## rw-checks-codecollection build"
@@ -446,9 +478,8 @@ jobs:
             echo "- Event:               \`${{ github.event_name }}\`"
             echo "- Ref:                 \`${{ github.ref }}\`"
             echo "- Codecollection sha:  \`${{ github.sha }}\`"
-            echo "- Runtime ref:         \`${{ needs.prepare.outputs.runtime_ref }}\`"
-            echo "- Runtime sha:         \`${{ needs.prepare.outputs.rt_sha }}\`"
             echo "- Canonical tag:       \`${REPO_LC}:${CANONICAL_TAG}\`"
+            echo "- Digest:              \`${DIGEST}\`"
             echo "- Pushed:              \`true\`"
             echo
             echo "### Published manifest"

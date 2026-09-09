@@ -1,39 +1,74 @@
 # rw-checks-codecollection
 
-RunWhen CodeCollection of static-check capabilities (ruff, gitleaks, ...) on the capability/operation contract.
+RunWhen CodeCollection of static-check capabilities (ruff, gitleaks, ...) -- a **capability
+image**, built on the `runwhen_capability` SDK and its `rwtask` task host, not a Robot
+codebundle collection.
 
 ## What this is
 
-This repository packages static analysis tools into a single image, plus a **capability
-manifest** (`.runwhen/capabilities/rw-checks.yaml`) that describes it in terms the platform
-already understands. A **capability** is the packaged unit — one manifest, one digest-pinned
-image (`rw-checks` is a capability); an **operation** is one invocable entry point inside it
-(`ruff`, `gitleaks` are operations). Unlike the other codecollections in this org, this
-repository ships no Robot codebundles — it exists purely to run static checks against a
-repository's worktree and emit SARIF.
+This repository ships:
 
-See `docs/static-checks/CONTRACT.md` in `runwhen-auto` for the manifest shape, the SARIF
-frame format, and how findings flow from here into the platform. That file is the binding
-source of truth; this README is just an entry point.
+- **`sdk/runwhen_capability/`** -- a small, Robot-free Python SDK. Tasks are plain Python
+  functions; the SDK owns every boundary (inputs, outputs, credentials, subprocesses, SARIF
+  parsing, fingerprinting). It also provides `rwtask`, the task host: `rwtask serve` long-polls
+  a runner over plain HTTP/JSON, and `rwtask run` is the same code path against the local
+  filesystem, for development.
+- **`capabilities/rw-checks/`** -- the `rw-checks` capability: a manifest
+  (`manifest.yaml`), its tasks (`tasks.py`: `checkout` setup, `ruff` and `gitleaks` tasks),
+  and the JSON Schema exported from the SDK's models (`schemas/findings.json`).
 
-## Running an operation locally
+See `docs/static-checks/CAPABILITY-CONTRACT.md` and `docs/static-checks/EXECUTOR-CONTRACT.md`
+in `runwhen-auto` for the binding contracts this package implements -- the manifest shape, the
+finding shape, the fingerprint formula, and the wire between papi, the runner and this image.
+This README is just an entry point.
 
-Each operation's `run:` command in the manifest is just an argv — you can invoke it directly
-against a checkout with `docker run`, no platform involved:
+## Developing a task locally
 
-```
-docker run --rm -v "$PWD:/w" -w /w <image> ruff check --output-format=sarif .
-docker run --rm -v "$PWD:/w" -w /w <image> gitleaks detect --source . --report-format sarif --report-path /dev/stdout --no-banner --exit-code 0
-```
-
-Replace `<image>` with the tag CI published (see `.runwhen/capabilities/rw-checks.yaml` for
-the pinned digest) or with a local build:
+A capability author needs no cluster. `rwtask run` is the reference implementation: the same
+code the task host runs in production, against the local filesystem.
 
 ```
-docker build --build-arg BASE_IMAGE=ghcr.io/runwhen-contrib/rw-base-runtime:latest -t rw-checks:dev .
-docker run --rm -v "$PWD:/w" -w /w rw-checks:dev ruff check --output-format=sarif .
+pip install -e ".[dev]"
+
+cat > /tmp/request.json <<'JSON'
+{
+  "version": 1,
+  "setup": {
+    "task": "checkout",
+    "inputs": { "repoUrl": "https://github.com/octocat/Hello-World.git", "sha": "master" }
+  },
+  "tasks": [
+    { "task": "ruff", "inputs": { "tree": "${setup.tree}", "changed": "${setup.changed}" } },
+    { "task": "gitleaks", "inputs": { "tree": "${setup.tree}" } }
+  ]
+}
+JSON
+
+rwtask run capabilities/rw-checks --request /tmp/request.json
 ```
 
-In production this collection is not driven directly: `rwcheck` (in `runwhen-runner`) is the
-harness that runs each operation, fingerprints findings, filters them against the PR's changed
-files, and emits the NDJSON frames the platform consumes.
+Prints the `ResultEnvelope` (setup + per-task status/outputs/error) as JSON. A private repo
+needs a `credentials.json` (`{"repo": "<token>"}`) passed via `--credentials`; a public repo
+needs none -- `ctx.git.checkout()` degrades to an anonymous fetch when no credential is bound.
+
+## Running the image directly
+
+```
+docker build -t rw-checks:dev .
+docker run --rm rw-checks:dev rwtask --help
+docker run --rm rw-checks:dev ruff --version
+docker run --rm rw-checks:dev gitleaks version
+```
+
+In production the image is not driven directly: `rwtask serve --relay <url> --pool <poolId>`
+long-polls the runner as a warm executor (see `EXECUTOR-CONTRACT.md`'s "Wire 2"), executing one
+request (`setup` + N tasks) at a time and posting the result back.
+
+## Tests
+
+```
+make test        # python -m pytest -q
+make lint         # ruff check .
+make fmt-check    # ruff format --check .
+make schemas      # regenerate capabilities/*/schemas/findings.json from the SDK's models
+```

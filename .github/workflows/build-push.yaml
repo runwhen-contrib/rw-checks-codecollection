@@ -1,7 +1,8 @@
 name: Build And Push
 
-# Builds the rw-checks-codecollection capability image and pushes a
-# multi-arch manifest to GHCR with the tag schema the cc-registry-v2 image
+# Builds this repo's TWO capability images -- rw-checks (stateless) and
+# rw-worktree (stateful) -- and pushes a multi-arch manifest for each to
+# GHCR under its own name, with the tag schema the cc-registry-v2 image
 # catalog expects:
 #
 #     <sanitized-ref>-<cc_sha7>
@@ -10,38 +11,55 @@ name: Build And Push
 #   sanitized-ref = github.ref_name with '/' -> '-' (e.g. "main", "feature-foo", "pr-42")
 #   cc_sha7       = first 7 chars of github.sha (this repo's commit)
 #
-# Unlike this org's Robot codecollections, this image is not built FROM
-# rw-base-runtime (see Dockerfile) -- there is no runtime sha to embed in the
-# tag, and no BYO-base build-arg to plumb through.
+# Image == capability, 1:1 (sdk/runwhen_capability/loader.py's
+# discover_capability_dir docstring): rw-checks and rw-worktree are
+# different execution modes (stateless vs. stateful, manifest.yaml's
+# `execution.mode`) and the runner keys an executor pool per image digest,
+# so they can never be merged into one image even though they live in one
+# repo. Each capability gets its own Dockerfile (Dockerfile.rw-checks,
+# Dockerfile.rw-worktree) and its own published image name
+# (rw-checks-codecollection, rw-worktree-codecollection); both share the
+# SDK layer and this workflow.
+#
+# Unlike this org's Robot codecollections, neither image is built FROM
+# rw-base-runtime -- there is no runtime sha to embed in the tag, and no
+# BYO-base build-arg to plumb through.
 #
 # Architecture
 # ------------
 # The build is split across three jobs so each platform is built natively
-# rather than under QEMU emulation:
+# rather than under QEMU emulation, and both capabilities' images are built
+# independently of each other:
 #
-#   prepare        -- compute tag set + push flag ONCE, share with
-#                     downstream jobs so they can't drift; also validates
-#                     the capability manifest shape once
-#   build (matrix) -- one job per platform, each on its own native runner:
+#   prepare        -- compute the shared tag suffixes + push flag ONCE, share
+#                     with downstream jobs so they can't drift; also
+#                     validates both capability manifests' shape once
+#   build (matrix) -- one job per (capability, platform), each on its own
+#                     native runner:
 #                       linux/amd64 -> ubuntu-latest
 #                       linux/arm64 -> ubuntu-24.04-arm
 #                     each job:
-#                       1. builds the image natively (no QEMU)
+#                       1. builds that capability's image natively (no QEMU)
 #                       2. loads it into the local docker daemon
-#                       3. runs the smoke test against the native arch
+#                       3. runs the smoke test against the native arch --
+#                          including that rwtask actually starts serving
+#                          the right capability, not just that the binary
+#                          runs (see "Smoke test image" below)
 #                       4. on push, builds again push-by-digest (no tags)
-#                          and exports the per-platform digest as an artifact
-#   merge          -- pulls the per-platform digests and uses
-#                     `docker buildx imagetools create` to stitch them into
-#                     a single multi-arch manifest under every tag prepare
-#                     computed, then renders capabilities/rw-checks/manifest.yaml
-#                     with the resolved digest and uploads it as a build
-#                     artifact -- "CI resolves the digest ... and rewrites
-#                     this field" per the manifest's own header comment.
+#                          and exports the per-platform digest as an artifact,
+#                          keyed by capability AND arch
+#   merge (matrix) -- one job per capability: pulls that capability's
+#                     per-platform digests and uses `docker buildx imagetools
+#                     create` to stitch them into a single multi-arch
+#                     manifest under every tag prepare computed, then
+#                     renders that capability's own manifest.yaml with the
+#                     resolved digest and uploads it as a build artifact --
+#                     "CI resolves the digest ... and rewrites this field"
+#                     per each manifest's own header comment.
 #
 # `test` runs independently and gates `build`: the SDK's own pytest/ruff
 # suite is cheap and fast, and a broken task host should never reach an
-# image push.
+# image push -- for either capability.
 #
 # Build triggers:
 #   - push to ANY branch  -> produces a CodeCollectionVersion image for that branch
@@ -87,14 +105,13 @@ on:
   workflow_dispatch:
     inputs:
       push:
-        description: "Push the resulting image to GHCR."
+        description: "Push the resulting images to GHCR."
         required: false
         default: true
         type: boolean
 
 env:
   REGISTRY: ghcr.io
-  IMAGE: ${{ github.repository }}
 
 permissions:
   contents: read
@@ -104,7 +121,7 @@ jobs:
   # ===========================================================================
   # test — the SDK's own suite. Independent of prepare/build so it starts
   # immediately; `build` depends on it so a broken task host never reaches
-  # an image push.
+  # an image push, for either capability.
   # ===========================================================================
   test:
     runs-on: ubuntu-latest
@@ -132,18 +149,20 @@ jobs:
         run: ruff format --check .
 
   # ===========================================================================
-  # prepare — single source of truth for the tag set and push flag so the
-  # matrix builds and the final merge job don't drift. Also validates the
-  # capability manifest shape once, up front.
+  # prepare — single source of truth for the tag suffixes and push flag so
+  # the matrix builds and the merge jobs don't drift. Also validates both
+  # capability manifests' shape once, up front. Tag suffixes are computed
+  # WITHOUT a repo name baked in -- each capability's own image name is
+  # prefixed on in the build/merge jobs, since the two publish under
+  # different GHCR paths despite sharing this one repo.
   # ===========================================================================
   prepare:
     runs-on: ubuntu-latest
     outputs:
       should_push: ${{ steps.push_flag.outputs.should_push }}
-      tags: ${{ steps.meta.outputs.tags }}
       canonical_tag: ${{ steps.meta.outputs.canonical_tag }}
-      repo_lc: ${{ steps.meta.outputs.repo_lc }}
-      sanitized_ref: ${{ steps.meta.outputs.sanitized_ref }}
+      extra_tags: ${{ steps.meta.outputs.extra_tags }}
+      owner_lc: ${{ steps.meta.outputs.owner_lc }}
       cc_sha: ${{ steps.meta.outputs.cc_sha }}
     steps:
       - name: Checkout
@@ -163,7 +182,7 @@ jobs:
               echo "should_push=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
-      - name: Compute tag set
+      - name: Compute tag suffixes
         id: meta
         run: |
           set -euo pipefail
@@ -183,48 +202,46 @@ jobs:
           # so refs like "release/1.2" survive intact.
           sanitized_ref="$(echo "${ref_name}" | tr '/' '-' | tr -c 'A-Za-z0-9_.-' '-' | sed 's/^-*//;s/-*$//')"
 
-          # --- repo path (GHCR rejects uppercase) ---
-          repo_lc="$(echo "${{ env.REGISTRY }}/${{ env.IMAGE }}" | tr '[:upper:]' '[:lower:]')"
+          # --- registry owner path segment (GHCR rejects uppercase) ---
+          owner_lc="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
 
           # --- canonical immutable tag the catalog uses for discovery ---
           canonical_tag="${sanitized_ref}-${cc_sha7}"
 
-          # --- moving-pointer aliases (these get re-pointed on every build) ---
-          tags=( "${repo_lc}:${canonical_tag}" )
+          # --- moving-pointer alias suffixes (these get re-pointed on every
+          #     build; prefixed with each capability's own repo in
+          #     build/merge, same list for both capabilities) ---
+          extra=( "${sanitized_ref}" )
           case "${{ github.event_name }}" in
             push|workflow_dispatch)
-              # Branch alias (":main", ":feature-foo"). For push it's the
-              # pushed branch; for workflow_dispatch it's the dispatched
-              # ref. Both share this alias so a manual re-run of main
-              # behaves the same as an auto-push to main.
-              tags+=( "${repo_lc}:${sanitized_ref}" )
-              # Move ":latest" whenever the destination branch is main.
+              # Move "latest" whenever the destination branch is main.
               if [ "${{ github.ref_name }}" = "main" ]; then
-                tags+=( "${repo_lc}:latest" )
+                extra+=( "latest" )
               fi
               ;;
             pull_request)
-              tags+=( "${repo_lc}:pr-${{ github.event.pull_request.number }}" )
+              extra=( "pr-${{ github.event.pull_request.number }}" )
               ;;
           esac
 
           {
             echo "cc_sha=${cc_sha}"
             echo "sanitized_ref=${sanitized_ref}"
-            echo "repo_lc=${repo_lc}"
+            echo "owner_lc=${owner_lc}"
             echo "canonical_tag=${canonical_tag}"
-            printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")"
+            printf 'extra_tags=%s\n' "$(IFS=,; echo "${extra[*]}")"
           } >> "$GITHUB_OUTPUT"
 
           {
             echo "## Will publish"
             echo
-            for t in "${tags[@]}"; do echo "- \`${t}\`"; done
+            echo "- Canonical tag suffix: \`${canonical_tag}\`"
+            echo "- Alias tag suffixes:   $(IFS=,; echo "${extra[*]}")"
             echo
             echo "- Codecollection sha: \`${cc_sha}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Validate capability manifest
+      - name: Validate capability manifests
         run: |
           set -euo pipefail
           python3 -m pip install --quiet pyyaml
@@ -239,24 +256,33 @@ jobs:
               "execution", "appliesTo", "needs", "setup", "tasks", "retention",
           }
 
-          with open("capabilities/rw-checks/manifest.yaml") as f:
-              manifest = yaml.safe_load(f)
+          # (manifest path, expected capability id, expected execution mode)
+          MANIFESTS = [
+              ("capabilities/rw-checks/manifest.yaml", "rw-checks", "stateless"),
+              ("capabilities/rw-worktree/manifest.yaml", "rw-worktree", "stateful"),
+          ]
 
-          missing = REQUIRED_KEYS - manifest.keys()
-          if missing:
-              sys.exit(f"capability manifest missing required keys: {sorted(missing)}")
-          if manifest["capability"] != "rw-checks":
-              sys.exit(f"capability manifest 'capability' must be 'rw-checks', got {manifest['capability']!r}")
-          if manifest["execution"].get("mode") != "stateless":
-              sys.exit(f"capability manifest execution.mode must be 'stateless', got {manifest['execution'].get('mode')!r}")
+          for path, expected_id, expected_mode in MANIFESTS:
+              with open(path) as f:
+                  manifest = yaml.safe_load(f)
 
-          print("capability manifest has all required top-level keys")
+              missing = REQUIRED_KEYS - manifest.keys()
+              if missing:
+                  sys.exit(f"{path}: missing required keys: {sorted(missing)}")
+              if manifest["capability"] != expected_id:
+                  sys.exit(f"{path}: 'capability' must be {expected_id!r}, got {manifest['capability']!r}")
+              if manifest["execution"].get("mode") != expected_mode:
+                  sys.exit(
+                      f"{path}: execution.mode must be {expected_mode!r}, "
+                      f"got {manifest['execution'].get('mode')!r}"
+                  )
+              print(f"{path}: has all required top-level keys, capability={expected_id}, mode={expected_mode}")
           PY
 
   # ===========================================================================
-  # build — parallel native builds. Each matrix leg runs on a runner whose
-  # architecture matches the platform it is building, so there's no QEMU
-  # emulation cost.
+  # build — parallel native builds, one leg per (capability, platform), so
+  # each runs on a runner whose architecture matches the platform it is
+  # building, with no QEMU emulation cost.
   # ===========================================================================
   build:
     needs: [prepare, test]
@@ -264,10 +290,32 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/amd64
+          - capability: rw-checks
+            dockerfile: Dockerfile.rw-checks
+            image_name: rw-checks-codecollection
+            has_linters: true
+            platform: linux/amd64
             arch: amd64
             runner: ubuntu-latest
-          - platform: linux/arm64
+          - capability: rw-checks
+            dockerfile: Dockerfile.rw-checks
+            image_name: rw-checks-codecollection
+            has_linters: true
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - capability: rw-worktree
+            dockerfile: Dockerfile.rw-worktree
+            image_name: rw-worktree-codecollection
+            has_linters: false
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - capability: rw-worktree
+            dockerfile: Dockerfile.rw-worktree
+            image_name: rw-worktree-codecollection
+            has_linters: false
+            platform: linux/arm64
             arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
@@ -290,32 +338,73 @@ jobs:
 
       # ----------------------------------------------------------------
       # Phase 1: build natively + load locally so we can exec the smoke
-      # test. Per-arch GHA cache scope -- the two matrix legs run in
+      # test. Per-(capability, arch) GHA cache scope -- matrix legs run in
       # parallel on different runners, so they MUST NOT share a scope.
       # ----------------------------------------------------------------
       - name: Build (native, load)
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           load: true
-          tags: rw-checks-codecollection:smoke
-          cache-from: type=gha,scope=rw-checks-codecollection-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=rw-checks-codecollection-${{ matrix.arch }}
+          tags: ${{ matrix.image_name }}:smoke
+          cache-from: type=gha,scope=${{ matrix.image_name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image_name }}-${{ matrix.arch }}
 
       - name: Smoke test image
+        env:
+          IMG: ${{ matrix.image_name }}:smoke
+          MANIFEST: capabilities/${{ matrix.capability }}/manifest.yaml
         run: |
           set -euo pipefail
-          # Native-arch exec of the image -- verifies the pinned static-check
-          # tools and rwtask are on PATH and callable as plain argv (no
-          # ENTRYPOINT override needed -- see the Dockerfile's `ENTRYPOINT []`),
-          # and that the capability manifest is well-formed.
-          docker run --rm rw-checks-codecollection:smoke ruff --version
-          docker run --rm rw-checks-codecollection:smoke gitleaks version
-          docker run --rm rw-checks-codecollection:smoke rwtask --help
-          docker run --rm -v "${{ github.workspace }}:/w" -w /w rw-checks-codecollection:smoke \
-            python3 -c "import yaml, sys; d = yaml.safe_load(open('capabilities/rw-checks/manifest.yaml')); assert d['capability'] == 'rw-checks'"
+          # Native-arch exec of the image -- verifies rwtask is on PATH and
+          # callable as plain argv (no ENTRYPOINT override needed -- see the
+          # Dockerfile's `ENTRYPOINT []`), that this capability's manifest is
+          # well-formed, and -- the thing a successful `docker build` alone
+          # does NOT prove -- that `rwtask serve` actually loads this image's
+          # capability and starts serving it instead of dying on the loader's
+          # "expected exactly one capability" check.
+          docker run --rm "${IMG}" rwtask --help
+          docker run --rm -v "${{ github.workspace }}:/w" -w /w "${IMG}" \
+            python3 -c "import yaml, sys; d = yaml.safe_load(open('${MANIFEST}')); assert d['capability'] == '${{ matrix.capability }}'"
+
+          if [ "${{ matrix.has_linters }}" = "true" ]; then
+            docker run --rm "${IMG}" ruff --version
+            docker run --rm "${IMG}" gitleaks version
+          else
+            # rw-worktree ships no lint/secret-scan tooling -- it cannot run
+            # tasks that would need it. Assert absence so a future Dockerfile
+            # edit that accidentally ships them here gets caught.
+            docker run --rm "${IMG}" git --version
+            if docker run --rm "${IMG}" sh -c 'command -v ruff' >/dev/null 2>&1; then
+              echo "rw-worktree image must not ship ruff" >&2
+              exit 1
+            fi
+            if docker run --rm "${IMG}" sh -c 'command -v gitleaks' >/dev/null 2>&1; then
+              echo "rw-worktree image must not ship gitleaks" >&2
+              exit 1
+            fi
+          fi
+
+          # rwtask serve actually starts and loads the RIGHT capability --
+          # not just that the loader error is gone, but that it resolved
+          # THIS image's own capability, not the other one. `serve` logs
+          # "serving capability ... from ..." immediately after a successful
+          # load, before it ever polls a relay, so it doesn't need a real
+          # relay to answer correctly -- a stub that the poll 404s/501s
+          # against is enough; we only need the log line.
+          python3 -m http.server 8877 --directory /dev/null &
+          STUB_PID=$!
+          sleep 1
+          CONTAINER="$(docker run -d --add-host=host.docker.internal:host-gateway "${IMG}" \
+            rwtask serve --relay http://host.docker.internal:8877 --pool smoke-pool)"
+          sleep 5
+          docker logs "${CONTAINER}" 2>&1 | tee /tmp/serve.log
+          docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
+          kill "${STUB_PID}" 2>/dev/null || true
+          grep -q "serving capability '${{ matrix.capability }}' from" /tmp/serve.log \
+            || { echo "rwtask serve never logged a successful capability load" >&2; exit 1; }
 
       # ----------------------------------------------------------------
       # Phase 2: only on push -- rebuild push-by-digest. This writes the
@@ -332,15 +421,15 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
-          outputs: type=image,name=${{ needs.prepare.outputs.repo_lc }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }},push-by-digest=true,name-canonical=true,push=true
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             io.runwhen.codecollection.commit=${{ github.sha }}
-          cache-from: type=gha,scope=rw-checks-codecollection-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=rw-checks-codecollection-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.image_name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image_name }}-${{ matrix.arch }}
 
       - name: Stage digest for merge job
         if: needs.prepare.outputs.should_push == 'true'
@@ -356,20 +445,29 @@ jobs:
         if: needs.prepare.outputs.should_push == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ matrix.arch }}
+          name: digests-${{ matrix.capability }}-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
   # ===========================================================================
-  # merge — combine the per-arch digests into the final multi-arch manifest
-  # under every tag prepare computed (`docker buildx imagetools create` is a
-  # registry-side metadata operation -- no image rebuild), then render
-  # capabilities/rw-checks/manifest.yaml with the resolved digest.
+  # merge — one job per capability: combine that capability's per-arch
+  # digests into the final multi-arch manifest under every tag prepare
+  # computed (`docker buildx imagetools create` is a registry-side metadata
+  # operation -- no image rebuild), then render that capability's own
+  # capabilities/<name>/manifest.yaml with the resolved digest.
   # ===========================================================================
   merge:
     needs: [prepare, build]
     if: needs.prepare.outputs.should_push == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - capability: rw-checks
+            image_name: rw-checks-codecollection
+          - capability: rw-worktree
+            image_name: rw-worktree-codecollection
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -381,7 +479,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: /tmp/digests
-          pattern: digests-*
+          pattern: digests-${{ matrix.capability }}-*
           merge-multiple: true
 
       - name: Set up Docker Buildx
@@ -395,15 +493,21 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create multi-arch manifest
+        id: tags
         env:
-          REPO_LC: ${{ needs.prepare.outputs.repo_lc }}
-          TAG_CSV: ${{ needs.prepare.outputs.tags }}
+          REPO_LC: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }}
+          CANONICAL_TAG: ${{ needs.prepare.outputs.canonical_tag }}
+          EXTRA_TAGS: ${{ needs.prepare.outputs.extra_tags }}
         run: |
           set -euo pipefail
-          # Build the -t <tag> argv from the comma-separated tag list.
+          # Build the -t <tag> argv from the canonical tag + this
+          # capability's own repo-prefixed alias tags.
+          tags=( "${REPO_LC}:${CANONICAL_TAG}" )
+          IFS=',' read -ra EXTRA <<< "${EXTRA_TAGS}"
+          for suffix in "${EXTRA[@]}"; do tags+=( "${REPO_LC}:${suffix}" ); done
+
           tag_args=()
-          IFS=',' read -ra TAGS <<< "${TAG_CSV}"
-          for t in "${TAGS[@]}"; do tag_args+=(-t "$t"); done
+          for t in "${tags[@]}"; do tag_args+=(-t "$t"); done
 
           # Build the @<digest> argv from the staged digest files.
           digest_args=()
@@ -412,15 +516,17 @@ jobs:
             digest_args+=("${REPO_LC}@sha256:${d}")
           done
 
-          echo "Tags:    ${TAGS[*]}"
+          echo "Tags:    ${tags[*]}"
           echo "Digests: ${digest_args[*]}"
 
           docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
 
+          printf 'tags=%s\n' "$(IFS=,; echo "${tags[*]}")" >> "$GITHUB_OUTPUT"
+
       - name: Inspect resulting manifest
         id: inspect
         env:
-          REPO_LC: ${{ needs.prepare.outputs.repo_lc }}
+          REPO_LC: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }}
           CANONICAL_TAG: ${{ needs.prepare.outputs.canonical_tag }}
         run: |
           set -euo pipefail
@@ -434,20 +540,20 @@ jobs:
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       # docs/static-checks/CAPABILITY-CONTRACT.md Part 1: "Digest-pinned
-      # image. CI injects it at publish; a tag is not a version." The
+      # image. CI injects it at publish; a tag is not a version." Each
       # manifest's own header comment documents this same contract. This
       # does not commit back to the repo -- it publishes the resolved
       # manifest as a build artifact for whatever picks it up into the
       # capability catalog next (that step is not yet defined in this repo).
       - name: Render capability manifest with the resolved digest
         env:
-          REPO_LC: ${{ needs.prepare.outputs.repo_lc }}
+          REPO_LC: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }}
           DIGEST: ${{ steps.inspect.outputs.digest }}
         run: |
           set -euo pipefail
           mkdir -p /tmp/manifest
           sed -E "s|^image: .*|image: ${REPO_LC}@${DIGEST}|" \
-            capabilities/rw-checks/manifest.yaml > /tmp/manifest/manifest.yaml
+            capabilities/${{ matrix.capability }}/manifest.yaml > /tmp/manifest/manifest.yaml
           python3 -m pip install --quiet pyyaml
           python3 - <<'PY'
           import sys
@@ -461,19 +567,19 @@ jobs:
       - name: Upload rendered manifest
         uses: actions/upload-artifact@v4
         with:
-          name: capability-manifest
+          name: capability-manifest-${{ matrix.capability }}
           path: /tmp/manifest/manifest.yaml
           retention-days: 30
 
       - name: Summary
         env:
-          REPO_LC: ${{ needs.prepare.outputs.repo_lc }}
+          REPO_LC: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }}
           CANONICAL_TAG: ${{ needs.prepare.outputs.canonical_tag }}
-          TAG_CSV: ${{ needs.prepare.outputs.tags }}
+          TAG_CSV: ${{ steps.tags.outputs.tags }}
           DIGEST: ${{ steps.inspect.outputs.digest }}
         run: |
           {
-            echo "## rw-checks-codecollection build"
+            echo "## ${{ matrix.image_name }} build"
             echo
             echo "- Event:               \`${{ github.event_name }}\`"
             echo "- Ref:                 \`${{ github.ref }}\`"
@@ -482,7 +588,7 @@ jobs:
             echo "- Digest:              \`${DIGEST}\`"
             echo "- Pushed:              \`true\`"
             echo
-            echo "### Published manifest"
+            echo "### Published tags"
             IFS=',' read -ra TAGS <<< "${TAG_CSV}"
             for t in "${TAGS[@]}"; do echo "- \`${t}\`"; done
           } >> "$GITHUB_STEP_SUMMARY"

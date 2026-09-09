@@ -53,16 +53,26 @@ needs none -- `ctx.git.checkout()` degrades to an anonymous fetch when no creden
 
 ## Running the image directly
 
+Image == capability, 1:1 (`sdk/runwhen_capability/loader.py`'s `discover_capability_dir`
+docstring): `rw-checks` and `rw-worktree` are different execution modes (stateless vs.
+stateful) and must be separate executor pools, so each gets its own Dockerfile, built from
+the same SDK layer.
+
 ```
-docker build -t rw-checks:dev .
+docker build -f Dockerfile.rw-checks -t rw-checks:dev .
 docker run --rm rw-checks:dev rwtask --help
 docker run --rm rw-checks:dev ruff --version
 docker run --rm rw-checks:dev gitleaks version
+
+docker build -f Dockerfile.rw-worktree -t rw-worktree:dev .
+docker run --rm rw-worktree:dev rwtask --help
+docker run --rm rw-worktree:dev git --version
 ```
 
-In production the image is not driven directly: `rwtask serve --relay <url> --pool <poolId>`
+In production neither image is driven directly: `rwtask serve --relay <url> --pool <poolId>`
 long-polls the runner as a warm executor (see `EXECUTOR-CONTRACT.md`'s "Wire 2"), executing one
-request (`setup` + N tasks) at a time and posting the result back.
+request (`setup` + N tasks) at a time and posting the result back. Each image's `CMD` already
+bakes in its own `--capability-dir` so it never has to guess which capability it is serving.
 
 ## Tests
 

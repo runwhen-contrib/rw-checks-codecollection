@@ -110,7 +110,25 @@ class RequestEnvelope(BaseModel):
 
 
 class SetupResult(BaseModel):
-    status: Literal["ok", "failed"]
+    """`status`, in full:
+
+    - `ok` -- setup executed on this request and succeeded.
+    - `cached` -- setup was NOT re-executed; its outputs were reused from
+      an earlier request against this same scope (EXECUTOR-CONTRACT.md
+      "Addressing and caching"). `outputs` is honest either way -- a
+      `cached` result still carries the real, usable outputs, just not
+      freshly produced.
+    - `not_materialized` -- setup was not cached for this scope AND could
+      not be (re-)run because a required credential is missing: the
+      mcp.v1 sync path's shape (it carries no credentials, by design).
+      Distinct from `failed` so the runner/papi can recover by enqueuing
+      the leased (credentialed) row and retrying once, instead of
+      treating this as an ordinary, non-recoverable failure.
+    - `failed` -- setup executed and raised for any other reason (unknown
+      setup task, a real checkout failure, etc.) -- unchanged from before.
+    """
+
+    status: Literal["ok", "failed", "cached", "not_materialized"]
     outputs: dict[str, Any] = Field(default_factory=dict)
     error: str | None = None
 

@@ -1,0 +1,11 @@
+# Minimal fixture capability used by tests/test_host.py: mimics
+# rw-worktree's stateful open(setup)+read(task) shape (a declared
+# credential in setup, a task reading the materialised tree) to exercise
+# host.run_request's setup-output caching across requests to the same
+# scope -- the mcp.v1 sync read path.
+capability: rw-worktree-sync-fixture
+version: "0.0.0"
+setup:
+  task: open
+tasks:
+  - name: read

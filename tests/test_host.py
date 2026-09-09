@@ -130,3 +130,111 @@ def test_allow_anonymous_credentials_degrades_an_unresolved_credential(tmp_path)
 
     assert result.tasks[0].status == "ok"
     assert result.tasks[0].outputs == {"token": None}
+
+
+# -- setup-output caching: the mcp.v1 sync read path (EXECUTOR-CONTRACT.md
+# "Addressing and caching", CAPABILITY-CONTRACT.md Part 3 step 15) --------
+
+_WORKTREE_REQUEST = {
+    "version": 1,
+    "setup": {
+        "task": "open",
+        "inputs": {"repoUrl": "https://example.invalid/repo.git", "sha": "deadbeef"},
+    },
+    "tasks": [{"task": "read", "inputs": {"tree": "${setup.tree}"}}],
+}
+
+
+def test_sync_request_reuses_cached_setup_and_does_not_re_run_it(tmp_path):
+    """A sync-shaped request (setup present, no credentials) against a
+    scope whose setup already ran (the leased row's own request, which
+    does carry credentials) must reuse the cached outputs rather than
+    re-running setup -- re-running would hard-fail on the missing
+    credential (Context.credential() has no other behaviour)."""
+    capability = load_capability(FIXTURES / "worktree_sync")
+    request = RequestEnvelope.model_validate(_WORKTREE_REQUEST)
+
+    leased = run_request(capability, request, credentials={"repo": "tok"}, scope_dir=tmp_path)
+    assert leased.setup.status == "ok"
+
+    synced = run_request(capability, request, credentials={}, scope_dir=tmp_path)
+
+    assert synced.setup.status == "cached"
+    assert synced.tasks[0].status == "ok"
+    assert synced.tasks[0].outputs == {
+        "content": "hello from https://example.invalid/repo.git@deadbeef"
+    }
+
+
+def test_sync_request_against_a_fresh_scope_fails_not_materialized(tmp_path):
+    """No prior request has materialised this scope (a fresh or evicted
+    pod) -- setup must actually attempt to run, and since the sync path
+    carries no credentials, it must fail with the distinct
+    'not_materialized' status the runner/papi recover from by retrying via
+    the leased (credentialed) row -- never a generic failure, and never a
+    leaked exception-class string."""
+    capability = load_capability(FIXTURES / "worktree_sync")
+    request = RequestEnvelope.model_validate(_WORKTREE_REQUEST)
+
+    result = run_request(capability, request, credentials={}, scope_dir=tmp_path)
+
+    assert result.setup.status == "not_materialized"
+    assert "CredentialNotFoundError" not in result.setup.error
+    assert result.tasks[0].status == "failed"
+
+
+def test_cache_miss_when_the_request_names_a_different_repo_or_sha(tmp_path):
+    """A cached setup for one (repoUrl, sha) must never be served to a
+    request naming a different one -- that would be plausible content from
+    the wrong commit. A mismatch is a cache miss like any other: setup is
+    attempted again, which (with no credentials on this call) fails
+    not_materialized rather than silently reusing the wrong tree."""
+    capability = load_capability(FIXTURES / "worktree_sync")
+    first = RequestEnvelope.model_validate(_WORKTREE_REQUEST)
+    leased = run_request(capability, first, credentials={"repo": "tok"}, scope_dir=tmp_path)
+    assert leased.setup.status == "ok"
+
+    other = RequestEnvelope.model_validate(
+        {
+            "version": 1,
+            "setup": {
+                "task": "open",
+                "inputs": {"repoUrl": "https://example.invalid/repo.git", "sha": "other-sha"},
+            },
+            "tasks": [{"task": "read", "inputs": {"tree": "${setup.tree}"}}],
+        }
+    )
+
+    result = run_request(capability, other, credentials={}, scope_dir=tmp_path)
+
+    assert result.setup.status == "not_materialized"
+
+
+def test_stateless_leased_requests_are_unaffected_by_setup_caching(tmp_path):
+    """rw-checks-shaped usage: each leased request carries its own setup
+    and credentials against its own scope. Setup-output caching must not
+    change that -- two independent scopes never share a cache, so both
+    still execute setup fresh."""
+    capability = load_capability(FIXTURES / "echo")
+    request = RequestEnvelope.model_validate(
+        {
+            "version": 1,
+            "setup": {"task": "prep", "inputs": {"userName": "world"}},
+            "tasks": [
+                {
+                    "task": "echo",
+                    "inputs": {"greeting": "${setup.greeting}", "items": "${setup.items}"},
+                }
+            ],
+        }
+    )
+    scope_a = tmp_path / "a"
+    scope_a.mkdir()
+    scope_b = tmp_path / "b"
+    scope_b.mkdir()
+
+    result_a = run_request(capability, request, credentials={}, scope_dir=scope_a)
+    result_b = run_request(capability, request, credentials={}, scope_dir=scope_b)
+
+    assert result_a.setup.status == "ok"
+    assert result_b.setup.status == "ok"

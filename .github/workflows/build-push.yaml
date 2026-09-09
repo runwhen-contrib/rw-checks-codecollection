@@ -403,8 +403,13 @@ jobs:
           docker logs "${CONTAINER}" 2>&1 | tee /tmp/serve.log
           docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
           kill "${STUB_PID}" 2>/dev/null || true
-          grep -q "serving capability '${{ matrix.capability }}' from" /tmp/serve.log \
-            || { echo "rwtask serve never logged a successful capability load" >&2; exit 1; }
+          # Match capability name and source dir independently: the line carries
+          # fields between them (e.g. "(execution.mode=stateful)") and gained one
+          # in b1a15da, which broke a grep that assumed they were adjacent. Assert
+          # both facts, tolerate anything in between.
+          grep -qE "serving capability '${{ matrix.capability }}'.* from capabilities/${{ matrix.capability }}" /tmp/serve.log \
+            || { echo "rwtask serve never logged a successful capability load" >&2
+                 echo "--- serve.log ---" >&2; cat /tmp/serve.log >&2; exit 1; }
 
       # ----------------------------------------------------------------
       # Phase 2: only on push -- rebuild push-by-digest. This writes the

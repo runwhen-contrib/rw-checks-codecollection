@@ -23,7 +23,6 @@ version bumped there but not re-hashed here cannot reach an image.
 
 from __future__ import annotations
 
-import datetime as dt
 import hashlib
 import json
 import sys

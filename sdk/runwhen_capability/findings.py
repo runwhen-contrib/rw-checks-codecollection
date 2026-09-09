@@ -19,20 +19,30 @@ FINGERPRINT_LENGTH = 32
 
 _WHITESPACE_RUN = re.compile(r"\s+")
 
-# findings: hard cap on the number of findings a `rw.findings.v1` result
-# carries, mirroring the wire caps repo_fs.py already has for read/grep/ls
-# (MAX_READ_RESPONSE_BYTES, HARD_GREP_MAX_MATCHES, MAX_LS_ENTRIES) -- picked
-# from what the wire can carry, not a round number. A realistic Finding
-# (fingerprint + capability + operation + rule + path + line + severity +
-# message + context) serializes to ~330 bytes; budgeting ~500 bytes/finding
-# for longer paths/messages against the same 256 KiB per-output response
-# budget as MAX_READ_RESPONSE_BYTES gives 262144 // 500 = 524, rounded down
-# to 500 to match MAX_LS_ENTRIES and leave headroom. Confirmed against the
-# field failure this exists to prevent: a run against the 468-platform
-# monorepo returned 19,527 raw ruff findings at ~330 bytes each (~6.4 MB) --
-# the "several MB" result papi 413'd, three times, before max_attempts
-# failed the run.
-MAX_FINDINGS_PER_RESULT = 500
+# findings: a safety valve against a pathological blowup, NOT a presentation
+# limit -- unlike repo_fs.py's read/grep/ls caps (MAX_READ_RESPONSE_BYTES,
+# HARD_GREP_MAX_MATCHES, MAX_LS_ENTRIES), which bound what a human/agent reads
+# in one call, this result is the *only* durable record a static-check task
+# ever produces: papi stores it verbatim in capability_runs.result (JSONB),
+# there is no findings table, and whatever this cap drops is gone forever --
+# `truncated: true` records that data was lost, not what. Human-scale
+# truncation belongs at papi's Check Run; agent-scale truncation belongs at
+# papi's findings catalog. Do not lower this to make either of those nicer.
+#
+# Sized off the transport that actually carries it, not a round number: the
+# runner-control ingress this result passes through is being raised to 64m
+# (nginx MiB units: 64 * 1,048,576 = 67,108,864 bytes). Budgeting half of
+# that to the findings payload -- 33,554,432 bytes -- and leaving the other
+# half as headroom for JSON envelope overhead and per-finding size variance,
+# against the ~330 bytes/finding measured on the field failure this exists to
+# prevent (a run against the 468-platform monorepo: 19,527 raw ruff findings,
+# ~6.3 MB, the "several MB" result papi 413'd three times before max_attempts
+# failed the run -- back when the ingress was nginx's 1 MB default) gives
+# 33,554,432 // 330 = 101,679, rounded down to a clean 100,000. That leaves
+# generous headroom above any realistic PR-scoped result, and even lets a
+# monorepo-wide run like the 19,527-finding case above pass through whole --
+# this cap only bites on a genuine runaway well past that.
+MAX_FINDINGS_PER_RESULT = 100_000
 
 
 def normalize_path(path: str) -> str:
@@ -97,9 +107,9 @@ class FindingsClient:
     def cap(self, findings: list[Finding]) -> FindingsResult:
         """Caps `findings` at MAX_FINDINGS_PER_RESULT and reports whether it
         did -- the same honesty ctx.repo_fs.grep already gives a capped
-        match list. A task's whole findings list can otherwise be many
-        thousands of rows on an undiffed run against a large repo, well
-        past what the wire can carry in one result -- see
+        match list. This is a safety valve against a genuine runaway, not
+        routine truncation -- any realistic run, even an undiffed one
+        against a large repo, should pass through untouched. See
         MAX_FINDINGS_PER_RESULT for the byte-budget arithmetic. Call this
         last, after filter_changed/fingerprint, so the cap applies to the
         exact list the task is about to return."""

@@ -94,3 +94,18 @@ def test_cap_exactly_at_limit_is_not_truncated():
 
     assert len(got.findings) == MAX_FINDINGS_PER_RESULT
     assert got.truncated is False
+
+
+def test_cap_realistic_monorepo_scale_passes_through_untruncated():
+    # Regression guard for the bug this whole change fixes: 19,527 is the
+    # measured 468-platform monorepo-wide ruff run (~6.3 MB, ~330 bytes/
+    # finding) that the old 500 cap would have silently gutted to 500 --
+    # destroying the only durable record of ~19,000 real findings. It must
+    # pass through whole under the new byte-budget-sized ceiling.
+    ctx = Context(capability="rw-checks", operation="ruff", workdir="/tmp")
+    findings = [make_finding(f"src/{i}.py") for i in range(19_527)]
+
+    got = ctx.findings.cap(findings)
+
+    assert len(got.findings) == 19_527
+    assert got.truncated is False

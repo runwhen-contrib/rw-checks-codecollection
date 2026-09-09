@@ -149,7 +149,7 @@ def test_actionlint_parses_bare_array():
 
 def test_actionlint_snippet_drops_caret_line():
     """actionlint's `snippet` is source line + caret-underline; the caret
-    line is not source text and would corrupt the fingerprint context."""
+    line is not source text and would corrupt the finding's context."""
     records = adapters.actionlint(fixture("actionlint.json"))
     for r in records:
         assert "\n" not in r["snippet"]

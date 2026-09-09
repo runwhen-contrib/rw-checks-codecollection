@@ -42,7 +42,7 @@ def ruff(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.sarif.parse(proc.stdout, root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -74,7 +74,7 @@ def gitleaks(ctx: Context, tree: Path):
         cwd=tree,
     )
     findings = ctx.sarif.parse(report.read_text(), root=tree)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -87,7 +87,7 @@ def trivy(ctx: Context, tree: Path):
         cwd=tree,
     )
     findings = ctx.sarif.parse(proc.stdout, root=tree)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -99,7 +99,7 @@ def osv_scanner(ctx: Context, tree: Path):
     # for the same reason as gitleaks/trivy above.
     proc = ctx.run(["osv-scanner", "--format", "sarif", "-r", "."], cwd=tree)
     findings = ctx.sarif.parse(proc.stdout, root=tree)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -120,7 +120,7 @@ def checkov(ctx: Context, tree: Path):
     )
     report = out_dir / "results_sarif.sarif"
     findings = ctx.sarif.parse(report.read_text(), root=tree)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -132,7 +132,7 @@ def zizmor(ctx: Context, tree: Path):
         cwd=tree,
     )
     findings = ctx.sarif.parse(proc.stdout, root=tree)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -146,7 +146,7 @@ def tflint(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.sarif.parse(proc.stdout, root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 def _find_files(tree: Path, *patterns: str) -> list[str]:
@@ -175,7 +175,7 @@ def shellcheck(ctx: Context, tree: Path, changed: list[str] | None):
         findings = ctx.findings.from_records(adapters.shellcheck(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -190,7 +190,7 @@ def hadolint(ctx: Context, tree: Path, changed: list[str] | None):
         findings = ctx.findings.from_records(adapters.hadolint(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -200,7 +200,7 @@ def yamllint(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.yamllint(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -213,7 +213,7 @@ def actionlint(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.actionlint(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -228,7 +228,7 @@ def pylint(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.pylint(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -239,7 +239,7 @@ def sqlfluff(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.sqlfluff(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -252,7 +252,7 @@ def biome(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.biome(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -263,7 +263,7 @@ def ast_grep(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.ast_grep(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -273,7 +273,7 @@ def regal(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.regal(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -283,7 +283,7 @@ def vale(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.vale(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -294,7 +294,7 @@ def flake8(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.flake8(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -322,7 +322,7 @@ def checkmake(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.checkmake(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -333,7 +333,7 @@ def dotenv_linter(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.dotenv_linter(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -344,7 +344,7 @@ def buf(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.findings.from_records(adapters.buf(proc.stdout), root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -375,4 +375,4 @@ def trufflehog(ctx: Context, tree: Path):
         cwd=tree,
     )
     findings = ctx.findings.from_records(adapters.trufflehog(proc.stdout), root=tree)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": findings}

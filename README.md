@@ -10,7 +10,7 @@ This repository ships:
 
 - **`sdk/runwhen_capability/`** -- a small, Robot-free Python SDK. Tasks are plain Python
   functions; the SDK owns every boundary (inputs, outputs, credentials, subprocesses, SARIF
-  parsing, fingerprinting). It also provides `rwtask`, the task host: `rwtask serve` long-polls
+  parsing). It also provides `rwtask`, the task host: `rwtask serve` long-polls
   a runner over plain HTTP/JSON, and `rwtask run` is the same code path against the local
   filesystem, for development.
 - **`capabilities/rw-checks/`** -- the `rw-checks` capability: a manifest
@@ -19,8 +19,8 @@ This repository ships:
 
 See `docs/static-checks/CAPABILITY-CONTRACT.md` and `docs/static-checks/EXECUTOR-CONTRACT.md`
 in `runwhen-auto` for the binding contracts this package implements -- the manifest shape, the
-finding shape, the fingerprint formula, and the wire between papi, the runner and this image.
-This README is just an entry point.
+finding shape, and the wire between papi, the runner and this image. This README is just an
+entry point.
 
 ## Developing a task locally
 

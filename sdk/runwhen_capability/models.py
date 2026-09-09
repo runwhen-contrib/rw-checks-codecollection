@@ -24,11 +24,8 @@ Severity = Literal["error", "warning", "note"]
 
 
 class Finding(BaseModel):
-    """One static-check finding. `fingerprint` is None until
-    Context.findings.fingerprint() has run over it -- see CONTRACT.md's
-    fingerprint formula, ported byte-identical in findings.py."""
+    """One static-check finding."""
 
-    fingerprint: str | None = None
     capability: str
     operation: str
     rule: str

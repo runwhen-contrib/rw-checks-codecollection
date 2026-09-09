@@ -1,16 +1,16 @@
-"""Finding fingerprint and changed-files filter, ported byte-identical from
-the Go implementation (internal/rwcheck/fingerprint, internal/rwcheck/diff in
-runwhen-runner) per docs/static-checks/CONTRACT.md:
+"""Finding path/context normalization and the changed-files filter, ported
+from the Go implementation (internal/rwcheck/diff in runwhen-runner) per
+docs/static-checks/CONTRACT.md.
 
-    fingerprint = hex(sha256("v1|" + capability + "|" + operation + "|" +
-                              rule_id + "|" + path + "|" + normalized_context))[:32]
-
-papi trusts this value; it must never be recomputed downstream of this SDK.
+Findings surface only as GitHub Check Runs, which are keyed by commit SHA:
+every push regenerates the whole set and GitHub discards the previous one,
+so there is no cross-run identity to reconcile against. This module used to
+also compute a `fingerprint` for that purpose; it was removed once its only
+consumer (an LLM-prompt citation token) stopped needing it.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import posixpath
 import re
@@ -20,8 +20,6 @@ from urllib.parse import unquote, urljoin, urlparse
 
 from .models import Finding
 from .pathsafe import safe_path
-
-FINGERPRINT_LENGTH = 32
 
 #: The only severities a Finding may carry (models.Severity).
 _SEVERITIES = frozenset({"error", "warning", "note"})
@@ -44,30 +42,12 @@ def normalize_context(context: str) -> str:
     return _WHITESPACE_RUN.sub(" ", trimmed)
 
 
-def compute(capability: str, operation: str, rule: str, path: str, context: str) -> str:
-    """The CONTRACT fingerprint. path and context are normalized internally
-    so callers can pass raw SARIF values straight through."""
-    raw = (
-        "v1|"
-        + capability
-        + "|"
-        + operation
-        + "|"
-        + rule
-        + "|"
-        + normalize_path(path)
-        + "|"
-        + normalize_context(context)
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:FINGERPRINT_LENGTH]
-
-
 # --- shared path / context resolution ---------------------------------------
 # Lives here rather than in sarif.py because EVERY adapter -- SARIF or not --
-# must normalise paths and resolve context identically: `context` feeds the
-# fingerprint, so any divergence between the SARIF path and a JSON/text
-# adapter would produce two different fingerprints for the same defect, and
-# `resolve_finding` would stop matching across runs. sarif.py re-exports
+# must normalise paths and resolve context identically: `context` is what
+# papi ships to the review agent (the offending source line), so any
+# divergence between the SARIF path and a JSON/text adapter would produce
+# inconsistent context for the same defect. sarif.py re-exports
 # `normalize_uri` for backwards compatibility with its existing importers.
 
 
@@ -76,8 +56,8 @@ def normalize_uri(uri: str, worktree_root: str) -> tuple[str, bool]:
     forward slashes, no leading './'. Returns ("", False) when `uri` is
     empty, names a scheme this does not understand (anything but "file" or
     no scheme at all), or resolves outside `worktree_root` -- callers must
-    DROP such a finding rather than fingerprint or diff-filter it against a
-    path that can never match."""
+    DROP such a finding rather than diff-filter it against a path that can
+    never match."""
     if not uri:
         return "", False
 
@@ -205,9 +185,8 @@ class FindingsClient:
             snippet   optional -- when the tool supplies the offending text,
                       it is preferred over re-reading the line from disk.
 
-        Findings are returned UNFINGERPRINTED, exactly like
-        `ctx.sarif.parse` -- callers run `.fingerprint()` themselves so
-        there is one place where that happens for every adapter.
+        Behaves exactly like `ctx.sarif.parse` -- both paths share this
+        module's path/context normalization so every adapter agrees.
         """
         root = Path(root)
         smap = severity_map or {}
@@ -253,14 +232,4 @@ class FindingsClient:
                     context=normalize_context(context),
                 )
             )
-        return out
-
-    def fingerprint(self, findings: list[Finding]) -> list[Finding]:
-        """Fills in `fingerprint` on each finding using the CONTRACT formula.
-        Returns new Finding instances (Finding is immutable-by-convention
-        here); does not mutate the input list."""
-        out = []
-        for f in findings:
-            fp = compute(f.capability, f.operation, f.rule, f.path, f.context)
-            out.append(f.model_copy(update={"fingerprint": fp}))
         return out

@@ -22,7 +22,7 @@ record shape `ctx.findings.from_records()` consumes:
 
 Adapters live in the capability, not in the SDK, because which field holds a
 path is tool knowledge. The SDK owns the generic half (normalisation, context
-resolution, fingerprinting) -- see sdk/runwhen_capability/findings.py.
+resolution) -- see sdk/runwhen_capability/findings.py.
 
 Every adapter is tested against REAL captured output in
 tests/fixtures/tools/, produced by scripts/capture_fixtures.sh. See that

@@ -2,10 +2,10 @@
 """Run EVERY registered task against a real checkout, inside the built image.
 
 The adapter tests parse captured bytes; they never invoke a tool. This does
-the other half: it proves each task's argv actually runs, that the tool's
-live output still matches what the adapter expects, and that findings come
-back fingerprinted. A task can pass every unit test and still be broken by a
-wrong flag -- that is exactly how the gitleaks /dev/stdout bug survived.
+the other half: it proves each task's argv actually runs and that the
+tool's live output still matches what the adapter expects. A task can pass
+every unit test and still be broken by a wrong flag -- that is exactly how
+the gitleaks /dev/stdout bug survived.
 
 Run inside the image:
 
@@ -78,12 +78,8 @@ def main() -> int:
         try:
             out = taskdef.func(ctx, **kwargs)
             findings = out.get("findings", [])
-            unfp = [f for f in findings if not getattr(f, "fingerprint", None)]
             detail = ""
-            if unfp:
-                detail = f"!! {len(unfp)} UNFINGERPRINTED"
-                errors += 1
-            elif findings:
+            if findings:
                 detail = f"{findings[0].rule} {findings[0].path}:{findings[0].line}"
             else:
                 empty.append(name)

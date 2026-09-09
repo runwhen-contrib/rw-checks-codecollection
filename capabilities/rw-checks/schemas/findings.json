@@ -1,20 +1,8 @@
 {
   "$defs": {
     "Finding": {
-      "description": "One static-check finding. `fingerprint` is None until\nContext.findings.fingerprint() has run over it -- see CONTRACT.md's\nfingerprint formula, ported byte-identical in findings.py.",
+      "description": "One static-check finding.",
       "properties": {
-        "fingerprint": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Fingerprint"
-        },
         "capability": {
           "title": "Capability",
           "type": "string"

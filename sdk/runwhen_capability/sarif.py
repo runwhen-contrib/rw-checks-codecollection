@@ -8,7 +8,7 @@ Path normalisation mirrors the Go implementation exactly: an absolute
 trustworthy against the worktree root the operation actually ran in, so a
 location that does not resolve under `root` is DROPPED (logged, not silently
 passed through with an unnormalized path) -- such a path can never match the
-changed-files filter or be fingerprinted meaningfully.
+changed-files filter.
 """
 
 from __future__ import annotations

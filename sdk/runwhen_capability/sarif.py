@@ -34,6 +34,9 @@ class _RawFinding:
     message: str
     path: str  # "" if no location
     line: int  # 0 if no region
+    column: int  # 0 if region carries no startColumn
+    end_line: int  # 0 if region carries no endLine (or no region)
+    end_column: int  # 0 if region carries no endColumn
     snippet: str  # "" if the result carries no region.snippet.text
 
 
@@ -88,7 +91,7 @@ def _flatten(
             message = (res.get("message") or {}).get("text", "") or ""
             locations = res.get("locations") or []
             if not locations:
-                out.append(_RawFinding(rule_id, sev, message, "", 0, ""))
+                out.append(_RawFinding(rule_id, sev, message, "", 0, 0, 0, 0, ""))
                 continue
 
             phys = (locations[0] or {}).get("physicalLocation") or {}
@@ -108,6 +111,9 @@ def _flatten(
                     message=message,
                     path=normalized,
                     line=region.get("startLine", 0) or 0,
+                    column=region.get("startColumn", 0) or 0,
+                    end_line=region.get("endLine", 0) or 0,
+                    end_column=region.get("endColumn", 0) or 0,
                     snippet=snippet,
                 )
             )
@@ -165,6 +171,9 @@ class SarifClient:
                     rule=rf.rule_id,
                     path=rf.path,
                     line=rf.line,
+                    column=rf.column,
+                    end_line=rf.end_line,
+                    end_column=rf.end_column,
                     severity=rf.severity,
                     message=rf.message,
                     context=normalize_context(context),

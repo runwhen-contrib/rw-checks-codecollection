@@ -175,6 +175,9 @@ class FindingsClient:
             path      required -- dropped if it does not resolve under `root`
             rule      required -- the tool's own rule/check id
             line      optional, default 0
+            column    optional, default 0 -- 1-based
+            end_line  optional, default 0 -- 0 means single-line
+            end_column optional, default 0 -- 1-based
             severity  optional -- looked up in `severity_map`, else
                       `default_severity`. Mapping to our three-value
                       vocabulary is the CAPABILITY's job: every tool has its
@@ -203,6 +206,9 @@ class FindingsClient:
                     )
                 continue
             line = int(rec.get("line", 0) or 0)
+            column = int(rec.get("column", 0) or 0)
+            end_line = int(rec.get("end_line", 0) or 0)
+            end_column = int(rec.get("end_column", 0) or 0)
             context = resolve_context(
                 root,
                 normalized,
@@ -219,6 +225,9 @@ class FindingsClient:
                     rule=str(rec.get("rule", "") or ""),
                     path=normalized,
                     line=line,
+                    column=column,
+                    end_line=end_line,
+                    end_column=end_column,
                     # An adapter that already speaks our vocabulary passes
                     # through untouched. `severity_map` is for the other shape --
                     # a record carrying the tool's RAW severity word. Without

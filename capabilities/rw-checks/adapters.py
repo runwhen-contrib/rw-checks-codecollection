@@ -75,6 +75,10 @@ def shellcheck(text: str) -> list[dict]:
             # human (and any suppression comment) actually refers to.
             "rule": f"SC{c.get('code')}" if c.get("code") is not None else "",
             "line": c.get("line", 0),
+            # shellcheck's column/endLine/endColumn are already 1-indexed.
+            "column": c.get("column", 0),
+            "end_line": c.get("endLine", 0),
+            "end_column": c.get("endColumn", 0),
             "severity": SHELLCHECK_SEVERITY.get(str(c.get("level", "")).lower(), "warning"),
             "message": c.get("message", ""),
         }
@@ -99,6 +103,8 @@ def hadolint(text: str) -> list[dict]:
             "path": d.get("file", ""),
             "rule": d.get("code", ""),
             "line": d.get("line", 0),
+            # hadolint carries no end_line/end_column -- column only.
+            "column": d.get("column", 0),
             "severity": HADOLINT_SEVERITY.get(str(d.get("level", "")).lower(), "warning"),
             "message": d.get("message", ""),
         }
@@ -127,6 +133,7 @@ def yamllint(text: str) -> list[dict]:
                 "path": m["path"],
                 "rule": m["rule"],
                 "line": int(m["line"]),
+                "column": int(m["col"]),
                 "severity": YAMLLINT_SEVERITY.get(m["level"].lower(), "note"),
                 "message": m["message"],
             }
@@ -151,6 +158,9 @@ def actionlint(text: str) -> list[dict]:
             # actionlint has to a rule id -- it has no separate code field.
             "rule": d.get("kind", ""),
             "line": d.get("line", 0),
+            # actionlint reports no end_line -- every finding is single-line.
+            "column": d.get("column", 0),
+            "end_column": d.get("end_column", 0),
             "severity": ACTIONLINT_SEVERITY["error"],
             "message": d.get("message", ""),
             # `snippet` is two lines: the source line, then a caret-underline
@@ -177,18 +187,31 @@ PYLINT_SEVERITY = {
 
 def pylint(text: str) -> list[dict]:
     payload = _loads(text) or []
-    return [
-        {
-            "path": d.get("path", ""),
-            # message-id (e.g. "C0410") is what a `# pylint: disable=`
-            # comment names; `symbol` is the human-readable alias for it.
-            "rule": d.get("message-id", ""),
-            "line": d.get("line", 0),
-            "severity": PYLINT_SEVERITY.get(str(d.get("type", "")).lower(), "warning"),
-            "message": d.get("message", ""),
-        }
-        for d in payload
-    ]
+    out = []
+    for d in payload:
+        # pylint's column/endColumn are 0-INDEXED (straight off astroid's
+        # col_offset/end_col_offset), unlike `line`/`endLine` which are
+        # already 1-based -- so only the two column fields get +1. Checked
+        # this against the fixture: "    if event == None:" reports
+        # column=7, which is the 0-indexed position of the "e" in "event"
+        # (1-indexed column 8).
+        col = d.get("column")
+        end_col = d.get("endColumn")
+        out.append(
+            {
+                "path": d.get("path", ""),
+                # message-id (e.g. "C0410") is what a `# pylint: disable=`
+                # comment names; `symbol` is the human-readable alias for it.
+                "rule": d.get("message-id", ""),
+                "line": d.get("line", 0),
+                "column": (col + 1) if isinstance(col, int) else 0,
+                "end_line": d.get("endLine", 0) or 0,
+                "end_column": (end_col + 1) if isinstance(end_col, int) else 0,
+                "severity": PYLINT_SEVERITY.get(str(d.get("type", "")).lower(), "warning"),
+                "message": d.get("message", ""),
+            }
+        )
+    return out
 
 
 # --- sqlfluff -------------------------------------------------------------
@@ -207,6 +230,10 @@ def sqlfluff(text: str) -> list[dict]:
             "path": f.get("filepath", ""),
             "rule": v.get("code", ""),
             "line": v.get("start_line_no", 0),
+            # sqlfluff's *_pos fields are already 1-indexed.
+            "column": v.get("start_line_pos", 0),
+            "end_line": v.get("end_line_no", 0),
+            "end_column": v.get("end_line_pos", 0),
             "severity": SQLFLUFF_SEVERITY.get(v.get("warning"), "note"),
             "message": v.get("description", ""),
         }
@@ -242,6 +269,11 @@ def biome(text: str) -> list[dict]:
                 "path": loc.get("path", {}).get("file", ""),
                 "rule": d.get("category", ""),
                 "line": source.count("\n", 0, start) + 1,
+                # No column/end_line/end_column: biome's `location` carries
+                # only a byte-offset span, no column number at all -- unlike
+                # `line`, there is no way to derive one without re-decoding
+                # the byte offset against the source text's line/column
+                # grid. Left at the Finding default (0 == not reported).
                 "severity": BIOME_SEVERITY.get(str(d.get("severity", "")).lower(), "warning"),
                 "message": d.get("description", ""),
             }
@@ -263,17 +295,33 @@ AST_GREP_SEVERITY = {
 
 def ast_grep(text: str) -> list[dict]:
     payload = _loads(text) or []
-    return [
-        {
-            "path": d.get("file", ""),
-            "rule": d.get("ruleId", ""),
-            "line": d.get("range", {}).get("start", {}).get("line", 0) + 1,
-            "severity": AST_GREP_SEVERITY.get(str(d.get("severity", "")).lower(), "warning"),
-            "message": d.get("message", ""),
-            "snippet": d.get("lines", ""),
-        }
-        for d in payload
-    ]
+    out = []
+    for d in payload:
+        rng = d.get("range", {})
+        start = rng.get("start", {})
+        end = rng.get("end", {})
+        # `range.start.column`/`range.end.line`/`range.end.column` are
+        # 0-INDEXED, same as `range.start.line` above -- checked against the
+        # fixture: "    return eval(event)" reports start.column=11, the
+        # 0-indexed position of the "e" in "eval" (1-indexed column 12). All
+        # three get the same +1 treatment as `line` above.
+        col = start.get("column")
+        end_line = end.get("line")
+        end_col = end.get("column")
+        out.append(
+            {
+                "path": d.get("file", ""),
+                "rule": d.get("ruleId", ""),
+                "line": start.get("line", 0) + 1,
+                "column": (col + 1) if isinstance(col, int) else 0,
+                "end_line": (end_line + 1) if isinstance(end_line, int) else 0,
+                "end_column": (end_col + 1) if isinstance(end_col, int) else 0,
+                "severity": AST_GREP_SEVERITY.get(str(d.get("severity", "")).lower(), "warning"),
+                "message": d.get("message", ""),
+                "snippet": d.get("lines", ""),
+            }
+        )
+    return out
 
 
 # --- regal ------------------------------------------------------------------
@@ -287,11 +335,16 @@ def regal(text: str) -> list[dict]:
     out = []
     for v in payload.get("violations", []):
         loc = v.get("location", {})
+        end = loc.get("end", {})
         out.append(
             {
                 "path": loc.get("file", ""),
                 "rule": v.get("title", ""),
                 "line": loc.get("row", 0),
+                # regal's row/col are already 1-indexed.
+                "column": loc.get("col", 0),
+                "end_line": end.get("row", 0),
+                "end_column": end.get("col", 0),
                 "severity": REGAL_SEVERITY.get(str(v.get("level", "")).lower(), "note"),
                 "message": v.get("description", ""),
                 "snippet": loc.get("text", ""),
@@ -312,11 +365,17 @@ def vale(text: str) -> list[dict]:
     out = []
     for path, alerts in payload.items():
         for a in alerts:
+            # `Span` is a 2-element [start, end] pair of 1-indexed column
+            # offsets on `Line` -- there is no separate end-line field
+            # because a vale alert never crosses a line.
+            span = a.get("Span") or [0, 0]
             out.append(
                 {
                     "path": path,
                     "rule": a.get("Check", ""),
                     "line": a.get("Line", 0),
+                    "column": span[0] if len(span) > 0 else 0,
+                    "end_column": span[1] if len(span) > 1 else 0,
                     "severity": VALE_SEVERITY.get(str(a.get("Severity", "")).lower(), "note"),
                     "message": a.get("Message", ""),
                     "snippet": a.get("Match", ""),
@@ -348,7 +407,7 @@ def flake8(text: str) -> list[dict]:
         parts = line.split(":", 4)
         if len(parts) != 5:
             continue
-        path, row, _col, code, message = parts
+        path, row, col, code, message = parts
         if not row.isdigit():
             continue
         out.append(
@@ -356,6 +415,9 @@ def flake8(text: str) -> list[dict]:
                 "path": path,
                 "rule": code,
                 "line": int(row),
+                # flake8/pycodestyle's %(col)d is already 1-indexed; no
+                # end_line/end_column in this format.
+                "column": int(col) if col.isdigit() else 0,
                 "severity": FLAKE8_SEVERITY.get(code[:1].upper(), "warning"),
                 "message": message.strip(),
             }
@@ -432,6 +494,10 @@ def buf(text: str) -> list[dict]:
             "path": d.get("path", ""),
             "rule": d.get("type", ""),
             "line": d.get("start_line", 0),
+            # buf's start_column/end_line/end_column are already 1-indexed.
+            "column": d.get("start_column", 0),
+            "end_line": d.get("end_line", 0),
+            "end_column": d.get("end_column", 0),
             # buf lint findings are all failures of the configured rule set;
             # there is no severity axis to map.
             "severity": "warning",

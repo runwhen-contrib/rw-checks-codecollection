@@ -1,0 +1,23 @@
+=== ruff (exit 1, 15472B) :: ruff check --output-format=sarif .
+=== gitleaks (exit 0, 50429B) :: sh -c gitleaks dir . --report-format sarif --report-path /tmp/gl.sarif --no-banner --exit-code 0 >/dev/null 2>&1; cat /tmp/gl.sarif
+=== trivy (exit 0, 178103B) :: trivy fs --format sarif --quiet --scanners vuln,misconfig,secret .
+=== osv-scanner (exit 1, 197930B) :: osv-scanner --format sarif -r .
+=== checkov (exit 0, 38645B) :: sh -c d=$(mktemp -d); checkov -d . --output sarif --output-file-path "$d" >/dev/null 2>&1; cat "$d/results_sarif.sarif"
+=== zizmor (exit 0, 27623B) :: zizmor --format sarif --no-progress .github/workflows
+=== tflint (exit 2, 2384B) :: tflint --format sarif --chdir infra
+=== semgrep (exit 0, 2120157B) :: semgrep scan --sarif --quiet --config=p/default --metrics=off .
+=== shellcheck (exit 1, 2724B) :: shellcheck -f json1 scripts/deploy.sh
+=== hadolint (exit 1, 1631B) :: hadolint -f json Dockerfile
+=== actionlint (exit 1, 2236B) :: actionlint -format {{json .}} -no-color .github/workflows/ci.yml
+=== pylint (exit 0, 2564B) :: pylint --output-format=json --exit-zero src
+=== sqlfluff (exit 1, 5553B) :: sqlfluff lint --format json db
+=== trufflehog (exit 0, 1293B) :: trufflehog filesystem . --json --no-update --no-verification
+=== biome (exit 1, 3876B) :: biome lint --reporter=json src
+=== ast-grep (exit 1, 1263B) :: ast-grep scan --json
+=== regal (exit 3, 3883B) :: regal lint --format json policy
+=== buf (exit 100, 856B) :: buf lint --error-format=json
+=== vale (exit 1, 390B) :: vale --output=JSON docs
+=== yamllint (exit 1, 903B) :: yamllint -f parsable .
+=== flake8 (exit 1, 465B) :: flake8 --format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s src
+=== checkmake (exit 3, 576B) :: checkmake Makefile
+=== dotenv (exit 1, 466B) :: dotenv-linter .env

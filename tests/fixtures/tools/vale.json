@@ -1,0 +1,24 @@
+{
+  "docs/readme.md": [
+    {
+      "Action": {
+        "Name": "edit",
+        "Params": [
+          "truncate",
+          " "
+        ]
+      },
+      "Span": [
+        1,
+        7
+      ],
+      "Check": "Vale.Repetition",
+      "Description": "",
+      "Link": "",
+      "Message": "'the' is repeated!",
+      "Severity": "error",
+      "Match": "The the",
+      "Line": 6
+    }
+  ]
+}

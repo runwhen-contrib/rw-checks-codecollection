@@ -1,0 +1,75 @@
+[
+{
+  "text": "eval(event)",
+  "range": {
+    "byteOffset": {
+      "start": 162,
+      "end": 173
+    },
+    "start": {
+      "line": 9,
+      "column": 11
+    },
+    "end": {
+      "line": 9,
+      "column": 22
+    }
+  },
+  "file": "src/app.py",
+  "lines": "    return eval(event)",
+  "charCount": {
+    "leading": 11,
+    "trailing": 0
+  },
+  "language": "Python",
+  "metaVariables": {
+    "single": {},
+    "multi": {
+      "ARGS": [
+        {
+          "text": "event",
+          "range": {
+            "byteOffset": {
+              "start": 167,
+              "end": 172
+            },
+            "start": {
+              "line": 9,
+              "column": 16
+            },
+            "end": {
+              "line": 9,
+              "column": 21
+            }
+          }
+        }
+      ]
+    },
+    "transformed": {}
+  },
+  "ruleId": "no-eval",
+  "severity": "error",
+  "note": null,
+  "message": "Avoid eval()",
+  "labels": [
+    {
+      "text": "eval(event)",
+      "range": {
+        "byteOffset": {
+          "start": 162,
+          "end": 173
+        },
+        "start": {
+          "line": 9,
+          "column": 11
+        },
+        "end": {
+          "line": 9,
+          "column": 22
+        }
+      },
+      "style": "primary"
+    }
+  ]
+}
+]

@@ -1,0 +1,19 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: run
+        run: echo "${{ github.event.pull_request.title }}"
+      - run: |
+          echo ${{ secrets.TOKEN }}
+  deploy:
+    needs: [nonexistent-job]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.evnt.head_commit.message }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.UNDEFINED_VAR }}

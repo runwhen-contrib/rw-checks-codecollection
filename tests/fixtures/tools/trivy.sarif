@@ -1,0 +1,3046 @@
+{
+  "version": "2.1.0",
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "fullName": "Trivy Vulnerability Scanner",
+          "informationUri": "https://github.com/aquasecurity/trivy",
+          "name": "Trivy",
+          "rules": [
+            {
+              "id": "CVE-2018-18074",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "python-requests: Redirect from HTTPS to HTTP does not remove Authorization header"
+              },
+              "fullDescription": {
+                "text": "The Requests package before 2.20.0 for Python sends an HTTP Authorization header to an http URI upon receiving a same-hostname https-to-http redirect, which makes it easier for remote attackers to discover credentials by sniffing the network."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2018-18074",
+              "help": {
+                "text": "Vulnerability CVE-2018-18074\nSeverity: HIGH\nPackage: requests\nFixed Version: 2.20.0\nLink: [CVE-2018-18074](https://avd.aquasec.com/nvd/cve-2018-18074)\nThe Requests package before 2.20.0 for Python sends an HTTP Authorization header to an http URI upon receiving a same-hostname https-to-http redirect, which makes it easier for remote attackers to discover credentials by sniffing the network.",
+                "markdown": "**Vulnerability CVE-2018-18074**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|requests|2.20.0|[CVE-2018-18074](https://avd.aquasec.com/nvd/cve-2018-18074)|\n\nThe Requests package before 2.20.0 for Python sends an HTTP Authorization header to an http URI upon receiving a same-hostname https-to-http redirect, which makes it easier for remote attackers to discover credentials by sniffing the network."
+              },
+              "properties": {
+                "cvssv3_baseScore": 7.5,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N",
+                "precision": "very-high",
+                "security-severity": "7.5",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2023-32681",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "python-requests: Unintended leak of Proxy-Authorization header"
+              },
+              "fullDescription": {
+                "text": "Requests is a HTTP library. Since Requests 2.3.0, Requests has been leaking Proxy-Authorization headers to destination servers when redirected to an HTTPS endpoint. This is a product of how we use `rebuild_proxies` to reattach the `Proxy-Authorization` header to requests. For HTTP connections sent through the tunnel, the proxy will identify the header in the request itself and remove it prior to forwarding to the destination server. However when sent over HTTPS, the `Proxy-Authorization` header must be sent in the CONNECT request as the proxy has no visibility into the tunneled request. This results in Requests forwarding proxy credentials to the destination server unintentionally, allowing a malicious actor to potentially exfiltrate sensitive information. This issue has been patched in version 2.31.0."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2023-32681",
+              "help": {
+                "text": "Vulnerability CVE-2023-32681\nSeverity: MEDIUM\nPackage: requests\nFixed Version: 2.31.0\nLink: [CVE-2023-32681](https://avd.aquasec.com/nvd/cve-2023-32681)\nRequests is a HTTP library. Since Requests 2.3.0, Requests has been leaking Proxy-Authorization headers to destination servers when redirected to an HTTPS endpoint. This is a product of how we use `rebuild_proxies` to reattach the `Proxy-Authorization` header to requests. For HTTP connections sent through the tunnel, the proxy will identify the header in the request itself and remove it prior to forwarding to the destination server. However when sent over HTTPS, the `Proxy-Authorization` header must be sent in the CONNECT request as the proxy has no visibility into the tunneled request. This results in Requests forwarding proxy credentials to the destination server unintentionally, allowing a malicious actor to potentially exfiltrate sensitive information. This issue has been patched in version 2.31.0.",
+                "markdown": "**Vulnerability CVE-2023-32681**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|requests|2.31.0|[CVE-2023-32681](https://avd.aquasec.com/nvd/cve-2023-32681)|\n\nRequests is a HTTP library. Since Requests 2.3.0, Requests has been leaking Proxy-Authorization headers to destination servers when redirected to an HTTPS endpoint. This is a product of how we use `rebuild_proxies` to reattach the `Proxy-Authorization` header to requests. For HTTP connections sent through the tunnel, the proxy will identify the header in the request itself and remove it prior to forwarding to the destination server. However when sent over HTTPS, the `Proxy-Authorization` header must be sent in the CONNECT request as the proxy has no visibility into the tunneled request. This results in Requests forwarding proxy credentials to the destination server unintentionally, allowing a malicious actor to potentially exfiltrate sensitive information. This issue has been patched in version 2.31.0."
+              },
+              "properties": {
+                "cvssv3_baseScore": 6.1,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:H/I:N/A:N",
+                "precision": "very-high",
+                "security-severity": "6.1",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2024-35195",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "requests: subsequent requests to the same host ignore cert verification"
+              },
+              "fullDescription": {
+                "text": "Requests is a HTTP library. Prior to 2.32.0, when making requests through a Requests `Session`, if the first request is made with `verify=False` to disable cert verification, all subsequent requests to the same host will continue to ignore cert verification regardless of changes to the value of `verify`. This behavior will continue for the lifecycle of the connection in the connection pool. This vulnerability is fixed in 2.32.0."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2024-35195",
+              "help": {
+                "text": "Vulnerability CVE-2024-35195\nSeverity: MEDIUM\nPackage: requests\nFixed Version: 2.32.0\nLink: [CVE-2024-35195](https://avd.aquasec.com/nvd/cve-2024-35195)\nRequests is a HTTP library. Prior to 2.32.0, when making requests through a Requests `Session`, if the first request is made with `verify=False` to disable cert verification, all subsequent requests to the same host will continue to ignore cert verification regardless of changes to the value of `verify`. This behavior will continue for the lifecycle of the connection in the connection pool. This vulnerability is fixed in 2.32.0.",
+                "markdown": "**Vulnerability CVE-2024-35195**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|requests|2.32.0|[CVE-2024-35195](https://avd.aquasec.com/nvd/cve-2024-35195)|\n\nRequests is a HTTP library. Prior to 2.32.0, when making requests through a Requests `Session`, if the first request is made with `verify=False` to disable cert verification, all subsequent requests to the same host will continue to ignore cert verification regardless of changes to the value of `verify`. This behavior will continue for the lifecycle of the connection in the connection pool. This vulnerability is fixed in 2.32.0."
+              },
+              "properties": {
+                "cvssv3_baseScore": 5.6,
+                "cvssv3_vector": "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:H/I:H/A:N",
+                "precision": "very-high",
+                "security-severity": "5.6",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2024-47081",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "requests: Requests vulnerable to .netrc credentials leak via malicious URLs"
+              },
+              "fullDescription": {
+                "text": "Requests is a HTTP library. Due to a URL parsing issue, Requests releases prior to 2.32.4 may leak .netrc credentials to third parties for specific maliciously-crafted URLs. Users should upgrade to version 2.32.4 to receive a fix. For older versions of Requests, use of the .netrc file can be disabled with `trust_env=False` on one's Requests Session."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2024-47081",
+              "help": {
+                "text": "Vulnerability CVE-2024-47081\nSeverity: MEDIUM\nPackage: requests\nFixed Version: 2.32.4\nLink: [CVE-2024-47081](https://avd.aquasec.com/nvd/cve-2024-47081)\nRequests is a HTTP library. Due to a URL parsing issue, Requests releases prior to 2.32.4 may leak .netrc credentials to third parties for specific maliciously-crafted URLs. Users should upgrade to version 2.32.4 to receive a fix. For older versions of Requests, use of the .netrc file can be disabled with `trust_env=False` on one's Requests Session.",
+                "markdown": "**Vulnerability CVE-2024-47081**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|requests|2.32.4|[CVE-2024-47081](https://avd.aquasec.com/nvd/cve-2024-47081)|\n\nRequests is a HTTP library. Due to a URL parsing issue, Requests releases prior to 2.32.4 may leak .netrc credentials to third parties for specific maliciously-crafted URLs. Users should upgrade to version 2.32.4 to receive a fix. For older versions of Requests, use of the .netrc file can be disabled with `trust_env=False` on one's Requests Session."
+              },
+              "properties": {
+                "cvssv3_baseScore": 5.3,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:U/C:H/I:N/A:N",
+                "precision": "very-high",
+                "security-severity": "5.3",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-25645",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "requests: Requests: Security bypass due to predictable temporary file creation"
+              },
+              "fullDescription": {
+                "text": "Requests is a HTTP library. Prior to version 2.33.0, the `requests.utils.extract_zipped_paths()` utility function uses a predictable filename when extracting files from zip archives into the system temporary directory. If the target file already exists, it is reused without validation. A local attacker with write access to the temp directory could pre-create a malicious file that would be loaded in place of the legitimate one. Standard usage of the Requests library is not affected by this vulnerability. Only applications that call `extract_zipped_paths()` directly are impacted. Starting in version 2.33.0, the library extracts files to a non-deterministic location. If developers are unable to upgrade, they can set `TMPDIR` in their environment to a directory with restricted write access."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-25645",
+              "help": {
+                "text": "Vulnerability CVE-2026-25645\nSeverity: MEDIUM\nPackage: requests\nFixed Version: 2.33.0\nLink: [CVE-2026-25645](https://avd.aquasec.com/nvd/cve-2026-25645)\nRequests is a HTTP library. Prior to version 2.33.0, the `requests.utils.extract_zipped_paths()` utility function uses a predictable filename when extracting files from zip archives into the system temporary directory. If the target file already exists, it is reused without validation. A local attacker with write access to the temp directory could pre-create a malicious file that would be loaded in place of the legitimate one. Standard usage of the Requests library is not affected by this vulnerability. Only applications that call `extract_zipped_paths()` directly are impacted. Starting in version 2.33.0, the library extracts files to a non-deterministic location. If developers are unable to upgrade, they can set `TMPDIR` in their environment to a directory with restricted write access.",
+                "markdown": "**Vulnerability CVE-2026-25645**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|requests|2.33.0|[CVE-2026-25645](https://avd.aquasec.com/nvd/cve-2026-25645)|\n\nRequests is a HTTP library. Prior to version 2.33.0, the `requests.utils.extract_zipped_paths()` utility function uses a predictable filename when extracting files from zip archives into the system temporary directory. If the target file already exists, it is reused without validation. A local attacker with write access to the temp directory could pre-create a malicious file that would be loaded in place of the legitimate one. Standard usage of the Requests library is not affected by this vulnerability. Only applications that call `extract_zipped_paths()` directly are impacted. Starting in version 2.33.0, the library extracts files to a non-deterministic location. If developers are unable to upgrade, they can set `TMPDIR` in their environment to a directory with restricted write access."
+              },
+              "properties": {
+                "cvssv3_baseScore": 4.4,
+                "cvssv3_vector": "CVSS:3.1/AV:L/AC:H/PR:L/UI:R/S:U/C:N/I:H/A:N",
+                "precision": "very-high",
+                "security-severity": "4.4",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2019-11324",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "python-urllib3: Certification mishandle when error should be thrown"
+              },
+              "fullDescription": {
+                "text": "The urllib3 library before 1.24.2 for Python mishandles certain cases where the desired set of CA certificates is different from the OS store of CA certificates, which results in SSL connections succeeding in situations where a verification failure is the correct outcome. This is related to use of the ssl_context, ca_certs, or ca_certs_dir argument."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2019-11324",
+              "help": {
+                "text": "Vulnerability CVE-2019-11324\nSeverity: HIGH\nPackage: urllib3\nFixed Version: 1.24.2\nLink: [CVE-2019-11324](https://avd.aquasec.com/nvd/cve-2019-11324)\nThe urllib3 library before 1.24.2 for Python mishandles certain cases where the desired set of CA certificates is different from the OS store of CA certificates, which results in SSL connections succeeding in situations where a verification failure is the correct outcome. This is related to use of the ssl_context, ca_certs, or ca_certs_dir argument.",
+                "markdown": "**Vulnerability CVE-2019-11324**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|urllib3|1.24.2|[CVE-2019-11324](https://avd.aquasec.com/nvd/cve-2019-11324)|\n\nThe urllib3 library before 1.24.2 for Python mishandles certain cases where the desired set of CA certificates is different from the OS store of CA certificates, which results in SSL connections succeeding in situations where a verification failure is the correct outcome. This is related to use of the ssl_context, ca_certs, or ca_certs_dir argument."
+              },
+              "properties": {
+                "cvssv3_baseScore": 7.5,
+                "cvssv3_vector": "CVSS:3.0/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:H/A:N",
+                "cvssv40_baseScore": 8.7,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:N/VI:H/VA:N/SC:N/SI:N/SA:N",
+                "precision": "very-high",
+                "security-severity": "7.5",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2023-43804",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "python-urllib3: Cookie request header isn't stripped during cross-origin redirects"
+              },
+              "fullDescription": {
+                "text": "urllib3 is a user-friendly HTTP client library for Python. urllib3 doesn't treat the `Cookie` HTTP header special or provide any helpers for managing cookies over HTTP, that is the responsibility of the user. However, it is possible for a user to specify a `Cookie` header and unknowingly leak information via HTTP redirects to a different origin if that user doesn't disable redirects explicitly. This issue has been patched in urllib3 version 1.26.17 or 2.0.5."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2023-43804",
+              "help": {
+                "text": "Vulnerability CVE-2023-43804\nSeverity: HIGH\nPackage: urllib3\nFixed Version: 2.0.6, 1.26.17\nLink: [CVE-2023-43804](https://avd.aquasec.com/nvd/cve-2023-43804)\nurllib3 is a user-friendly HTTP client library for Python. urllib3 doesn't treat the `Cookie` HTTP header special or provide any helpers for managing cookies over HTTP, that is the responsibility of the user. However, it is possible for a user to specify a `Cookie` header and unknowingly leak information via HTTP redirects to a different origin if that user doesn't disable redirects explicitly. This issue has been patched in urllib3 version 1.26.17 or 2.0.5.",
+                "markdown": "**Vulnerability CVE-2023-43804**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|urllib3|2.0.6, 1.26.17|[CVE-2023-43804](https://avd.aquasec.com/nvd/cve-2023-43804)|\n\nurllib3 is a user-friendly HTTP client library for Python. urllib3 doesn't treat the `Cookie` HTTP header special or provide any helpers for managing cookies over HTTP, that is the responsibility of the user. However, it is possible for a user to specify a `Cookie` header and unknowingly leak information via HTTP redirects to a different origin if that user doesn't disable redirects explicitly. This issue has been patched in urllib3 version 1.26.17 or 2.0.5."
+              },
+              "properties": {
+                "cvssv3_baseScore": 5.9,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:H/A:N",
+                "cvssv40_baseScore": 7.4,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:H/UI:N/VC:H/VI:H/VA:N/SC:N/SI:N/SA:N",
+                "precision": "very-high",
+                "security-severity": "5.9",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2025-66418",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: urllib3: Unbounded decompression chain leads to resource exhaustion"
+              },
+              "fullDescription": {
+                "text": "urllib3 is a user-friendly HTTP client library for Python. Starting in version 1.24 and prior to 2.6.0, the number of links in the decompression chain was unbounded allowing a malicious server to insert a virtually unlimited number of compression steps leading to high CPU usage and massive memory allocation for the decompressed data. This vulnerability is fixed in 2.6.0."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2025-66418",
+              "help": {
+                "text": "Vulnerability CVE-2025-66418\nSeverity: HIGH\nPackage: urllib3\nFixed Version: 2.6.0\nLink: [CVE-2025-66418](https://avd.aquasec.com/nvd/cve-2025-66418)\nurllib3 is a user-friendly HTTP client library for Python. Starting in version 1.24 and prior to 2.6.0, the number of links in the decompression chain was unbounded allowing a malicious server to insert a virtually unlimited number of compression steps leading to high CPU usage and massive memory allocation for the decompressed data. This vulnerability is fixed in 2.6.0.",
+                "markdown": "**Vulnerability CVE-2025-66418**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|urllib3|2.6.0|[CVE-2025-66418](https://avd.aquasec.com/nvd/cve-2025-66418)|\n\nurllib3 is a user-friendly HTTP client library for Python. Starting in version 1.24 and prior to 2.6.0, the number of links in the decompression chain was unbounded allowing a malicious server to insert a virtually unlimited number of compression steps leading to high CPU usage and massive memory allocation for the decompressed data. This vulnerability is fixed in 2.6.0."
+              },
+              "properties": {
+                "cvssv40_baseScore": 8.9,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2025-66471",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: urllib3 Streaming API improperly handles highly compressed data"
+              },
+              "fullDescription": {
+                "text": "urllib3 is a user-friendly HTTP client library for Python. Starting in version 1.0 and prior to 2.6.0, the Streaming API improperly handles highly compressed data. urllib3's streaming API is designed for the efficient handling of large HTTP responses by reading the content in chunks, rather than loading the entire response body into memory at once. When streaming a compressed response, urllib3 can perform decoding or decompression based on the HTTP Content-Encoding header (e.g., gzip, deflate, br, or zstd). The library must read compressed data from the network and decompress it until the requested chunk size is met. Any resulting decompressed data that exceeds the requested amount is held in an internal buffer for the next read operation. The decompression logic could cause urllib3 to fully decode a small amount of highly compressed data in a single operation. This can result in excessive resource consumption (high CPU usage and massive memory allocation for the decompressed data."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2025-66471",
+              "help": {
+                "text": "Vulnerability CVE-2025-66471\nSeverity: HIGH\nPackage: urllib3\nFixed Version: 2.6.0\nLink: [CVE-2025-66471](https://avd.aquasec.com/nvd/cve-2025-66471)\nurllib3 is a user-friendly HTTP client library for Python. Starting in version 1.0 and prior to 2.6.0, the Streaming API improperly handles highly compressed data. urllib3's streaming API is designed for the efficient handling of large HTTP responses by reading the content in chunks, rather than loading the entire response body into memory at once. When streaming a compressed response, urllib3 can perform decoding or decompression based on the HTTP Content-Encoding header (e.g., gzip, deflate, br, or zstd). The library must read compressed data from the network and decompress it until the requested chunk size is met. Any resulting decompressed data that exceeds the requested amount is held in an internal buffer for the next read operation. The decompression logic could cause urllib3 to fully decode a small amount of highly compressed data in a single operation. This can result in excessive resource consumption (high CPU usage and massive memory allocation for the decompressed data.",
+                "markdown": "**Vulnerability CVE-2025-66471**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|urllib3|2.6.0|[CVE-2025-66471](https://avd.aquasec.com/nvd/cve-2025-66471)|\n\nurllib3 is a user-friendly HTTP client library for Python. Starting in version 1.0 and prior to 2.6.0, the Streaming API improperly handles highly compressed data. urllib3's streaming API is designed for the efficient handling of large HTTP responses by reading the content in chunks, rather than loading the entire response body into memory at once. When streaming a compressed response, urllib3 can perform decoding or decompression based on the HTTP Content-Encoding header (e.g., gzip, deflate, br, or zstd). The library must read compressed data from the network and decompress it until the requested chunk size is met. Any resulting decompressed data that exceeds the requested amount is held in an internal buffer for the next read operation. The decompression logic could cause urllib3 to fully decode a small amount of highly compressed data in a single operation. This can result in excessive resource consumption (high CPU usage and massive memory allocation for the decompressed data."
+              },
+              "properties": {
+                "cvssv40_baseScore": 8.9,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-21441",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: urllib3 vulnerable to decompression-bomb safeguard bypass when following HTTP redirects (streaming API)"
+              },
+              "fullDescription": {
+                "text": "urllib3 is an HTTP client library for Python. urllib3's streaming API is designed for the efficient handling of large HTTP responses by reading the content in chunks, rather than loading the entire response body into memory at once. urllib3 can perform decoding or decompression based on the HTTP `Content-Encoding` header (e.g., `gzip`, `deflate`, `br`, or `zstd`). When using the streaming API, the library decompresses only the necessary bytes, enabling partial content consumption. Starting in version 1.22 and prior to version 2.6.3, for HTTP redirect responses, the library would read the entire response body to drain the connection and decompress the content unnecessarily. This decompression occurred even before any read methods were called, and configured read limits did not restrict the amount of decompressed data. As a result, there was no safeguard against decompression bombs. A malicious server could exploit this to trigger excessive resource consumption on the client. Applications and libraries are affected when they stream content from untrusted sources by setting `preload_content=False` when they do not disable redirects. Users should upgrade to at least urllib3 v2.6.3, in which the library does not decode content of redirect responses when `preload_content=False`. If upgrading is not immediately possible, disable redirects by setting `redirect=False` for requests to untrusted source."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-21441",
+              "help": {
+                "text": "Vulnerability CVE-2026-21441\nSeverity: HIGH\nPackage: urllib3\nFixed Version: 2.6.3\nLink: [CVE-2026-21441](https://avd.aquasec.com/nvd/cve-2026-21441)\nurllib3 is an HTTP client library for Python. urllib3's streaming API is designed for the efficient handling of large HTTP responses by reading the content in chunks, rather than loading the entire response body into memory at once. urllib3 can perform decoding or decompression based on the HTTP `Content-Encoding` header (e.g., `gzip`, `deflate`, `br`, or `zstd`). When using the streaming API, the library decompresses only the necessary bytes, enabling partial content consumption. Starting in version 1.22 and prior to version 2.6.3, for HTTP redirect responses, the library would read the entire response body to drain the connection and decompress the content unnecessarily. This decompression occurred even before any read methods were called, and configured read limits did not restrict the amount of decompressed data. As a result, there was no safeguard against decompression bombs. A malicious server could exploit this to trigger excessive resource consumption on the client. Applications and libraries are affected when they stream content from untrusted sources by setting `preload_content=False` when they do not disable redirects. Users should upgrade to at least urllib3 v2.6.3, in which the library does not decode content of redirect responses when `preload_content=False`. If upgrading is not immediately possible, disable redirects by setting `redirect=False` for requests to untrusted source.",
+                "markdown": "**Vulnerability CVE-2026-21441**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|urllib3|2.6.3|[CVE-2026-21441](https://avd.aquasec.com/nvd/cve-2026-21441)|\n\nurllib3 is an HTTP client library for Python. urllib3's streaming API is designed for the efficient handling of large HTTP responses by reading the content in chunks, rather than loading the entire response body into memory at once. urllib3 can perform decoding or decompression based on the HTTP `Content-Encoding` header (e.g., `gzip`, `deflate`, `br`, or `zstd`). When using the streaming API, the library decompresses only the necessary bytes, enabling partial content consumption. Starting in version 1.22 and prior to version 2.6.3, for HTTP redirect responses, the library would read the entire response body to drain the connection and decompress the content unnecessarily. This decompression occurred even before any read methods were called, and configured read limits did not restrict the amount of decompressed data. As a result, there was no safeguard against decompression bombs. A malicious server could exploit this to trigger excessive resource consumption on the client. Applications and libraries are affected when they stream content from untrusted sources by setting `preload_content=False` when they do not disable redirects. Users should upgrade to at least urllib3 v2.6.3, in which the library does not decode content of redirect responses when `preload_content=False`. If upgrading is not immediately possible, disable redirects by setting `redirect=False` for requests to untrusted source."
+              },
+              "properties": {
+                "cvssv3_baseScore": 7.5,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+                "cvssv40_baseScore": 8.9,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:H",
+                "precision": "very-high",
+                "security-severity": "7.5",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2026-44431",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: urllib3: Information disclosure via cross-origin redirects forwarding sensitive headers"
+              },
+              "fullDescription": {
+                "text": "urllib3 is an HTTP client library for Python. From 1.23 to before 2.7.0, cross-origin redirects followed from the low-level API via ProxyManager.connection_from_url().urlopen(..., assert_same_host=False) still forward these sensitive headers. This vulnerability is fixed in 2.7.0."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2026-44431",
+              "help": {
+                "text": "Vulnerability CVE-2026-44431\nSeverity: HIGH\nPackage: urllib3\nFixed Version: 2.7.0\nLink: [CVE-2026-44431](https://avd.aquasec.com/nvd/cve-2026-44431)\nurllib3 is an HTTP client library for Python. From 1.23 to before 2.7.0, cross-origin redirects followed from the low-level API via ProxyManager.connection_from_url().urlopen(..., assert_same_host=False) still forward these sensitive headers. This vulnerability is fixed in 2.7.0.",
+                "markdown": "**Vulnerability CVE-2026-44431**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|HIGH|urllib3|2.7.0|[CVE-2026-44431](https://avd.aquasec.com/nvd/cve-2026-44431)|\n\nurllib3 is an HTTP client library for Python. From 1.23 to before 2.7.0, cross-origin redirects followed from the low-level API via ProxyManager.connection_from_url().urlopen(..., assert_same_host=False) still forward these sensitive headers. This vulnerability is fixed in 2.7.0."
+              },
+              "properties": {
+                "cvssv3_baseScore": 5.3,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+                "cvssv40_baseScore": 8.2,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:H/AT:P/PR:N/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+                "precision": "very-high",
+                "security-severity": "5.3",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2018-25091",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: urllib3 does not remove the authorization HTTP header when following a cross-origin redirect"
+              },
+              "fullDescription": {
+                "text": "urllib3 before 1.24.2 does not remove the authorization HTTP header when following a cross-origin redirect (i.e., a redirect that differs in host, port, or scheme). This can allow for credentials in the authorization header to be exposed to unintended hosts or transmitted in cleartext. NOTE: this issue exists because of an incomplete fix for CVE-2018-20060 (which was case-sensitive)."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2018-25091",
+              "help": {
+                "text": "Vulnerability CVE-2018-25091\nSeverity: MEDIUM\nPackage: urllib3\nFixed Version: 1.24.2\nLink: [CVE-2018-25091](https://avd.aquasec.com/nvd/cve-2018-25091)\nurllib3 before 1.24.2 does not remove the authorization HTTP header when following a cross-origin redirect (i.e., a redirect that differs in host, port, or scheme). This can allow for credentials in the authorization header to be exposed to unintended hosts or transmitted in cleartext. NOTE: this issue exists because of an incomplete fix for CVE-2018-20060 (which was case-sensitive).",
+                "markdown": "**Vulnerability CVE-2018-25091**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|urllib3|1.24.2|[CVE-2018-25091](https://avd.aquasec.com/nvd/cve-2018-25091)|\n\nurllib3 before 1.24.2 does not remove the authorization HTTP header when following a cross-origin redirect (i.e., a redirect that differs in host, port, or scheme). This can allow for credentials in the authorization header to be exposed to unintended hosts or transmitted in cleartext. NOTE: this issue exists because of an incomplete fix for CVE-2018-20060 (which was case-sensitive)."
+              },
+              "properties": {
+                "cvssv3_baseScore": 6.1,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+                "cvssv40_baseScore": 5.3,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:N/SC:L/SI:L/SA:N",
+                "precision": "very-high",
+                "security-severity": "6.1",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2019-11236",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "python-urllib3: CRLF injection due to not encoding the '\\r\\n' sequence leading to possible attack on internal service"
+              },
+              "fullDescription": {
+                "text": "In the urllib3 library through 1.24.1 for Python, CRLF injection is possible if the attacker controls the request parameter."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2019-11236",
+              "help": {
+                "text": "Vulnerability CVE-2019-11236\nSeverity: MEDIUM\nPackage: urllib3\nFixed Version: 1.24.3\nLink: [CVE-2019-11236](https://avd.aquasec.com/nvd/cve-2019-11236)\nIn the urllib3 library through 1.24.1 for Python, CRLF injection is possible if the attacker controls the request parameter.",
+                "markdown": "**Vulnerability CVE-2019-11236**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|urllib3|1.24.3|[CVE-2019-11236](https://avd.aquasec.com/nvd/cve-2019-11236)|\n\nIn the urllib3 library through 1.24.1 for Python, CRLF injection is possible if the attacker controls the request parameter."
+              },
+              "properties": {
+                "cvssv3_baseScore": 6.1,
+                "cvssv3_vector": "CVSS:3.0/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N",
+                "cvssv40_baseScore": 5.3,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:P/VC:N/VI:N/VA:N/SC:L/SI:L/SA:N",
+                "precision": "very-high",
+                "security-severity": "6.1",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2020-26137",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "python-urllib3: CRLF injection via HTTP request method"
+              },
+              "fullDescription": {
+                "text": "urllib3 before 1.25.9 allows CRLF injection if the attacker controls the HTTP request method, as demonstrated by inserting CR and LF control characters in the first argument of putrequest(). NOTE: this is similar to CVE-2020-26116."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2020-26137",
+              "help": {
+                "text": "Vulnerability CVE-2020-26137\nSeverity: MEDIUM\nPackage: urllib3\nFixed Version: 1.25.9\nLink: [CVE-2020-26137](https://avd.aquasec.com/nvd/cve-2020-26137)\nurllib3 before 1.25.9 allows CRLF injection if the attacker controls the HTTP request method, as demonstrated by inserting CR and LF control characters in the first argument of putrequest(). NOTE: this is similar to CVE-2020-26116.",
+                "markdown": "**Vulnerability CVE-2020-26137**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|urllib3|1.25.9|[CVE-2020-26137](https://avd.aquasec.com/nvd/cve-2020-26137)|\n\nurllib3 before 1.25.9 allows CRLF injection if the attacker controls the HTTP request method, as demonstrated by inserting CR and LF control characters in the first argument of putrequest(). NOTE: this is similar to CVE-2020-26116."
+              },
+              "properties": {
+                "cvssv3_baseScore": 6.5,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N",
+                "cvssv40_baseScore": 6.9,
+                "cvssv40_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N",
+                "precision": "very-high",
+                "security-severity": "6.5",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2023-45803",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: Request body not stripped after redirect from 303 status changes request method to GET"
+              },
+              "fullDescription": {
+                "text": "urllib3 is a user-friendly HTTP client library for Python. urllib3 previously wouldn't remove the HTTP request body when an HTTP redirect response using status 301, 302, or 303 after the request had its method changed from one that could accept a request body (like `POST`) to `GET` as is required by HTTP RFCs. Although this behavior is not specified in the section for redirects, it can be inferred by piecing together information from different sections and we have observed the behavior in other major HTTP client implementations like curl and web browsers. Because the vulnerability requires a previously trusted service to become compromised in order to have an impact on confidentiality we believe the exploitability of this vulnerability is low. Additionally, many users aren't putting sensitive data in HTTP request bodies, if this is the case then this vulnerability isn't exploitable. Both of the following conditions must be true to be affected by this vulnerability: 1. Using urllib3 and submitting sensitive information in the HTTP request body (such as form data or JSON) and 2. The origin service is compromised and starts redirecting using 301, 302, or 303 to a malicious peer or the redirected-to service becomes compromised. This issue has been addressed in versions 1.26.18 and 2.0.7 and users are advised to update to resolve this issue. Users unable to update should disable redirects for services that aren't expecting to respond with redirects with `redirects=False` and disable automatic redirects with `redirects=False` and handle 301, 302, and 303 redirects manually by stripping the HTTP request body."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2023-45803",
+              "help": {
+                "text": "Vulnerability CVE-2023-45803\nSeverity: MEDIUM\nPackage: urllib3\nFixed Version: 2.0.7, 1.26.18\nLink: [CVE-2023-45803](https://avd.aquasec.com/nvd/cve-2023-45803)\nurllib3 is a user-friendly HTTP client library for Python. urllib3 previously wouldn't remove the HTTP request body when an HTTP redirect response using status 301, 302, or 303 after the request had its method changed from one that could accept a request body (like `POST`) to `GET` as is required by HTTP RFCs. Although this behavior is not specified in the section for redirects, it can be inferred by piecing together information from different sections and we have observed the behavior in other major HTTP client implementations like curl and web browsers. Because the vulnerability requires a previously trusted service to become compromised in order to have an impact on confidentiality we believe the exploitability of this vulnerability is low. Additionally, many users aren't putting sensitive data in HTTP request bodies, if this is the case then this vulnerability isn't exploitable. Both of the following conditions must be true to be affected by this vulnerability: 1. Using urllib3 and submitting sensitive information in the HTTP request body (such as form data or JSON) and 2. The origin service is compromised and starts redirecting using 301, 302, or 303 to a malicious peer or the redirected-to service becomes compromised. This issue has been addressed in versions 1.26.18 and 2.0.7 and users are advised to update to resolve this issue. Users unable to update should disable redirects for services that aren't expecting to respond with redirects with `redirects=False` and disable automatic redirects with `redirects=False` and handle 301, 302, and 303 redirects manually by stripping the HTTP request body.",
+                "markdown": "**Vulnerability CVE-2023-45803**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|urllib3|2.0.7, 1.26.18|[CVE-2023-45803](https://avd.aquasec.com/nvd/cve-2023-45803)|\n\nurllib3 is a user-friendly HTTP client library for Python. urllib3 previously wouldn't remove the HTTP request body when an HTTP redirect response using status 301, 302, or 303 after the request had its method changed from one that could accept a request body (like `POST`) to `GET` as is required by HTTP RFCs. Although this behavior is not specified in the section for redirects, it can be inferred by piecing together information from different sections and we have observed the behavior in other major HTTP client implementations like curl and web browsers. Because the vulnerability requires a previously trusted service to become compromised in order to have an impact on confidentiality we believe the exploitability of this vulnerability is low. Additionally, many users aren't putting sensitive data in HTTP request bodies, if this is the case then this vulnerability isn't exploitable. Both of the following conditions must be true to be affected by this vulnerability: 1. Using urllib3 and submitting sensitive information in the HTTP request body (such as form data or JSON) and 2. The origin service is compromised and starts redirecting using 301, 302, or 303 to a malicious peer or the redirected-to service becomes compromised. This issue has been addressed in versions 1.26.18 and 2.0.7 and users are advised to update to resolve this issue. Users unable to update should disable redirects for services that aren't expecting to respond with redirects with `redirects=False` and disable automatic redirects with `redirects=False` and handle 301, 302, and 303 redirects manually by stripping the HTTP request body."
+              },
+              "properties": {
+                "cvssv3_baseScore": 4.2,
+                "cvssv3_vector": "CVSS:3.1/AV:A/AC:H/PR:H/UI:N/S:U/C:H/I:N/A:N",
+                "cvssv40_baseScore": 5.7,
+                "cvssv40_vector": "CVSS:4.0/AV:A/AC:L/AT:P/PR:H/UI:N/VC:H/VI:N/VA:N/SC:N/SI:N/SA:N",
+                "precision": "very-high",
+                "security-severity": "4.2",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2024-37891",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: proxy-authorization request header is not stripped during cross-origin redirects"
+              },
+              "fullDescription": {
+                "text": " urllib3 is a user-friendly HTTP client library for Python. When using urllib3's proxy support with `ProxyManager`, the `Proxy-Authorization` header is only sent to the configured proxy, as expected. However, when sending HTTP requests *without* using urllib3's proxy support, it's possible to accidentally configure the `Proxy-Authorization` header even though it won't have any effect as the request is not using a forwarding proxy or a tunneling proxy. In those cases, urllib3 doesn't treat the `Proxy-Authorization` HTTP header as one carrying authentication material and thus doesn't strip the header on cross-origin redirects. Because this is a highly unlikely scenario, we believe the severity of this vulnerability is low for almost all users. Out of an abundance of caution urllib3 will automatically strip the `Proxy-Authorization` header during cross-origin redirects to avoid the small chance that users are doing this on accident. Users should use urllib3's proxy support or disable automatic redirects to achieve safe processing of the `Proxy-Authorization` header, but we still decided to strip the header by default in order to further protect users who aren't using the correct approach. We believe the number of usages affected by this advisory is low. It requires all of the following to be true to be exploited: 1. Setting the `Proxy-Authorization` header without using urllib3's built-in proxy support. 2. Not disabling HTTP redirects. 3. Either not using an HTTPS origin server or for the proxy or target origin to redirect to a malicious origin. Users are advised to update to either version 1.26.19 or version 2.2.2. Users unable to upgrade may use the `Proxy-Authorization` header with urllib3's `ProxyManager`, disable HTTP redirects using `redirects=False` when sending requests, or not user the `Proxy-Authorization` header as mitigations."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2024-37891",
+              "help": {
+                "text": "Vulnerability CVE-2024-37891\nSeverity: MEDIUM\nPackage: urllib3\nFixed Version: 1.26.19, 2.2.2\nLink: [CVE-2024-37891](https://avd.aquasec.com/nvd/cve-2024-37891)\n urllib3 is a user-friendly HTTP client library for Python. When using urllib3's proxy support with `ProxyManager`, the `Proxy-Authorization` header is only sent to the configured proxy, as expected. However, when sending HTTP requests *without* using urllib3's proxy support, it's possible to accidentally configure the `Proxy-Authorization` header even though it won't have any effect as the request is not using a forwarding proxy or a tunneling proxy. In those cases, urllib3 doesn't treat the `Proxy-Authorization` HTTP header as one carrying authentication material and thus doesn't strip the header on cross-origin redirects. Because this is a highly unlikely scenario, we believe the severity of this vulnerability is low for almost all users. Out of an abundance of caution urllib3 will automatically strip the `Proxy-Authorization` header during cross-origin redirects to avoid the small chance that users are doing this on accident. Users should use urllib3's proxy support or disable automatic redirects to achieve safe processing of the `Proxy-Authorization` header, but we still decided to strip the header by default in order to further protect users who aren't using the correct approach. We believe the number of usages affected by this advisory is low. It requires all of the following to be true to be exploited: 1. Setting the `Proxy-Authorization` header without using urllib3's built-in proxy support. 2. Not disabling HTTP redirects. 3. Either not using an HTTPS origin server or for the proxy or target origin to redirect to a malicious origin. Users are advised to update to either version 1.26.19 or version 2.2.2. Users unable to upgrade may use the `Proxy-Authorization` header with urllib3's `ProxyManager`, disable HTTP redirects using `redirects=False` when sending requests, or not user the `Proxy-Authorization` header as mitigations.",
+                "markdown": "**Vulnerability CVE-2024-37891**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|urllib3|1.26.19, 2.2.2|[CVE-2024-37891](https://avd.aquasec.com/nvd/cve-2024-37891)|\n\n urllib3 is a user-friendly HTTP client library for Python. When using urllib3's proxy support with `ProxyManager`, the `Proxy-Authorization` header is only sent to the configured proxy, as expected. However, when sending HTTP requests *without* using urllib3's proxy support, it's possible to accidentally configure the `Proxy-Authorization` header even though it won't have any effect as the request is not using a forwarding proxy or a tunneling proxy. In those cases, urllib3 doesn't treat the `Proxy-Authorization` HTTP header as one carrying authentication material and thus doesn't strip the header on cross-origin redirects. Because this is a highly unlikely scenario, we believe the severity of this vulnerability is low for almost all users. Out of an abundance of caution urllib3 will automatically strip the `Proxy-Authorization` header during cross-origin redirects to avoid the small chance that users are doing this on accident. Users should use urllib3's proxy support or disable automatic redirects to achieve safe processing of the `Proxy-Authorization` header, but we still decided to strip the header by default in order to further protect users who aren't using the correct approach. We believe the number of usages affected by this advisory is low. It requires all of the following to be true to be exploited: 1. Setting the `Proxy-Authorization` header without using urllib3's built-in proxy support. 2. Not disabling HTTP redirects. 3. Either not using an HTTPS origin server or for the proxy or target origin to redirect to a malicious origin. Users are advised to update to either version 1.26.19 or version 2.2.2. Users unable to upgrade may use the `Proxy-Authorization` header with urllib3's `ProxyManager`, disable HTTP redirects using `redirects=False` when sending requests, or not user the `Proxy-Authorization` header as mitigations."
+              },
+              "properties": {
+                "cvssv3_baseScore": 4.4,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:H/PR:H/UI:N/S:U/C:H/I:N/A:N",
+                "precision": "very-high",
+                "security-severity": "4.4",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "CVE-2025-50181",
+              "name": "LanguageSpecificPackageVulnerability",
+              "shortDescription": {
+                "text": "urllib3: urllib3 redirects are not disabled when retries are disabled on PoolManager instantiation"
+              },
+              "fullDescription": {
+                "text": "urllib3 is a user-friendly HTTP client library for Python. Prior to 2.5.0, it is possible to disable redirects for all requests by instantiating a PoolManager and specifying retries in a way that disable redirects. By default, requests and botocore users are not affected. An application attempting to mitigate SSRF or open redirect vulnerabilities by disabling redirects at the PoolManager level will remain vulnerable. This issue has been patched in version 2.5.0."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/nvd/cve-2025-50181",
+              "help": {
+                "text": "Vulnerability CVE-2025-50181\nSeverity: MEDIUM\nPackage: urllib3\nFixed Version: 2.5.0\nLink: [CVE-2025-50181](https://avd.aquasec.com/nvd/cve-2025-50181)\nurllib3 is a user-friendly HTTP client library for Python. Prior to 2.5.0, it is possible to disable redirects for all requests by instantiating a PoolManager and specifying retries in a way that disable redirects. By default, requests and botocore users are not affected. An application attempting to mitigate SSRF or open redirect vulnerabilities by disabling redirects at the PoolManager level will remain vulnerable. This issue has been patched in version 2.5.0.",
+                "markdown": "**Vulnerability CVE-2025-50181**\n| Severity | Package | Fixed Version | Link |\n| --- | --- | --- | --- |\n|MEDIUM|urllib3|2.5.0|[CVE-2025-50181](https://avd.aquasec.com/nvd/cve-2025-50181)|\n\nurllib3 is a user-friendly HTTP client library for Python. Prior to 2.5.0, it is possible to disable redirects for all requests by instantiating a PoolManager and specifying retries in a way that disable redirects. By default, requests and botocore users are not affected. An application attempting to mitigate SSRF or open redirect vulnerabilities by disabling redirects at the PoolManager level will remain vulnerable. This issue has been patched in version 2.5.0."
+              },
+              "properties": {
+                "cvssv3_baseScore": 5.3,
+                "cvssv3_vector": "CVSS:3.1/AV:N/AC:H/PR:L/UI:N/S:U/C:H/I:N/A:N",
+                "precision": "very-high",
+                "security-severity": "5.3",
+                "tags": [
+                  "vulnerability",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "DS-0001",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "':latest' tag used"
+              },
+              "fullDescription": {
+                "text": "When using a 'FROM' statement you should use a specific tag to avoid uncontrolled behavior when the image is updated."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ds-0001",
+              "help": {
+                "text": "Misconfiguration DS-0001\nType: Dockerfile Security Check\nSeverity: MEDIUM\nCheck: ':latest' tag used\nMessage: Specify a tag in the 'FROM' statement for image 'ubuntu'\nLink: [DS-0001](https://avd.aquasec.com/misconfig/ds-0001)\nWhen using a 'FROM' statement you should use a specific tag to avoid uncontrolled behavior when the image is updated.",
+                "markdown": "**Misconfiguration DS-0001**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Dockerfile Security Check|MEDIUM|':latest' tag used|Specify a tag in the 'FROM' statement for image 'ubuntu'|[DS-0001](https://avd.aquasec.com/misconfig/ds-0001)|\n\nWhen using a 'FROM' statement you should use a specific tag to avoid uncontrolled behavior when the image is updated."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "5.5",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "DS-0002",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Image user should not be 'root'"
+              },
+              "fullDescription": {
+                "text": "Running containers with 'root' user can lead to a container escape situation. It is a best practice to run containers as non-root users, which can be done by adding a 'USER' statement to the Dockerfile."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ds-0002",
+              "help": {
+                "text": "Misconfiguration DS-0002\nType: Dockerfile Security Check\nSeverity: HIGH\nCheck: Image user should not be 'root'\nMessage: Last USER command in Dockerfile should not be 'root'\nLink: [DS-0002](https://avd.aquasec.com/misconfig/ds-0002)\nRunning containers with 'root' user can lead to a container escape situation. It is a best practice to run containers as non-root users, which can be done by adding a 'USER' statement to the Dockerfile.",
+                "markdown": "**Misconfiguration DS-0002**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Dockerfile Security Check|HIGH|Image user should not be 'root'|Last USER command in Dockerfile should not be 'root'|[DS-0002](https://avd.aquasec.com/misconfig/ds-0002)|\n\nRunning containers with 'root' user can lead to a container escape situation. It is a best practice to run containers as non-root users, which can be done by adding a 'USER' statement to the Dockerfile."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "DS-0013",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "'RUN cd ...' to change directory"
+              },
+              "fullDescription": {
+                "text": "Use WORKDIR instead of proliferating instructions like 'RUN cd … \u0026\u0026 do-something', which are hard to read, troubleshoot, and maintain."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ds-0013",
+              "help": {
+                "text": "Misconfiguration DS-0013\nType: Dockerfile Security Check\nSeverity: MEDIUM\nCheck: 'RUN cd ...' to change directory\nMessage: RUN should not be used to change directory: 'cd /app \u0026\u0026 pip install requests'. Use 'WORKDIR' statement instead.\nLink: [DS-0013](https://avd.aquasec.com/misconfig/ds-0013)\nUse WORKDIR instead of proliferating instructions like 'RUN cd … \u0026\u0026 do-something', which are hard to read, troubleshoot, and maintain.",
+                "markdown": "**Misconfiguration DS-0013**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Dockerfile Security Check|MEDIUM|'RUN cd ...' to change directory|RUN should not be used to change directory: 'cd /app \u0026\u0026 pip install requests'. Use 'WORKDIR' statement instead.|[DS-0013](https://avd.aquasec.com/misconfig/ds-0013)|\n\nUse WORKDIR instead of proliferating instructions like 'RUN cd … \u0026\u0026 do-something', which are hard to read, troubleshoot, and maintain."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "5.5",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "DS-0017",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "'RUN \u003cpackage-manager\u003e update' instruction alone"
+              },
+              "fullDescription": {
+                "text": "The instruction 'RUN \u003cpackage-manager\u003e update' should always be followed by '\u003cpackage-manager\u003e install' in the same RUN statement."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ds-0017",
+              "help": {
+                "text": "Misconfiguration DS-0017\nType: Dockerfile Security Check\nSeverity: HIGH\nCheck: 'RUN \u003cpackage-manager\u003e update' instruction alone\nMessage: The instruction 'RUN \u003cpackage-manager\u003e update' should always be followed by '\u003cpackage-manager\u003e install' in the same RUN statement.\nLink: [DS-0017](https://avd.aquasec.com/misconfig/ds-0017)\nThe instruction 'RUN \u003cpackage-manager\u003e update' should always be followed by '\u003cpackage-manager\u003e install' in the same RUN statement.",
+                "markdown": "**Misconfiguration DS-0017**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Dockerfile Security Check|HIGH|'RUN \u003cpackage-manager\u003e update' instruction alone|The instruction 'RUN \u003cpackage-manager\u003e update' should always be followed by '\u003cpackage-manager\u003e install' in the same RUN statement.|[DS-0017](https://avd.aquasec.com/misconfig/ds-0017)|\n\nThe instruction 'RUN \u003cpackage-manager\u003e update' should always be followed by '\u003cpackage-manager\u003e install' in the same RUN statement."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "DS-0026",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "No HEALTHCHECK defined"
+              },
+              "fullDescription": {
+                "text": "You should add HEALTHCHECK instruction in your docker container images to perform the health check on running containers."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ds-0026",
+              "help": {
+                "text": "Misconfiguration DS-0026\nType: Dockerfile Security Check\nSeverity: LOW\nCheck: No HEALTHCHECK defined\nMessage: Add HEALTHCHECK instruction in your Dockerfile\nLink: [DS-0026](https://avd.aquasec.com/misconfig/ds-0026)\nYou should add HEALTHCHECK instruction in your docker container images to perform the health check on running containers.",
+                "markdown": "**Misconfiguration DS-0026**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Dockerfile Security Check|LOW|No HEALTHCHECK defined|Add HEALTHCHECK instruction in your Dockerfile|[DS-0026](https://avd.aquasec.com/misconfig/ds-0026)|\n\nYou should add HEALTHCHECK instruction in your docker container images to perform the health check on running containers."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "DS-0029",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "'apt-get' missing '--no-install-recommends'"
+              },
+              "fullDescription": {
+                "text": "'apt-get' install should use '--no-install-recommends' to minimize image size."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ds-0029",
+              "help": {
+                "text": "Misconfiguration DS-0029\nType: Dockerfile Security Check\nSeverity: HIGH\nCheck: 'apt-get' missing '--no-install-recommends'\nMessage: '--no-install-recommends' flag is missed: 'apt-get install -y curl'\nLink: [DS-0029](https://avd.aquasec.com/misconfig/ds-0029)\n'apt-get' install should use '--no-install-recommends' to minimize image size.",
+                "markdown": "**Misconfiguration DS-0029**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Dockerfile Security Check|HIGH|'apt-get' missing '--no-install-recommends'|'--no-install-recommends' flag is missed: 'apt-get install -y curl'|[DS-0029](https://avd.aquasec.com/misconfig/ds-0029)|\n\n'apt-get' install should use '--no-install-recommends' to minimize image size."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0086",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 Access block should block public ACL"
+              },
+              "fullDescription": {
+                "text": "S3 buckets should block public ACLs on buckets and any objects they contain. By blocking, PUTs with fail if the object has any public ACL a.\n"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0086",
+              "help": {
+                "text": "Misconfiguration AWS-0086\nType: Terraform Security Check\nSeverity: HIGH\nCheck: S3 Access block should block public ACL\nMessage: No public access block so not blocking public acls\nLink: [AWS-0086](https://avd.aquasec.com/misconfig/aws-0086)\nS3 buckets should block public ACLs on buckets and any objects they contain. By blocking, PUTs with fail if the object has any public ACL a.\n",
+                "markdown": "**Misconfiguration AWS-0086**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|HIGH|S3 Access block should block public ACL|No public access block so not blocking public acls|[AWS-0086](https://avd.aquasec.com/misconfig/aws-0086)|\n\nS3 buckets should block public ACLs on buckets and any objects they contain. By blocking, PUTs with fail if the object has any public ACL a.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0087",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 Access block should block public policy"
+              },
+              "fullDescription": {
+                "text": "S3 bucket policy should have block public policy to prevent users from putting a policy that enable public access.\n"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0087",
+              "help": {
+                "text": "Misconfiguration AWS-0087\nType: Terraform Security Check\nSeverity: HIGH\nCheck: S3 Access block should block public policy\nMessage: No public access block so not blocking public policies\nLink: [AWS-0087](https://avd.aquasec.com/misconfig/aws-0087)\nS3 bucket policy should have block public policy to prevent users from putting a policy that enable public access.\n",
+                "markdown": "**Misconfiguration AWS-0087**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|HIGH|S3 Access block should block public policy|No public access block so not blocking public policies|[AWS-0087](https://avd.aquasec.com/misconfig/aws-0087)|\n\nS3 bucket policy should have block public policy to prevent users from putting a policy that enable public access.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0089",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 Bucket Logging"
+              },
+              "fullDescription": {
+                "text": "Ensures S3 bucket logging is enabled for S3 buckets"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0089",
+              "help": {
+                "text": "Misconfiguration AWS-0089\nType: Terraform Security Check\nSeverity: LOW\nCheck: S3 Bucket Logging\nMessage: Bucket has logging disabled\nLink: [AWS-0089](https://avd.aquasec.com/misconfig/aws-0089)\nEnsures S3 bucket logging is enabled for S3 buckets",
+                "markdown": "**Misconfiguration AWS-0089**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|LOW|S3 Bucket Logging|Bucket has logging disabled|[AWS-0089](https://avd.aquasec.com/misconfig/aws-0089)|\n\nEnsures S3 bucket logging is enabled for S3 buckets"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0090",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 Data should be versioned"
+              },
+              "fullDescription": {
+                "text": "Versioning in Amazon S3 is a means of keeping multiple variants of an object in the same bucket.\n\nYou can use the S3 Versioning feature to preserve, retrieve, and restore every version of every object stored in your buckets.\n\nWith versioning you can recover more easily from both unintended user actions and application failures.\n\nWhen you enable versioning, also keep in mind the potential costs of storing noncurrent versions of objects. To help manage those costs, consider setting up an S3 Lifecycle configuration.\n"
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0090",
+              "help": {
+                "text": "Misconfiguration AWS-0090\nType: Terraform Security Check\nSeverity: MEDIUM\nCheck: S3 Data should be versioned\nMessage: Bucket does not have versioning enabled\nLink: [AWS-0090](https://avd.aquasec.com/misconfig/aws-0090)\nVersioning in Amazon S3 is a means of keeping multiple variants of an object in the same bucket.\n\nYou can use the S3 Versioning feature to preserve, retrieve, and restore every version of every object stored in your buckets.\n\nWith versioning you can recover more easily from both unintended user actions and application failures.\n\nWhen you enable versioning, also keep in mind the potential costs of storing noncurrent versions of objects. To help manage those costs, consider setting up an S3 Lifecycle configuration.\n",
+                "markdown": "**Misconfiguration AWS-0090**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|MEDIUM|S3 Data should be versioned|Bucket does not have versioning enabled|[AWS-0090](https://avd.aquasec.com/misconfig/aws-0090)|\n\nVersioning in Amazon S3 is a means of keeping multiple variants of an object in the same bucket.\n\nYou can use the S3 Versioning feature to preserve, retrieve, and restore every version of every object stored in your buckets.\n\nWith versioning you can recover more easily from both unintended user actions and application failures.\n\nWhen you enable versioning, also keep in mind the potential costs of storing noncurrent versions of objects. To help manage those costs, consider setting up an S3 Lifecycle configuration.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "5.5",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0091",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 Access Block should Ignore Public ACL"
+              },
+              "fullDescription": {
+                "text": "S3 buckets should ignore public ACLs on buckets and any objects they contain. By ignoring rather than blocking, PUT calls with public ACLs will still be applied but the ACL will be ignored.\n"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0091",
+              "help": {
+                "text": "Misconfiguration AWS-0091\nType: Terraform Security Check\nSeverity: HIGH\nCheck: S3 Access Block should Ignore Public ACL\nMessage: No public access block so not blocking public acls\nLink: [AWS-0091](https://avd.aquasec.com/misconfig/aws-0091)\nS3 buckets should ignore public ACLs on buckets and any objects they contain. By ignoring rather than blocking, PUT calls with public ACLs will still be applied but the ACL will be ignored.\n",
+                "markdown": "**Misconfiguration AWS-0091**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|HIGH|S3 Access Block should Ignore Public ACL|No public access block so not blocking public acls|[AWS-0091](https://avd.aquasec.com/misconfig/aws-0091)|\n\nS3 buckets should ignore public ACLs on buckets and any objects they contain. By ignoring rather than blocking, PUT calls with public ACLs will still be applied but the ACL will be ignored.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0092",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 Buckets not publicly accessible through ACL."
+              },
+              "fullDescription": {
+                "text": "Buckets should not have ACLs that allow public access\n"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0092",
+              "help": {
+                "text": "Misconfiguration AWS-0092\nType: Terraform Security Check\nSeverity: HIGH\nCheck: S3 Buckets not publicly accessible through ACL.\nMessage: Bucket has a public ACL: \"public-read\"\nLink: [AWS-0092](https://avd.aquasec.com/misconfig/aws-0092)\nBuckets should not have ACLs that allow public access\n",
+                "markdown": "**Misconfiguration AWS-0092**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|HIGH|S3 Buckets not publicly accessible through ACL.|Bucket has a public ACL: \"public-read\"|[AWS-0092](https://avd.aquasec.com/misconfig/aws-0092)|\n\nBuckets should not have ACLs that allow public access\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0093",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 Access block should restrict public bucket to limit access"
+              },
+              "fullDescription": {
+                "text": "S3 buckets should restrict public policies for the bucket. By enabling, the restrict_public_buckets, only the bucket owner and AWS Services can access if it has a public policy.\n"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0093",
+              "help": {
+                "text": "Misconfiguration AWS-0093\nType: Terraform Security Check\nSeverity: HIGH\nCheck: S3 Access block should restrict public bucket to limit access\nMessage: No public access block so not restricting public buckets\nLink: [AWS-0093](https://avd.aquasec.com/misconfig/aws-0093)\nS3 buckets should restrict public policies for the bucket. By enabling, the restrict_public_buckets, only the bucket owner and AWS Services can access if it has a public policy.\n",
+                "markdown": "**Misconfiguration AWS-0093**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|HIGH|S3 Access block should restrict public bucket to limit access|No public access block so not restricting public buckets|[AWS-0093](https://avd.aquasec.com/misconfig/aws-0093)|\n\nS3 buckets should restrict public policies for the bucket. By enabling, the restrict_public_buckets, only the bucket owner and AWS Services can access if it has a public policy.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0094",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 buckets should each define an aws_s3_bucket_public_access_block"
+              },
+              "fullDescription": {
+                "text": "The \"block public access\" settings in S3 override individual policies that apply to a given bucket, meaning that all public access can be controlled in one central types for that bucket. It is therefore good practice to define these settings for each bucket in order to clearly define the public access that can be allowed for it.\n"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0094",
+              "help": {
+                "text": "Misconfiguration AWS-0094\nType: Terraform Security Check\nSeverity: LOW\nCheck: S3 buckets should each define an aws_s3_bucket_public_access_block\nMessage: Bucket does not have a corresponding public access block.\nLink: [AWS-0094](https://avd.aquasec.com/misconfig/aws-0094)\nThe \"block public access\" settings in S3 override individual policies that apply to a given bucket, meaning that all public access can be controlled in one central types for that bucket. It is therefore good practice to define these settings for each bucket in order to clearly define the public access that can be allowed for it.\n",
+                "markdown": "**Misconfiguration AWS-0094**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|LOW|S3 buckets should each define an aws_s3_bucket_public_access_block|Bucket does not have a corresponding public access block.|[AWS-0094](https://avd.aquasec.com/misconfig/aws-0094)|\n\nThe \"block public access\" settings in S3 override individual policies that apply to a given bucket, meaning that all public access can be controlled in one central types for that bucket. It is therefore good practice to define these settings for each bucket in order to clearly define the public access that can be allowed for it.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0099",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Missing description for security group."
+              },
+              "fullDescription": {
+                "text": "Security groups should include a description for auditing purposes.\n\nSimplifies auditing, debugging, and managing security groups.\n"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0099",
+              "help": {
+                "text": "Misconfiguration AWS-0099\nType: Terraform Security Check\nSeverity: LOW\nCheck: Missing description for security group.\nMessage: Security group explicitly uses the default description.\nLink: [AWS-0099](https://avd.aquasec.com/misconfig/aws-0099)\nSecurity groups should include a description for auditing purposes.\n\nSimplifies auditing, debugging, and managing security groups.\n",
+                "markdown": "**Misconfiguration AWS-0099**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|LOW|Missing description for security group.|Security group explicitly uses the default description.|[AWS-0099](https://avd.aquasec.com/misconfig/aws-0099)|\n\nSecurity groups should include a description for auditing purposes.\n\nSimplifies auditing, debugging, and managing security groups.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0107",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Security groups should not allow unrestricted ingress to SSH or RDP from any IP address."
+              },
+              "fullDescription": {
+                "text": "Security groups provide stateful filtering of ingress and egress network traffic to AWS\nresources. It is recommended that no security group allows unrestricted ingress access to\nremote server administration ports, such as SSH to port 22 and RDP to port 3389.\n"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0107",
+              "help": {
+                "text": "Misconfiguration AWS-0107\nType: Terraform Security Check\nSeverity: HIGH\nCheck: Security groups should not allow unrestricted ingress to SSH or RDP from any IP address.\nMessage: Security group rule allows unrestricted ingress from any IP address.\nLink: [AWS-0107](https://avd.aquasec.com/misconfig/aws-0107)\nSecurity groups provide stateful filtering of ingress and egress network traffic to AWS\nresources. It is recommended that no security group allows unrestricted ingress access to\nremote server administration ports, such as SSH to port 22 and RDP to port 3389.\n",
+                "markdown": "**Misconfiguration AWS-0107**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|HIGH|Security groups should not allow unrestricted ingress to SSH or RDP from any IP address.|Security group rule allows unrestricted ingress from any IP address.|[AWS-0107](https://avd.aquasec.com/misconfig/aws-0107)|\n\nSecurity groups provide stateful filtering of ingress and egress network traffic to AWS\nresources. It is recommended that no security group allows unrestricted ingress access to\nremote server administration ports, such as SSH to port 22 and RDP to port 3389.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0124",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Missing description for security group rule."
+              },
+              "fullDescription": {
+                "text": "Security group rules should include a description for auditing purposes.\n\nSimplifies auditing, debugging, and managing security groups.\n"
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0124",
+              "help": {
+                "text": "Misconfiguration AWS-0124\nType: Terraform Security Check\nSeverity: LOW\nCheck: Missing description for security group rule.\nMessage: Security group rule does not have a description.\nLink: [AWS-0124](https://avd.aquasec.com/misconfig/aws-0124)\nSecurity group rules should include a description for auditing purposes.\n\nSimplifies auditing, debugging, and managing security groups.\n",
+                "markdown": "**Misconfiguration AWS-0124**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|LOW|Missing description for security group rule.|Security group rule does not have a description.|[AWS-0124](https://avd.aquasec.com/misconfig/aws-0124)|\n\nSecurity group rules should include a description for auditing purposes.\n\nSimplifies auditing, debugging, and managing security groups.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "AWS-0132",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "S3 encryption should use Customer Managed Keys"
+              },
+              "fullDescription": {
+                "text": "Encryption using AWS keys provides protection for your S3 buckets. To gain greater control over encryption, such as key rotation, access policies, and auditability, use customer managed keys (CMKs) with SSE-KMS.\nNote that SSE-KMS is not supported for S3 server access logging destination buckets; in such cases, use SSE-S3 instead.\n"
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/aws-0132",
+              "help": {
+                "text": "Misconfiguration AWS-0132\nType: Terraform Security Check\nSeverity: HIGH\nCheck: S3 encryption should use Customer Managed Keys\nMessage: Bucket does not encrypt data with a customer managed key.\nLink: [AWS-0132](https://avd.aquasec.com/misconfig/aws-0132)\nEncryption using AWS keys provides protection for your S3 buckets. To gain greater control over encryption, such as key rotation, access policies, and auditability, use customer managed keys (CMKs) with SSE-KMS.\nNote that SSE-KMS is not supported for S3 server access logging destination buckets; in such cases, use SSE-S3 instead.\n",
+                "markdown": "**Misconfiguration AWS-0132**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Terraform Security Check|HIGH|S3 encryption should use Customer Managed Keys|Bucket does not encrypt data with a customer managed key.|[AWS-0132](https://avd.aquasec.com/misconfig/aws-0132)|\n\nEncryption using AWS keys provides protection for your S3 buckets. To gain greater control over encryption, such as key rotation, access policies, and auditability, use customer managed keys (CMKs) with SSE-KMS.\nNote that SSE-KMS is not supported for S3 server access logging destination buckets; in such cases, use SSE-S3 instead.\n"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0001",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Can elevate its own privileges"
+              },
+              "fullDescription": {
+                "text": "A program inside the container can elevate its own privileges and run as root, which might give the program control over the container and node."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0001",
+              "help": {
+                "text": "Misconfiguration KSV-0001\nType: Kubernetes Security Check\nSeverity: MEDIUM\nCheck: Can elevate its own privileges\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.allowPrivilegeEscalation' to false\nLink: [KSV-0001](https://avd.aquasec.com/misconfig/ksv-0001)\nA program inside the container can elevate its own privileges and run as root, which might give the program control over the container and node.",
+                "markdown": "**Misconfiguration KSV-0001**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|MEDIUM|Can elevate its own privileges|Container 'app' of Pod 'demo' should set 'securityContext.allowPrivilegeEscalation' to false|[KSV-0001](https://avd.aquasec.com/misconfig/ksv-0001)|\n\nA program inside the container can elevate its own privileges and run as root, which might give the program control over the container and node."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "5.5",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0003",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Default capabilities: some containers do not drop all"
+              },
+              "fullDescription": {
+                "text": "The container should drop all default capabilities and add only those that are needed for its execution."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0003",
+              "help": {
+                "text": "Misconfiguration KSV-0003\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Default capabilities: some containers do not drop all\nMessage: Container 'app' of Pod 'demo' should add 'ALL' to 'securityContext.capabilities.drop'\nLink: [KSV-0003](https://avd.aquasec.com/misconfig/ksv-0003)\nThe container should drop all default capabilities and add only those that are needed for its execution.",
+                "markdown": "**Misconfiguration KSV-0003**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Default capabilities: some containers do not drop all|Container 'app' of Pod 'demo' should add 'ALL' to 'securityContext.capabilities.drop'|[KSV-0003](https://avd.aquasec.com/misconfig/ksv-0003)|\n\nThe container should drop all default capabilities and add only those that are needed for its execution."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0004",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Default capabilities: some containers do not drop any"
+              },
+              "fullDescription": {
+                "text": "Security best practices require containers to run with minimal required capabilities."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0004",
+              "help": {
+                "text": "Misconfiguration KSV-0004\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Default capabilities: some containers do not drop any\nMessage: Container 'app' of 'pod' 'demo' in 'default' namespace should set securityContext.capabilities.drop\nLink: [KSV-0004](https://avd.aquasec.com/misconfig/ksv-0004)\nSecurity best practices require containers to run with minimal required capabilities.",
+                "markdown": "**Misconfiguration KSV-0004**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Default capabilities: some containers do not drop any|Container 'app' of 'pod' 'demo' in 'default' namespace should set securityContext.capabilities.drop|[KSV-0004](https://avd.aquasec.com/misconfig/ksv-0004)|\n\nSecurity best practices require containers to run with minimal required capabilities."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0011",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "CPU not limited"
+              },
+              "fullDescription": {
+                "text": "Enforcing CPU limits prevents DoS via resource exhaustion."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0011",
+              "help": {
+                "text": "Misconfiguration KSV-0011\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: CPU not limited\nMessage: Container 'app' of Pod 'demo' should set 'resources.limits.cpu'\nLink: [KSV-0011](https://avd.aquasec.com/misconfig/ksv-0011)\nEnforcing CPU limits prevents DoS via resource exhaustion.",
+                "markdown": "**Misconfiguration KSV-0011**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|CPU not limited|Container 'app' of Pod 'demo' should set 'resources.limits.cpu'|[KSV-0011](https://avd.aquasec.com/misconfig/ksv-0011)|\n\nEnforcing CPU limits prevents DoS via resource exhaustion."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0012",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Runs as root user"
+              },
+              "fullDescription": {
+                "text": "Force the running image to run as a non-root user to ensure least privileges."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0012",
+              "help": {
+                "text": "Misconfiguration KSV-0012\nType: Kubernetes Security Check\nSeverity: MEDIUM\nCheck: Runs as root user\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.runAsNonRoot' to true\nLink: [KSV-0012](https://avd.aquasec.com/misconfig/ksv-0012)\nForce the running image to run as a non-root user to ensure least privileges.",
+                "markdown": "**Misconfiguration KSV-0012**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|MEDIUM|Runs as root user|Container 'app' of Pod 'demo' should set 'securityContext.runAsNonRoot' to true|[KSV-0012](https://avd.aquasec.com/misconfig/ksv-0012)|\n\nForce the running image to run as a non-root user to ensure least privileges."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "5.5",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0013",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Image tag \":latest\" used"
+              },
+              "fullDescription": {
+                "text": "It is best to avoid using the ':latest' image tag when deploying containers in production. Doing so makes it hard to track which version of the image is running, and hard to roll back the version."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0013",
+              "help": {
+                "text": "Misconfiguration KSV-0013\nType: Kubernetes Security Check\nSeverity: MEDIUM\nCheck: Image tag \":latest\" used\nMessage: Container 'app' of Pod 'demo' should specify an image tag\nLink: [KSV-0013](https://avd.aquasec.com/misconfig/ksv-0013)\nIt is best to avoid using the ':latest' image tag when deploying containers in production. Doing so makes it hard to track which version of the image is running, and hard to roll back the version.",
+                "markdown": "**Misconfiguration KSV-0013**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|MEDIUM|Image tag \":latest\" used|Container 'app' of Pod 'demo' should specify an image tag|[KSV-0013](https://avd.aquasec.com/misconfig/ksv-0013)|\n\nIt is best to avoid using the ':latest' image tag when deploying containers in production. Doing so makes it hard to track which version of the image is running, and hard to roll back the version."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "5.5",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0014",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Root file system is not read-only"
+              },
+              "fullDescription": {
+                "text": "An immutable root file system prevents applications from writing to their local disk. This can limit intrusions, as attackers will not be able to tamper with the file system or write foreign executables to disk."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0014",
+              "help": {
+                "text": "Misconfiguration KSV-0014\nType: Kubernetes Security Check\nSeverity: HIGH\nCheck: Root file system is not read-only\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.readOnlyRootFilesystem' to true\nLink: [KSV-0014](https://avd.aquasec.com/misconfig/ksv-0014)\nAn immutable root file system prevents applications from writing to their local disk. This can limit intrusions, as attackers will not be able to tamper with the file system or write foreign executables to disk.",
+                "markdown": "**Misconfiguration KSV-0014**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|HIGH|Root file system is not read-only|Container 'app' of Pod 'demo' should set 'securityContext.readOnlyRootFilesystem' to true|[KSV-0014](https://avd.aquasec.com/misconfig/ksv-0014)|\n\nAn immutable root file system prevents applications from writing to their local disk. This can limit intrusions, as attackers will not be able to tamper with the file system or write foreign executables to disk."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0015",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "CPU requests not specified"
+              },
+              "fullDescription": {
+                "text": "When containers have resource requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0015",
+              "help": {
+                "text": "Misconfiguration KSV-0015\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: CPU requests not specified\nMessage: Container 'app' of Pod 'demo' should set 'resources.requests.cpu'\nLink: [KSV-0015](https://avd.aquasec.com/misconfig/ksv-0015)\nWhen containers have resource requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention.",
+                "markdown": "**Misconfiguration KSV-0015**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|CPU requests not specified|Container 'app' of Pod 'demo' should set 'resources.requests.cpu'|[KSV-0015](https://avd.aquasec.com/misconfig/ksv-0015)|\n\nWhen containers have resource requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0016",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Memory requests not specified"
+              },
+              "fullDescription": {
+                "text": "When containers have memory requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0016",
+              "help": {
+                "text": "Misconfiguration KSV-0016\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Memory requests not specified\nMessage: Container 'app' of Pod 'demo' should set 'resources.requests.memory'\nLink: [KSV-0016](https://avd.aquasec.com/misconfig/ksv-0016)\nWhen containers have memory requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention.",
+                "markdown": "**Misconfiguration KSV-0016**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Memory requests not specified|Container 'app' of Pod 'demo' should set 'resources.requests.memory'|[KSV-0016](https://avd.aquasec.com/misconfig/ksv-0016)|\n\nWhen containers have memory requests specified, the scheduler can make better decisions about which nodes to place pods on, and how to deal with resource contention."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0017",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Privileged"
+              },
+              "fullDescription": {
+                "text": "Privileged containers share namespaces with the host system and do not offer any security. They should be used exclusively for system containers that require high privileges."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0017",
+              "help": {
+                "text": "Misconfiguration KSV-0017\nType: Kubernetes Security Check\nSeverity: HIGH\nCheck: Privileged\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.privileged' to false\nLink: [KSV-0017](https://avd.aquasec.com/misconfig/ksv-0017)\nPrivileged containers share namespaces with the host system and do not offer any security. They should be used exclusively for system containers that require high privileges.",
+                "markdown": "**Misconfiguration KSV-0017**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|HIGH|Privileged|Container 'app' of Pod 'demo' should set 'securityContext.privileged' to false|[KSV-0017](https://avd.aquasec.com/misconfig/ksv-0017)|\n\nPrivileged containers share namespaces with the host system and do not offer any security. They should be used exclusively for system containers that require high privileges."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0018",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Memory not limited"
+              },
+              "fullDescription": {
+                "text": "Enforcing memory limits prevents DoS via resource exhaustion."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0018",
+              "help": {
+                "text": "Misconfiguration KSV-0018\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Memory not limited\nMessage: Container 'app' of Pod 'demo' should set 'resources.limits.memory'\nLink: [KSV-0018](https://avd.aquasec.com/misconfig/ksv-0018)\nEnforcing memory limits prevents DoS via resource exhaustion.",
+                "markdown": "**Misconfiguration KSV-0018**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Memory not limited|Container 'app' of Pod 'demo' should set 'resources.limits.memory'|[KSV-0018](https://avd.aquasec.com/misconfig/ksv-0018)|\n\nEnforcing memory limits prevents DoS via resource exhaustion."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0020",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Runs with UID \u003c= 10000"
+              },
+              "fullDescription": {
+                "text": "Force the container to run with user ID \u003e 10000 to avoid conflicts with the host’s user table."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0020",
+              "help": {
+                "text": "Misconfiguration KSV-0020\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Runs with UID \u003c= 10000\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.runAsUser' \u003e 10000\nLink: [KSV-0020](https://avd.aquasec.com/misconfig/ksv-0020)\nForce the container to run with user ID \u003e 10000 to avoid conflicts with the host’s user table.",
+                "markdown": "**Misconfiguration KSV-0020**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Runs with UID \u003c= 10000|Container 'app' of Pod 'demo' should set 'securityContext.runAsUser' \u003e 10000|[KSV-0020](https://avd.aquasec.com/misconfig/ksv-0020)|\n\nForce the container to run with user ID \u003e 10000 to avoid conflicts with the host’s user table."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0021",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Runs with GID \u003c= 10000"
+              },
+              "fullDescription": {
+                "text": "Force the container to run with group ID \u003e 10000 to avoid conflicts with the host’s user table."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0021",
+              "help": {
+                "text": "Misconfiguration KSV-0021\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Runs with GID \u003c= 10000\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.runAsGroup' \u003e 10000\nLink: [KSV-0021](https://avd.aquasec.com/misconfig/ksv-0021)\nForce the container to run with group ID \u003e 10000 to avoid conflicts with the host’s user table.",
+                "markdown": "**Misconfiguration KSV-0021**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Runs with GID \u003c= 10000|Container 'app' of Pod 'demo' should set 'securityContext.runAsGroup' \u003e 10000|[KSV-0021](https://avd.aquasec.com/misconfig/ksv-0021)|\n\nForce the container to run with group ID \u003e 10000 to avoid conflicts with the host’s user table."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0030",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Runtime/Default Seccomp profile not set"
+              },
+              "fullDescription": {
+                "text": "According to pod security standard 'Seccomp', the RuntimeDefault seccomp profile must be required, or allow specific additional profiles."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0030",
+              "help": {
+                "text": "Misconfiguration KSV-0030\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Runtime/Default Seccomp profile not set\nMessage: Either Pod or Container should set 'securityContext.seccompProfile.type' to 'RuntimeDefault'\nLink: [KSV-0030](https://avd.aquasec.com/misconfig/ksv-0030)\nAccording to pod security standard 'Seccomp', the RuntimeDefault seccomp profile must be required, or allow specific additional profiles.",
+                "markdown": "**Misconfiguration KSV-0030**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Runtime/Default Seccomp profile not set|Either Pod or Container should set 'securityContext.seccompProfile.type' to 'RuntimeDefault'|[KSV-0030](https://avd.aquasec.com/misconfig/ksv-0030)|\n\nAccording to pod security standard 'Seccomp', the RuntimeDefault seccomp profile must be required, or allow specific additional profiles."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0104",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Seccomp policies disabled"
+              },
+              "fullDescription": {
+                "text": "A program inside the container can bypass Seccomp protection policies."
+              },
+              "defaultConfiguration": {
+                "level": "warning"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0104",
+              "help": {
+                "text": "Misconfiguration KSV-0104\nType: Kubernetes Security Check\nSeverity: MEDIUM\nCheck: Seccomp policies disabled\nMessage: container \"app\" of pod \"demo\" in \"default\" namespace should specify a seccomp profile\nLink: [KSV-0104](https://avd.aquasec.com/misconfig/ksv-0104)\nA program inside the container can bypass Seccomp protection policies.",
+                "markdown": "**Misconfiguration KSV-0104**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|MEDIUM|Seccomp policies disabled|container \"app\" of pod \"demo\" in \"default\" namespace should specify a seccomp profile|[KSV-0104](https://avd.aquasec.com/misconfig/ksv-0104)|\n\nA program inside the container can bypass Seccomp protection policies."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "5.5",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "MEDIUM"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0106",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Container capabilities must only include NET_BIND_SERVICE"
+              },
+              "fullDescription": {
+                "text": "Containers must drop ALL capabilities, and are only permitted to add back the NET_BIND_SERVICE capability."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0106",
+              "help": {
+                "text": "Misconfiguration KSV-0106\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Container capabilities must only include NET_BIND_SERVICE\nMessage: container should drop all\nLink: [KSV-0106](https://avd.aquasec.com/misconfig/ksv-0106)\nContainers must drop ALL capabilities, and are only permitted to add back the NET_BIND_SERVICE capability.",
+                "markdown": "**Misconfiguration KSV-0106**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Container capabilities must only include NET_BIND_SERVICE|container should drop all|[KSV-0106](https://avd.aquasec.com/misconfig/ksv-0106)|\n\nContainers must drop ALL capabilities, and are only permitted to add back the NET_BIND_SERVICE capability."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0110",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Workloads in the default namespace"
+              },
+              "fullDescription": {
+                "text": "Checks whether a workload is running in the default namespace."
+              },
+              "defaultConfiguration": {
+                "level": "note"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0110",
+              "help": {
+                "text": "Misconfiguration KSV-0110\nType: Kubernetes Security Check\nSeverity: LOW\nCheck: Workloads in the default namespace\nMessage: pod demo in default namespace should set metadata.namespace to a non-default namespace\nLink: [KSV-0110](https://avd.aquasec.com/misconfig/ksv-0110)\nChecks whether a workload is running in the default namespace.",
+                "markdown": "**Misconfiguration KSV-0110**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|LOW|Workloads in the default namespace|pod demo in default namespace should set metadata.namespace to a non-default namespace|[KSV-0110](https://avd.aquasec.com/misconfig/ksv-0110)|\n\nChecks whether a workload is running in the default namespace."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "2.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "LOW"
+                ]
+              }
+            },
+            {
+              "id": "KSV-0118",
+              "name": "Misconfiguration",
+              "shortDescription": {
+                "text": "Default security context configured"
+              },
+              "fullDescription": {
+                "text": "Security context controls the allocation of security parameters for the pod/container/volume, ensuring the appropriate level of protection. Relying on default security context may expose vulnerabilities to potential attacks that rely on privileged access."
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://avd.aquasec.com/misconfig/ksv-0118",
+              "help": {
+                "text": "Misconfiguration KSV-0118\nType: Kubernetes Security Check\nSeverity: HIGH\nCheck: Default security context configured\nMessage: pod demo in default namespace is using the default security context, which allows root privileges\nLink: [KSV-0118](https://avd.aquasec.com/misconfig/ksv-0118)\nSecurity context controls the allocation of security parameters for the pod/container/volume, ensuring the appropriate level of protection. Relying on default security context may expose vulnerabilities to potential attacks that rely on privileged access.",
+                "markdown": "**Misconfiguration KSV-0118**\n| Type | Severity | Check | Message | Link |\n| --- | --- | --- | --- | --- |\n|Kubernetes Security Check|HIGH|Default security context configured|pod demo in default namespace is using the default security context, which allows root privileges|[KSV-0118](https://avd.aquasec.com/misconfig/ksv-0118)|\n\nSecurity context controls the allocation of security parameters for the pod/container/volume, ensuring the appropriate level of protection. Relying on default security context may expose vulnerabilities to potential attacks that rely on privileged access."
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "misconfiguration",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            },
+            {
+              "id": "github-pat",
+              "name": "Secret",
+              "shortDescription": {
+                "text": "GitHub Personal Access Token"
+              },
+              "fullDescription": {
+                "text": "GITHUB_TOKEN = \"****************************************\""
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/aquasecurity/trivy/blob/main/pkg/fanal/secret/builtin-rules.go",
+              "help": {
+                "text": "Secret GitHub Personal Access Token\nSeverity: CRITICAL\nMatch: GITHUB_TOKEN = \"****************************************\"",
+                "markdown": "**Secret GitHub Personal Access Token**\n| Severity | Match |\n| --- | --- |\n|CRITICAL|GITHUB_TOKEN = \"****************************************\"|"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "9.5",
+                "tags": [
+                  "secret",
+                  "security",
+                  "CRITICAL"
+                ]
+              }
+            },
+            {
+              "id": "slack-access-token",
+              "name": "Secret",
+              "shortDescription": {
+                "text": "Slack token"
+              },
+              "fullDescription": {
+                "text": "SLACK_BOT_TOKEN = \"*****************-000000000000-AbCdEfGhIjKlMnOpQrStUvWx\""
+              },
+              "defaultConfiguration": {
+                "level": "error"
+              },
+              "helpUri": "https://github.com/aquasecurity/trivy/blob/main/pkg/fanal/secret/builtin-rules.go",
+              "help": {
+                "text": "Secret Slack token\nSeverity: HIGH\nMatch: SLACK_BOT_TOKEN = \"*****************-000000000000-AbCdEfGhIjKlMnOpQrStUvWx\"",
+                "markdown": "**Secret Slack token**\n| Severity | Match |\n| --- | --- |\n|HIGH|SLACK_BOT_TOKEN = \"*****************-000000000000-AbCdEfGhIjKlMnOpQrStUvWx\"|"
+              },
+              "properties": {
+                "precision": "very-high",
+                "security-severity": "8.0",
+                "tags": [
+                  "secret",
+                  "security",
+                  "HIGH"
+                ]
+              }
+            }
+          ],
+          "version": "0.74.0"
+        }
+      },
+      "results": [
+        {
+          "ruleId": "CVE-2018-18074",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": {
+            "text": "Package: requests\nInstalled Version: 2.19.0\nVulnerability CVE-2018-18074\nSeverity: HIGH\nFixed Version: 2.20.0\nLink: [CVE-2018-18074](https://avd.aquasec.com/nvd/cve-2018-18074)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: requests@2.19.0"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2023-32681",
+          "ruleIndex": 1,
+          "level": "warning",
+          "message": {
+            "text": "Package: requests\nInstalled Version: 2.19.0\nVulnerability CVE-2023-32681\nSeverity: MEDIUM\nFixed Version: 2.31.0\nLink: [CVE-2023-32681](https://avd.aquasec.com/nvd/cve-2023-32681)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: requests@2.19.0"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2024-35195",
+          "ruleIndex": 2,
+          "level": "warning",
+          "message": {
+            "text": "Package: requests\nInstalled Version: 2.19.0\nVulnerability CVE-2024-35195\nSeverity: MEDIUM\nFixed Version: 2.32.0\nLink: [CVE-2024-35195](https://avd.aquasec.com/nvd/cve-2024-35195)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: requests@2.19.0"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2024-47081",
+          "ruleIndex": 3,
+          "level": "warning",
+          "message": {
+            "text": "Package: requests\nInstalled Version: 2.19.0\nVulnerability CVE-2024-47081\nSeverity: MEDIUM\nFixed Version: 2.32.4\nLink: [CVE-2024-47081](https://avd.aquasec.com/nvd/cve-2024-47081)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: requests@2.19.0"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-25645",
+          "ruleIndex": 4,
+          "level": "warning",
+          "message": {
+            "text": "Package: requests\nInstalled Version: 2.19.0\nVulnerability CVE-2026-25645\nSeverity: MEDIUM\nFixed Version: 2.33.0\nLink: [CVE-2026-25645](https://avd.aquasec.com/nvd/cve-2026-25645)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: requests@2.19.0"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2019-11324",
+          "ruleIndex": 5,
+          "level": "error",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2019-11324\nSeverity: HIGH\nFixed Version: 1.24.2\nLink: [CVE-2019-11324](https://avd.aquasec.com/nvd/cve-2019-11324)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2023-43804",
+          "ruleIndex": 6,
+          "level": "error",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2023-43804\nSeverity: HIGH\nFixed Version: 2.0.6, 1.26.17\nLink: [CVE-2023-43804](https://avd.aquasec.com/nvd/cve-2023-43804)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-66418",
+          "ruleIndex": 7,
+          "level": "error",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2025-66418\nSeverity: HIGH\nFixed Version: 2.6.0\nLink: [CVE-2025-66418](https://avd.aquasec.com/nvd/cve-2025-66418)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-66471",
+          "ruleIndex": 8,
+          "level": "error",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2025-66471\nSeverity: HIGH\nFixed Version: 2.6.0\nLink: [CVE-2025-66471](https://avd.aquasec.com/nvd/cve-2025-66471)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-21441",
+          "ruleIndex": 9,
+          "level": "error",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2026-21441\nSeverity: HIGH\nFixed Version: 2.6.3\nLink: [CVE-2026-21441](https://avd.aquasec.com/nvd/cve-2026-21441)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2026-44431",
+          "ruleIndex": 10,
+          "level": "error",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2026-44431\nSeverity: HIGH\nFixed Version: 2.7.0\nLink: [CVE-2026-44431](https://avd.aquasec.com/nvd/cve-2026-44431)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2018-25091",
+          "ruleIndex": 11,
+          "level": "warning",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2018-25091\nSeverity: MEDIUM\nFixed Version: 1.24.2\nLink: [CVE-2018-25091](https://avd.aquasec.com/nvd/cve-2018-25091)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2019-11236",
+          "ruleIndex": 12,
+          "level": "warning",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2019-11236\nSeverity: MEDIUM\nFixed Version: 1.24.3\nLink: [CVE-2019-11236](https://avd.aquasec.com/nvd/cve-2019-11236)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2020-26137",
+          "ruleIndex": 13,
+          "level": "warning",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2020-26137\nSeverity: MEDIUM\nFixed Version: 1.25.9\nLink: [CVE-2020-26137](https://avd.aquasec.com/nvd/cve-2020-26137)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2023-45803",
+          "ruleIndex": 14,
+          "level": "warning",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2023-45803\nSeverity: MEDIUM\nFixed Version: 2.0.7, 1.26.18\nLink: [CVE-2023-45803](https://avd.aquasec.com/nvd/cve-2023-45803)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2024-37891",
+          "ruleIndex": 15,
+          "level": "warning",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2024-37891\nSeverity: MEDIUM\nFixed Version: 1.26.19, 2.2.2\nLink: [CVE-2024-37891](https://avd.aquasec.com/nvd/cve-2024-37891)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "CVE-2025-50181",
+          "ruleIndex": 16,
+          "level": "warning",
+          "message": {
+            "text": "Package: urllib3\nInstalled Version: 1.24.1\nVulnerability CVE-2025-50181\nSeverity: MEDIUM\nFixed Version: 2.5.0\nLink: [CVE-2025-50181](https://avd.aquasec.com/nvd/cve-2025-50181)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "requirements.txt",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "requirements.txt: urllib3@1.24.1"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DS-0001",
+          "ruleIndex": 17,
+          "level": "warning",
+          "message": {
+            "text": "Artifact: Dockerfile\nType: dockerfile\nVulnerability DS-0001\nSeverity: MEDIUM\nMessage: Specify a tag in the 'FROM' statement for image 'ubuntu'\nLink: [DS-0001](https://avd.aquasec.com/misconfig/ds-0001)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "Dockerfile"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DS-0002",
+          "ruleIndex": 18,
+          "level": "error",
+          "message": {
+            "text": "Artifact: Dockerfile\nType: dockerfile\nVulnerability DS-0002\nSeverity: HIGH\nMessage: Last USER command in Dockerfile should not be 'root'\nLink: [DS-0002](https://avd.aquasec.com/misconfig/ds-0002)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 8,
+                  "startColumn": 1,
+                  "endLine": 8,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "Dockerfile"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DS-0013",
+          "ruleIndex": 19,
+          "level": "warning",
+          "message": {
+            "text": "Artifact: Dockerfile\nType: dockerfile\nVulnerability DS-0013\nSeverity: MEDIUM\nMessage: RUN should not be used to change directory: 'cd /app \u0026\u0026 pip install requests'. Use 'WORKDIR' statement instead.\nLink: [DS-0013](https://avd.aquasec.com/misconfig/ds-0013)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 7,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "Dockerfile"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DS-0017",
+          "ruleIndex": 20,
+          "level": "error",
+          "message": {
+            "text": "Artifact: Dockerfile\nType: dockerfile\nVulnerability DS-0017\nSeverity: HIGH\nMessage: The instruction 'RUN \u003cpackage-manager\u003e update' should always be followed by '\u003cpackage-manager\u003e install' in the same RUN statement.\nLink: [DS-0017](https://avd.aquasec.com/misconfig/ds-0017)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "Dockerfile"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DS-0026",
+          "ruleIndex": 21,
+          "level": "note",
+          "message": {
+            "text": "Artifact: Dockerfile\nType: dockerfile\nVulnerability DS-0026\nSeverity: LOW\nMessage: Add HEALTHCHECK instruction in your Dockerfile\nLink: [DS-0026](https://avd.aquasec.com/misconfig/ds-0026)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "Dockerfile"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "DS-0029",
+          "ruleIndex": 22,
+          "level": "error",
+          "message": {
+            "text": "Artifact: Dockerfile\nType: dockerfile\nVulnerability DS-0029\nSeverity: HIGH\nMessage: '--no-install-recommends' flag is missed: 'apt-get install -y curl'\nLink: [DS-0029](https://avd.aquasec.com/misconfig/ds-0029)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "Dockerfile",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 1,
+                  "endLine": 3,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "Dockerfile"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0086",
+          "ruleIndex": 23,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0086\nSeverity: HIGH\nMessage: No public access block so not blocking public acls\nLink: [AWS-0086](https://avd.aquasec.com/misconfig/aws-0086)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0087",
+          "ruleIndex": 24,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0087\nSeverity: HIGH\nMessage: No public access block so not blocking public policies\nLink: [AWS-0087](https://avd.aquasec.com/misconfig/aws-0087)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0089",
+          "ruleIndex": 25,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0089\nSeverity: LOW\nMessage: Bucket has logging disabled\nLink: [AWS-0089](https://avd.aquasec.com/misconfig/aws-0089)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0090",
+          "ruleIndex": 26,
+          "level": "warning",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0090\nSeverity: MEDIUM\nMessage: Bucket does not have versioning enabled\nLink: [AWS-0090](https://avd.aquasec.com/misconfig/aws-0090)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0091",
+          "ruleIndex": 27,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0091\nSeverity: HIGH\nMessage: No public access block so not blocking public acls\nLink: [AWS-0091](https://avd.aquasec.com/misconfig/aws-0091)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0092",
+          "ruleIndex": 28,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0092\nSeverity: HIGH\nMessage: Bucket has a public ACL: \"public-read\"\nLink: [AWS-0092](https://avd.aquasec.com/misconfig/aws-0092)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 1,
+                  "endLine": 3,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0093",
+          "ruleIndex": 29,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0093\nSeverity: HIGH\nMessage: No public access block so not restricting public buckets\nLink: [AWS-0093](https://avd.aquasec.com/misconfig/aws-0093)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0094",
+          "ruleIndex": 30,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0094\nSeverity: LOW\nMessage: Bucket does not have a corresponding public access block.\nLink: [AWS-0094](https://avd.aquasec.com/misconfig/aws-0094)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0099",
+          "ruleIndex": 31,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0099\nSeverity: LOW\nMessage: Security group explicitly uses the default description.\nLink: [AWS-0099](https://avd.aquasec.com/misconfig/aws-0099)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 6,
+                  "startColumn": 1,
+                  "endLine": 13,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0107",
+          "ruleIndex": 32,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0107\nSeverity: HIGH\nMessage: Security group rule allows unrestricted ingress from any IP address.\nLink: [AWS-0107](https://avd.aquasec.com/misconfig/aws-0107)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 11,
+                  "startColumn": 1,
+                  "endLine": 11,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0124",
+          "ruleIndex": 33,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0124\nSeverity: LOW\nMessage: Security group rule does not have a description.\nLink: [AWS-0124](https://avd.aquasec.com/misconfig/aws-0124)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 12,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "AWS-0132",
+          "ruleIndex": 34,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/main.tf\nType: terraform\nVulnerability AWS-0132\nSeverity: HIGH\nMessage: Bucket does not encrypt data with a customer managed key.\nLink: [AWS-0132](https://avd.aquasec.com/misconfig/aws-0132)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/main.tf",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/main.tf"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0001",
+          "ruleIndex": 35,
+          "level": "warning",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0001\nSeverity: MEDIUM\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.allowPrivilegeEscalation' to false\nLink: [KSV-0001](https://avd.aquasec.com/misconfig/ksv-0001)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0003",
+          "ruleIndex": 36,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0003\nSeverity: LOW\nMessage: Container 'app' of Pod 'demo' should add 'ALL' to 'securityContext.capabilities.drop'\nLink: [KSV-0003](https://avd.aquasec.com/misconfig/ksv-0003)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0004",
+          "ruleIndex": 37,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0004\nSeverity: LOW\nMessage: Container 'app' of 'pod' 'demo' in 'default' namespace should set securityContext.capabilities.drop\nLink: [KSV-0004](https://avd.aquasec.com/misconfig/ksv-0004)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0011",
+          "ruleIndex": 38,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0011\nSeverity: LOW\nMessage: Container 'app' of Pod 'demo' should set 'resources.limits.cpu'\nLink: [KSV-0011](https://avd.aquasec.com/misconfig/ksv-0011)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0012",
+          "ruleIndex": 39,
+          "level": "warning",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0012\nSeverity: MEDIUM\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.runAsNonRoot' to true\nLink: [KSV-0012](https://avd.aquasec.com/misconfig/ksv-0012)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0013",
+          "ruleIndex": 40,
+          "level": "warning",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0013\nSeverity: MEDIUM\nMessage: Container 'app' of Pod 'demo' should specify an image tag\nLink: [KSV-0013](https://avd.aquasec.com/misconfig/ksv-0013)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0014",
+          "ruleIndex": 41,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0014\nSeverity: HIGH\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.readOnlyRootFilesystem' to true\nLink: [KSV-0014](https://avd.aquasec.com/misconfig/ksv-0014)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0015",
+          "ruleIndex": 42,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0015\nSeverity: LOW\nMessage: Container 'app' of Pod 'demo' should set 'resources.requests.cpu'\nLink: [KSV-0015](https://avd.aquasec.com/misconfig/ksv-0015)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0016",
+          "ruleIndex": 43,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0016\nSeverity: LOW\nMessage: Container 'app' of Pod 'demo' should set 'resources.requests.memory'\nLink: [KSV-0016](https://avd.aquasec.com/misconfig/ksv-0016)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0017",
+          "ruleIndex": 44,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0017\nSeverity: HIGH\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.privileged' to false\nLink: [KSV-0017](https://avd.aquasec.com/misconfig/ksv-0017)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0018",
+          "ruleIndex": 45,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0018\nSeverity: LOW\nMessage: Container 'app' of Pod 'demo' should set 'resources.limits.memory'\nLink: [KSV-0018](https://avd.aquasec.com/misconfig/ksv-0018)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0020",
+          "ruleIndex": 46,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0020\nSeverity: LOW\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.runAsUser' \u003e 10000\nLink: [KSV-0020](https://avd.aquasec.com/misconfig/ksv-0020)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0021",
+          "ruleIndex": 47,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0021\nSeverity: LOW\nMessage: Container 'app' of Pod 'demo' should set 'securityContext.runAsGroup' \u003e 10000\nLink: [KSV-0021](https://avd.aquasec.com/misconfig/ksv-0021)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0030",
+          "ruleIndex": 48,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0030\nSeverity: LOW\nMessage: Either Pod or Container should set 'securityContext.seccompProfile.type' to 'RuntimeDefault'\nLink: [KSV-0030](https://avd.aquasec.com/misconfig/ksv-0030)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0104",
+          "ruleIndex": 49,
+          "level": "warning",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0104\nSeverity: MEDIUM\nMessage: container \"app\" of pod \"demo\" in \"default\" namespace should specify a seccomp profile\nLink: [KSV-0104](https://avd.aquasec.com/misconfig/ksv-0104)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0106",
+          "ruleIndex": 50,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0106\nSeverity: LOW\nMessage: container should drop all\nLink: [KSV-0106](https://avd.aquasec.com/misconfig/ksv-0106)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 7,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0110",
+          "ruleIndex": 51,
+          "level": "note",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0110\nSeverity: LOW\nMessage: pod demo in default namespace should set metadata.namespace to a non-default namespace\nLink: [KSV-0110](https://avd.aquasec.com/misconfig/ksv-0110)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 3,
+                  "startColumn": 1,
+                  "endLine": 4,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "KSV-0118",
+          "ruleIndex": 52,
+          "level": "error",
+          "message": {
+            "text": "Artifact: infra/pod.yaml\nType: kubernetes\nVulnerability KSV-0118\nSeverity: HIGH\nMessage: pod demo in default namespace is using the default security context, which allows root privileges\nLink: [KSV-0118](https://avd.aquasec.com/misconfig/ksv-0118)"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "infra/pod.yaml",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 5,
+                  "startColumn": 1,
+                  "endLine": 10,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "infra/pod.yaml"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "github-pat",
+          "ruleIndex": 53,
+          "level": "error",
+          "message": {
+            "text": "Artifact: src/config.py\nType: \nSecret GitHub Personal Access Token\nSeverity: CRITICAL\nMatch: GITHUB_TOKEN = \"****************************************\""
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/config.py",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 1,
+                  "startColumn": 1,
+                  "endLine": 1,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "src/config.py"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "slack-access-token",
+          "ruleIndex": 54,
+          "level": "error",
+          "message": {
+            "text": "Artifact: src/config.py\nType: \nSecret Slack token\nSeverity: HIGH\nMatch: SLACK_BOT_TOKEN = \"*****************-000000000000-AbCdEfGhIjKlMnOpQrStUvWx\""
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "src/config.py",
+                  "uriBaseId": "ROOTPATH"
+                },
+                "region": {
+                  "startLine": 2,
+                  "startColumn": 1,
+                  "endLine": 2,
+                  "endColumn": 1
+                }
+              },
+              "message": {
+                "text": "src/config.py"
+              }
+            }
+          ]
+        }
+      ],
+      "columnKind": "utf16CodeUnits",
+      "originalUriBaseIds": {
+        "ROOTPATH": {
+          "uri": "file:///tmp/tmp.FjLTxcKRog/repo/"
+        }
+      }
+    }
+  ]
+}

@@ -73,7 +73,10 @@ def test_serve_processes_one_request_and_posts_the_result(tmp_path):
     }
     assert result_body["result"]["tasks"][0]["outputs"] == {"result": "hello world:a,b"}
 
-    # The scope directory is wiped after the request completes.
+    # The "echo" fixture declares no `execution` block, so it defaults to
+    # stateless -- the scope directory is wiped after every request. See
+    # test_serve_stateful_capability_keeps_the_scope_warm_across_requests
+    # below for the sibling `stateful` behaviour, which must NOT wipe.
     assert not (workdir / "scope-1").exists()
 
 
@@ -215,3 +218,155 @@ def test_serve_missing_token_file_logs_and_keeps_polling_without_a_request(
     # No relay call is made -- serve() never falls back to an unauthenticated request.
     assert len(responses.calls) == 0
     assert "could not read executor token" in caplog.text
+
+
+# --- execution.mode: stateful -- EXECUTOR-CONTRACT.md "Execution modes" ----
+#
+# The "worktree_sync" fixture mimics rw-worktree: `execution.mode: stateful`
+# in its manifest, a setup ("open") that requires a "repo" credential and
+# writes a file into the scope, and a task ("read") that reads it back.
+
+
+def _worktree_next_response(request_id, scope_id, sha, credentials):
+    return {
+        "requestId": request_id,
+        "request": {
+            "version": 1,
+            "setup": {
+                "task": "open",
+                "inputs": {"repoUrl": "https://example.test/repo.git", "sha": sha},
+            },
+            "tasks": [{"task": "read", "inputs": {"tree": "${setup.tree}"}}],
+        },
+        "credentials": credentials,
+        "scopeId": scope_id,
+        "deadlineMs": 60000,
+    }
+
+
+@responses.activate
+def test_serve_stateful_capability_keeps_the_scope_warm_across_requests(tmp_path):
+    """A second request against the same scopeId must find its setup
+    cached and its materialised tree still present -- the whole point of
+    `stateful` mode (a warm sticky pod). This is the real `rwtask serve`
+    poll-loop path, not `rwtask run`'s single-shot one; it fails against
+    the unconditional shutil.rmtree in serve.py before this fix."""
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        json=_worktree_next_response("req-1", "scope-shared", "sha-1", {"repo": "token-1"}),
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-1/result", json={}, status=200)
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        # Same scopeId, same setup inputs, no credentials -- the mcp.v1
+        # sync read shape. Only recoverable via a cache hit.
+        json=_worktree_next_response("req-2", "scope-shared", "sha-1", {}),
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-2/result", json={}, status=200)
+
+    workdir = tmp_path / "work"
+    serve(
+        relay=RELAY,
+        pool_id="pool-1",
+        workdir=workdir,
+        capability_dir=FIXTURES / "worktree_sync",
+        token_file=_token_file(tmp_path),
+        max_iterations=2,
+    )
+
+    import json as _json
+
+    first_result = _json.loads(responses.calls[1].request.body)
+    second_result = _json.loads(responses.calls[3].request.body)
+
+    assert first_result["result"]["setup"]["status"] == "ok"
+    assert second_result["result"]["setup"]["status"] == "cached"
+    assert second_result["result"]["tasks"][0]["outputs"] == {
+        "content": "hello from https://example.test/repo.git@sha-1"
+    }
+
+    # The scope was NOT wiped between requests, and is still there now.
+    assert (workdir / "scope-shared" / "tree" / "hello.txt").exists()
+
+
+@responses.activate
+def test_serve_stateful_capability_does_not_share_scopes_across_scope_ids(tmp_path):
+    """Two different scopeIds, even with identical setup inputs, must not
+    see each other's cache or files -- a scope is only ever warm for the
+    scopeId it was created under."""
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        json=_worktree_next_response("req-1", "scope-a", "sha-1", {"repo": "token-1"}),
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-1/result", json={}, status=200)
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        # A different scopeId, same setup inputs, no credentials -- if
+        # scope-b could see scope-a's cache this would come back "cached".
+        json=_worktree_next_response("req-2", "scope-b", "sha-1", {}),
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-2/result", json={}, status=200)
+
+    workdir = tmp_path / "work"
+    serve(
+        relay=RELAY,
+        pool_id="pool-1",
+        workdir=workdir,
+        capability_dir=FIXTURES / "worktree_sync",
+        token_file=_token_file(tmp_path),
+        max_iterations=2,
+    )
+
+    import json as _json
+
+    first_result = _json.loads(responses.calls[1].request.body)
+    second_result = _json.loads(responses.calls[3].request.body)
+
+    assert first_result["result"]["setup"]["status"] == "ok"
+    # Not cached, and not credentialed -- scope-b has nothing of its own to
+    # fall back on, which is exactly the point: it never inherited scope-a's.
+    assert second_result["result"]["setup"]["status"] == "not_materialized"
+
+    assert (workdir / "scope-a" / "tree" / "hello.txt").exists()
+    assert not (workdir / "scope-b" / "tree").exists()
+
+
+@responses.activate
+def test_serve_stateful_lru_eviction_wipes_the_evicted_scope_from_disk(tmp_path):
+    """Bounding growth (`max_stateful_scopes`) evicts the least-recently-used
+    scope, and eviction means the directory is actually removed from disk,
+    not just forgotten by the LRU."""
+    for i, scope_id in enumerate(["scope-1", "scope-2", "scope-3"]):
+        request_id = f"req-{i + 1}"
+        responses.add(
+            responses.POST,
+            f"{RELAY}/v1/tasks/next",
+            json=_worktree_next_response(request_id, scope_id, f"sha-{i + 1}", {"repo": "token"}),
+            status=200,
+        )
+        responses.add(responses.POST, f"{RELAY}/v1/tasks/{request_id}/result", json={}, status=200)
+
+    workdir = tmp_path / "work"
+    serve(
+        relay=RELAY,
+        pool_id="pool-1",
+        workdir=workdir,
+        capability_dir=FIXTURES / "worktree_sync",
+        token_file=_token_file(tmp_path),
+        max_iterations=3,
+        max_stateful_scopes=2,
+    )
+
+    # scope-1 is the least-recently-used once scope-3 arrives with the cap
+    # at 2 -- evicted, and its directory wiped from disk.
+    assert not (workdir / "scope-1").exists()
+    assert (workdir / "scope-2").exists()
+    assert (workdir / "scope-3" / "tree" / "hello.txt").exists()

@@ -15,10 +15,22 @@ from .errors import CapabilityLoadError
 
 
 class LoadedCapability:
-    def __init__(self, capability_dir: Path, capability_id: str, registry: Registry) -> None:
+    def __init__(
+        self,
+        capability_dir: Path,
+        capability_id: str,
+        registry: Registry,
+        execution_mode: str = "stateless",
+    ) -> None:
         self.dir = capability_dir
         self.capability_id = capability_id
         self.registry = registry
+        # From the manifest's `execution.mode` (EXECUTOR-CONTRACT.md
+        # "Execution modes"): "stateless" | "stateful". Drives serve.py's
+        # scope lifecycle -- wipe every request vs. keep warm, LRU-bounded,
+        # across requests sharing a scopeId. Defaults to "stateless" for
+        # manifests/fixtures that omit `execution` entirely.
+        self.execution_mode = execution_mode
 
 
 def load_manifest(capability_dir: Path) -> dict:
@@ -52,7 +64,8 @@ def load_capability(capability_dir: Path) -> LoadedCapability:
     finally:
         _current_registry.reset(token)
 
-    return LoadedCapability(capability_dir, manifest["capability"], registry)
+    execution_mode = (manifest.get("execution") or {}).get("mode", "stateless")
+    return LoadedCapability(capability_dir, manifest["capability"], registry, execution_mode)
 
 
 def discover_capability_dir(base: Path = Path("capabilities")) -> Path:

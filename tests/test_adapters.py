@@ -386,3 +386,52 @@ def test_trufflehog_drops_git_internals():
     assert ".git/objects" in payload, "fixture should include a .git hit"
     records = adapters.trufflehog(payload)
     assert not any(".git/" in r["path"] for r in records)
+
+
+# --- severity survives the SDK boundary -------------------------------------
+
+
+@pytest.mark.parametrize(
+    "name,fx",
+    [
+        ("shellcheck", "shellcheck.json"),
+        ("hadolint", "hadolint.json"),
+        ("pylint", "pylint.json"),
+        ("trufflehog", "trufflehog.jsonl"),
+        ("flake8", "flake8.txt"),
+    ],
+)
+def test_adapter_severity_survives_from_records(name, fx):
+    """Regression: `from_records` used to look every severity up in a
+    `severity_map` no task passes, so an adapter's already-mapped value missed
+    the (empty) map and silently became `default_severity`. Every tool
+    flattened to `warning` -- trufflehog's committed credentials included, and
+    since a check run only fails on `error`, no adapter-based tool could fail
+    a build."""
+    from pathlib import Path as _Path
+
+    from runwhen_capability import Context as _Context
+
+    records = getattr(adapters, name)(fixture(fx))
+    ctx = _Context(capability="rw-checks", operation=name, workdir=_Path("."), credentials={})
+    findings = ctx.findings.from_records(records, root=FIXTURES.parent / "sample-repo")
+
+    expected = sorted(r["severity"] for r in records if r["path"])
+    actual = sorted(f.severity for f in findings)
+    assert actual == expected, f"{name}: severity was rewritten crossing the SDK boundary"
+
+
+def test_trufflehog_secrets_are_errors_end_to_end():
+    """A committed credential must reach `error`: the check-run conclusion is
+    `failure` only when some finding is `error`, so a downgrade here means a
+    live secret does not fail the build."""
+    from pathlib import Path as _Path
+
+    from runwhen_capability import Context as _Context
+
+    records = adapters.trufflehog(fixture("trufflehog.jsonl"))
+    ctx = _Context(
+        capability="rw-checks", operation="trufflehog", workdir=_Path("."), credentials={}
+    )
+    findings = ctx.findings.from_records(records, root=FIXTURES.parent / "sample-repo")
+    assert findings and all(f.severity == "error" for f in findings)

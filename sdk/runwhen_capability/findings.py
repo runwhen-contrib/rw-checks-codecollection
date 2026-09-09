@@ -23,6 +23,9 @@ from .pathsafe import safe_path
 
 FINGERPRINT_LENGTH = 32
 
+#: The only severities a Finding may carry (models.Severity).
+_SEVERITIES = frozenset({"error", "warning", "note"})
+
 _WHITESPACE_RUN = re.compile(r"\s+")
 
 
@@ -237,7 +240,15 @@ class FindingsClient:
                     rule=str(rec.get("rule", "") or ""),
                     path=normalized,
                     line=line,
-                    severity=smap.get(raw_sev, default_severity),
+                    # An adapter that already speaks our vocabulary passes
+                    # through untouched. `severity_map` is for the other shape --
+                    # a record carrying the tool's RAW severity word. Without
+                    # this passthrough an already-mapped value misses `smap`
+                    # entirely and silently becomes `default_severity`, which
+                    # flattens every tool to one level.
+                    severity=(
+                        raw_sev if raw_sev in _SEVERITIES else smap.get(raw_sev, default_severity)
+                    ),
                     message=str(rec.get("message", "") or ""),
                     context=normalize_context(context),
                 )

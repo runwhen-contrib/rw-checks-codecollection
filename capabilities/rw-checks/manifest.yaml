@@ -34,8 +34,12 @@ needs:
     - name: repo                         # the local name a task reads it by
       kind: github.installation          # provider-bound kind; papi binds it
       access: contents:read              # least privilege the platform must satisfy
-  egress:                                # papi resolves to CIDRs for the NetworkPolicy
-    - github.com
+  # egress is deliberately not declared here: it is not capability-static.
+  # The reachable git host follows from the credential/installation the
+  # platform binds (github.com, or a customer's GHE host) -- a literal
+  # here would be wrong by construction for GHE. When NetworkPolicy
+  # generation is built, it must derive destinations from the resolved
+  # installation, never from a literal in this file.
 
 # --- runs once per request, before any task ------------------------------------------
 setup:

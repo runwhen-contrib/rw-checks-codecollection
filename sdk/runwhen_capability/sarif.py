@@ -103,7 +103,9 @@ class SarifClient:
 
         findings: list[Finding] = []
         for rf in raw_findings:
-            context = resolve_context(root, rf.path, rf.line, rf.snippet, self._ctx.operation, self._ctx.log)
+            context = resolve_context(
+                root, rf.path, rf.line, rf.snippet, self._ctx.operation, self._ctx.log
+            )
             findings.append(
                 Finding(
                     capability=self._ctx.capability,

@@ -74,14 +74,16 @@ tasks:
   - name: gitleaks
     description: Secret scanning
     inputs:
-      tree: { from: "${setup.tree}" }
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
 
   - name: trivy
     description: Filesystem vulnerability, misconfiguration and secret scanning
     inputs:
-      tree: { from: "${setup.tree}" }
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
 
@@ -89,21 +91,24 @@ tasks:
                                           # looks up registry.tasks by this exact string
     description: Open-source dependency vulnerability scanning
     inputs:
-      tree: { from: "${setup.tree}" }
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
 
   - name: checkov
     description: Infrastructure-as-code static analysis
     inputs:
-      tree: { from: "${setup.tree}" }
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
 
   - name: zizmor
     description: GitHub Actions workflow security scanning
     inputs:
-      tree: { from: "${setup.tree}" }
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
 
@@ -236,7 +241,8 @@ tasks:
   - name: trufflehog
     description: Filesystem secret scanning
     inputs:
-      tree: { from: "${setup.tree}" }
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
 

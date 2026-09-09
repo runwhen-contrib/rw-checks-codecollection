@@ -234,27 +234,19 @@ class _NoRunContext(Context):
         raise AssertionError(f"tool was invoked despite an unsafe config: {argv}")
 
 
-@pytest.mark.parametrize(
-    "task_name,guard_name,takes_changed",
-    [
-        ("pylint", "pylint", True),
-        ("checkov", "checkov", False),
-        ("sqlfluff", "sqlfluff", True),
-        ("vale", "vale", True),
-    ],
-)
-def test_guarded_task_skips_the_tool_and_reports_one_finding(
-    tmp_path, monkeypatch, task_name, guard_name, takes_changed
-):
+@pytest.mark.parametrize("task_name", ["pylint", "checkov", "sqlfluff", "vale"])
+def test_guarded_task_skips_the_tool_and_reports_one_finding(tmp_path, monkeypatch, task_name):
+    # Patch the tool MODULE's GUARD, not guards.<name>: each module binds its
+    # guard at import time (`GUARD = guards.pylint`), so rebinding the guards
+    # module afterwards would not reach the reference the module already
+    # holds. GUARD is the contract surface -- see tools/_common.py.
+    import importlib
+
     reason = ".pylintrc: sets init-hook, which executes arbitrary Python"
-    monkeypatch.setattr(guards, guard_name, lambda tree: reason)
+    monkeypatch.setattr(importlib.import_module(task_name), "GUARD", lambda tree: reason)
 
     ctx = _NoRunContext(capability="rw-checks", operation=task_name, workdir=tmp_path)
-    kwargs = {"tree": tmp_path}
-    if takes_changed:
-        kwargs["changed"] = None
-
-    result = getattr(tasks, task_name)(ctx, **kwargs)
+    result = getattr(tasks, task_name)(ctx, tree=tmp_path, changed=None)
 
     findings = result["findings"]
     assert len(findings) == 1
@@ -270,7 +262,15 @@ def test_guarded_task_skips_the_tool_and_reports_one_finding(
 def test_unguarded_config_runs_the_tool_and_reaches_ctx_run(tmp_path, monkeypatch):
     """Sanity check the guard is actually load-bearing: a clean config must
     NOT stop the task from invoking the tool."""
-    monkeypatch.setattr(guards, "pylint", lambda tree: None)
+    import importlib
+
+    monkeypatch.setattr(importlib.import_module("pylint"), "GUARD", lambda tree: None)
+    # pylint is CONFIG=required: without the repository's own config it is
+    # skipped before the tool is ever invoked, so a bare tmp_path would prove
+    # nothing here. Give it a config AND a Python file to satisfy the file
+    # gate, so reaching ctx.run really is the guard's doing.
+    (tmp_path / ".pylintrc").write_text("[MASTER]\n")
+    (tmp_path / "a.py").write_text("import os\n")
     ran = {}
 
     class _RecordingContext(Context):

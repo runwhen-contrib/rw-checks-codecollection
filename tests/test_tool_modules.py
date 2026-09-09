@@ -87,3 +87,56 @@ def test_config_required_tools_skip_an_unconfigured_repo(tmp_path):
         if getattr(mod, "CONFIG", "optional") != "required":
             continue
         assert _common.gate(tmp_path, mod), f"{name} is CONFIG=required but did not skip"
+
+
+# --- the inventory must agree in three places -------------------------------
+
+
+def _manifest_task_names():
+    import yaml
+
+    manifest = yaml.safe_load((CAPABILITY / "manifest.yaml").read_text())
+    return sorted(t["name"] for t in manifest["tasks"])
+
+
+def _registered_task_names():
+    from runwhen_capability.loader import load_capability
+
+    return sorted(load_capability(CAPABILITY).registry.tasks)
+
+
+def test_tool_modules_manifest_and_registry_all_agree():
+    """Three inventories, one truth: a module under tools/, an entry in the
+    manifest, and a registered task.
+
+    Dispatch is `registry.tasks.get(name)` keyed on `func.__name__` with no
+    alias layer, so a manifest name that does not match a function name
+    silently 404s at run time rather than failing at load. That is why this
+    is asserted in both directions instead of one.
+    """
+    modules = tool_modules()
+    manifest = _manifest_task_names()
+    registered = _registered_task_names()
+
+    assert modules == manifest, (
+        f"tools/ and manifest disagree — only in tools/: {set(modules) - set(manifest)}; "
+        f"only in manifest: {set(manifest) - set(modules)}"
+    )
+    assert manifest == registered, (
+        f"manifest and registry disagree — only in manifest: {set(manifest) - set(registered)}; "
+        f"only registered: {set(registered) - set(manifest)}"
+    )
+
+
+def test_every_task_declares_both_inputs():
+    """Whether a tool's findings are reduced to the diff is the MODULE's
+    decision (`_common.emit`'s `diff_filter`). The manifest passes both
+    inputs uniformly — expressing the policy in both places lets them drift.
+    """
+    import yaml
+
+    manifest = yaml.safe_load((CAPABILITY / "manifest.yaml").read_text())
+    for entry in manifest["tasks"]:
+        assert sorted(entry.get("inputs") or {}) == ["changed", "tree"], (
+            f"{entry['name']} does not declare both tree and changed"
+        )

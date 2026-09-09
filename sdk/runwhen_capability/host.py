@@ -33,6 +33,7 @@ from .context import Context
 from .errors import CredentialNotFoundError, UnknownTaskError
 from .loader import LoadedCapability
 from .models import RequestEnvelope, ResultEnvelope, SetupResult, TaskResult
+from .repo_fs import TreeNotMaterializedError
 
 _PLACEHOLDER_RE = re.compile(r"^\$\{setup\.(\w+)\}$")
 _CAMEL_RE = re.compile(r"(?<!^)(?=[A-Z])")
@@ -230,6 +231,29 @@ def run_request(
             result.tasks.append(
                 TaskResult(task=task_spec.task, status="ok", outputs=_to_jsonable(outputs))
             )
+        except TreeNotMaterializedError as exc:
+            # EXECUTOR-CONTRACT.md "Addressing and caching": eviction is
+            # normal, invisible recovery, not a failure -- a reaped scope
+            # must come back on the next request, not surface as a hard
+            # error. The task itself is still recorded failed below, but
+            # the envelope as a whole must carry the signal papi's
+            # _miss_reason already understands (setup.status ==
+            # "not_materialized") so it re-materialises via the leased row,
+            # exactly as it does for a setup-time CredentialNotFoundError
+            # above. Only this exception gets the conversion -- an ordinary
+            # task bug must not look like a miss, or papi would
+            # re-materialise (and re-run) forever on a plain failure.
+            message = exc.args[0] if exc.args else str(exc)
+            log.warning("task %r hit an unmaterialised tree: %s", task_spec.task, message)
+            result.tasks.append(TaskResult(task=task_spec.task, status="failed", error=message))
+            if result.setup is None or result.setup.status != "not_materialized":
+                # Don't overwrite an existing not_materialized (already the
+                # right signal), and don't let a second/third task's less
+                # informative message clobber the first one that explains it.
+                result.setup = SetupResult(
+                    status="not_materialized",
+                    error=f"tree not materialised: {message}",
+                )
         except Exception as exc:  # noqa: BLE001 -- one task failing must not lose the others
             log.exception("task %r failed", task_spec.task)
             result.tasks.append(TaskResult(task=task_spec.task, status="failed", error=str(exc)))

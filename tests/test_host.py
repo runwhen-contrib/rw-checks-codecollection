@@ -232,6 +232,87 @@ def test_cache_miss_when_the_cached_tree_has_been_deleted(tmp_path):
     assert synced.setup.status == "not_materialized"
 
 
+# -- TreeNotMaterializedError -> setup.status == "not_materialized" -------
+# (PROD-1416: papi's _miss_reason only recovers from transport
+# UPSTREAM_UNAVAILABLE or setup.status == "not_materialized" -- never a
+# task's own status. A task that hits an unmaterialised tree must flip the
+# envelope, not just fail that one task, or papi has nothing to recover
+# from and the agent gets a hard error where the contract promises an
+# invisible re-host.) -------------------------------------------------------
+
+
+def test_a_task_hitting_an_unmaterialized_tree_reports_the_envelope_as_a_miss(tmp_path):
+    """A tree that vanishes between setup and a later task in the same
+    request (eviction, a reaped scope) must flip the whole envelope's
+    setup.status to not_materialized -- the signal papi's _miss_reason
+    already understands and recovers from by enqueuing the leased row and
+    retrying -- while the task itself is still recorded failed."""
+    capability = load_capability(FIXTURES / "worktree_sync")
+    request = RequestEnvelope.model_validate(
+        {
+            "version": 1,
+            "setup": {
+                "task": "open",
+                "inputs": {"repoUrl": "https://example.invalid/repo.git", "sha": "deadbeef"},
+            },
+            "tasks": [
+                {"task": "wreck", "inputs": {"tree": "${setup.tree}"}},
+                {"task": "grep", "inputs": {"tree": "${setup.tree}", "pattern": "hello"}},
+            ],
+        }
+    )
+
+    result = run_request(capability, request, credentials={"repo": "tok"}, scope_dir=tmp_path)
+
+    assert result.tasks[1].task == "grep"
+    assert result.tasks[1].status == "failed"
+    assert result.setup is not None
+    assert result.setup.status == "not_materialized"
+
+
+def test_an_ordinary_task_exception_does_not_flip_setup_to_not_materialized(tmp_path):
+    """Only TreeNotMaterializedError gets the not_materialized conversion
+    -- an arbitrary task bug must stay a plain task failure with setup left
+    untouched, or papi would re-materialise (and re-run) forever on an
+    ordinary bug instead of surfacing it."""
+    capability = load_capability(FIXTURES / "fails")
+    request = RequestEnvelope.model_validate(
+        {"version": 1, "tasks": [{"task": "boom", "inputs": {}}]}
+    )
+
+    result = run_request(capability, request, credentials={}, scope_dir=tmp_path)
+
+    assert result.tasks[0].status == "failed"
+    assert "kaboom" in result.tasks[0].error
+    assert result.setup is None
+
+
+def test_a_genuine_zero_match_grep_on_a_real_tree_is_still_an_ordinary_ok_result(tmp_path):
+    """A real, materialised tree with no matching lines is an ordinary
+    empty result (CONTRACT.md's rw.repo_grep.v1 shape) -- setup.status
+    must stay ok, never conflated with the tree itself being gone, which
+    is the whole distinction PROD-1416 exists to preserve."""
+    capability = load_capability(FIXTURES / "worktree_sync")
+    request = RequestEnvelope.model_validate(
+        {
+            "version": 1,
+            "setup": {
+                "task": "open",
+                "inputs": {"repoUrl": "https://example.invalid/repo.git", "sha": "deadbeef"},
+            },
+            "tasks": [
+                {"task": "grep", "inputs": {"tree": "${setup.tree}", "pattern": "no-such-text"}}
+            ],
+        }
+    )
+
+    result = run_request(capability, request, credentials={"repo": "tok"}, scope_dir=tmp_path)
+
+    assert result.setup.status == "ok"
+    assert result.tasks[0].status == "ok"
+    assert result.tasks[0].outputs == {"result": {"matches": [], "truncated": False}}
+
+
 def test_stateless_leased_requests_are_unaffected_by_setup_caching(tmp_path):
     """rw-checks-shaped usage: each leased request carries its own setup
     and credentials against its own scope. Setup-output caching must not

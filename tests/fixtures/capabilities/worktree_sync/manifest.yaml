@@ -12,3 +12,5 @@ setup:
   task: open
 tasks:
   - name: read
+  - name: grep
+  - name: wreck

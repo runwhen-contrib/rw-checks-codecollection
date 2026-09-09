@@ -37,6 +37,11 @@
       },
       "title": "Entries",
       "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
     }
   },
   "title": "LsResult",

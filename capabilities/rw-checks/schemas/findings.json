@@ -67,8 +67,21 @@
       "type": "object"
     }
   },
-  "items": {
-    "$ref": "#/$defs/Finding"
+  "description": "Output of a `kind: rw.findings.v1` task (ruff, gitleaks). An\nenvelope, not a bare list of Finding -- same reasoning as\nGrepResult/LsResult below: `truncated` is the only way a consumer can\ntell a capped list from a complete one. See findings.py's\nMAX_FINDINGS_PER_RESULT for the cap and the byte budget behind it.",
+  "properties": {
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
   },
-  "type": "array"
+  "title": "FindingsResult",
+  "type": "object"
 }

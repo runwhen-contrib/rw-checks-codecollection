@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 from runwhen_capability.repo_fs import (
+    MAX_LS_ENTRIES,
     BinaryFileError,
     PathEscapesTreeError,
     TreeNotMaterializedError,
@@ -283,6 +284,7 @@ def test_ls_empty_subdirectory_within_a_real_tree_is_an_empty_list_not_none(tmp_
 
     assert got.entries == []
     assert isinstance(got.entries, list)
+    assert got.truncated is False
 
 
 def test_ls_missing_tree_raises_typed_error(tmp_path):
@@ -331,6 +333,25 @@ def test_ls_not_a_directory_raises(tmp_path):
 
     with pytest.raises(NotADirectoryError):
         ls_tree(tree, path="a.py")
+
+
+def test_ls_over_cap_truncates_and_flags_it(tmp_path):
+    files = {f"f{i:04d}.py": "x" for i in range(MAX_LS_ENTRIES + 5)}
+    tree = make_tree(tmp_path, files)
+
+    got = ls_tree(tree)
+
+    assert len(got.entries) == MAX_LS_ENTRIES
+    assert got.truncated is True
+
+
+def test_ls_under_cap_is_not_truncated(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x", "b.py": "y"})
+
+    got = ls_tree(tree)
+
+    assert len(got.entries) == 2
+    assert got.truncated is False
 
 
 def test_ls_symlinked_entry_is_type_other_and_not_recursed(tmp_path):

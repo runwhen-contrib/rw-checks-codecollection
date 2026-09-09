@@ -303,7 +303,10 @@ def ls_tree(tree: Path, path: str | None = None, depth: int | None = None) -> Ls
     """Ported from handleLs/lsWalk in internal/rwcheck/serve/ls.go. Lists
     `path` (repo root when omitted) up to `depth` levels deep (default 1:
     immediate children only), sorted lexically per directory, skipping
-    ".git" entirely and capping the total at MAX_LS_ENTRIES."""
+    ".git" entirely and capping the total at MAX_LS_ENTRIES -- `truncated`
+    is set the instant the cap bites, the same honesty grep's `truncated`
+    already gives a capped match list (previously ls silently reported a
+    capped listing as if it were complete)."""
     _check_tree_materialized(Path(tree))
     root = _confined(tree, path or "")
     if not root.is_dir():
@@ -312,7 +315,7 @@ def ls_tree(tree: Path, path: str | None = None, depth: int | None = None) -> Ls
     max_depth = depth if depth and depth > 0 else DEFAULT_LS_DEPTH
     entries: list[LsEntry] = []
     _ls_walk(root, "", 1, max_depth, entries)
-    return LsResult(entries=entries)
+    return LsResult(entries=entries, truncated=len(entries) >= MAX_LS_ENTRIES)
 
 
 class RepoFsClient:

@@ -1,9 +1,11 @@
-"""ctx.findings.filter_changed / .fingerprint -- the changed-files diff
-filter (CONTRACT.md: "Present -> emit only findings whose path is in files
-with status != removed") and fingerprint assignment.
+"""ctx.findings.filter_changed / .fingerprint / .cap -- the changed-files
+diff filter (CONTRACT.md: "Present -> emit only findings whose path is in
+files with status != removed"), fingerprint assignment, and the
+MAX_FINDINGS_PER_RESULT wire cap.
 """
 
 from runwhen_capability import Context
+from runwhen_capability.findings import MAX_FINDINGS_PER_RESULT
 from runwhen_capability.models import Finding
 
 
@@ -59,3 +61,36 @@ def test_fingerprint_does_not_mutate_input():
     ctx.findings.fingerprint(findings)
 
     assert findings[0].fingerprint is None
+
+
+# --- cap (MAX_FINDINGS_PER_RESULT) ------------------------------------------
+
+
+def test_cap_over_limit_truncates_and_flags_it():
+    ctx = Context(capability="rw-checks", operation="ruff", workdir="/tmp")
+    findings = [make_finding(f"src/{i}.py") for i in range(MAX_FINDINGS_PER_RESULT + 1)]
+
+    got = ctx.findings.cap(findings)
+
+    assert len(got.findings) == MAX_FINDINGS_PER_RESULT
+    assert got.truncated is True
+
+
+def test_cap_under_limit_keeps_everything_untruncated():
+    ctx = Context(capability="rw-checks", operation="ruff", workdir="/tmp")
+    findings = [make_finding("src/x.py"), make_finding("src/y.py")]
+
+    got = ctx.findings.cap(findings)
+
+    assert got.findings == findings
+    assert got.truncated is False
+
+
+def test_cap_exactly_at_limit_is_not_truncated():
+    ctx = Context(capability="rw-checks", operation="ruff", workdir="/tmp")
+    findings = [make_finding(f"src/{i}.py") for i in range(MAX_FINDINGS_PER_RESULT)]
+
+    got = ctx.findings.cap(findings)
+
+    assert len(got.findings) == MAX_FINDINGS_PER_RESULT
+    assert got.truncated is False

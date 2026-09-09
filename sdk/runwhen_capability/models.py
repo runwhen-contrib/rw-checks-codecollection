@@ -39,6 +39,17 @@ class Finding(BaseModel):
     context: str = ""  # normalized_context; "" if no region/line
 
 
+class FindingsResult(BaseModel):
+    """Output of a `kind: rw.findings.v1` task (ruff, gitleaks). An
+    envelope, not a bare list of Finding -- same reasoning as
+    GrepResult/LsResult below: `truncated` is the only way a consumer can
+    tell a capped list from a complete one. See findings.py's
+    MAX_FINDINGS_PER_RESULT for the cap and the byte budget behind it."""
+
+    findings: list[Finding] = Field(default_factory=list)
+    truncated: bool = False
+
+
 # --- rw-worktree task outputs -----------------------------------------------
 # Wire-3 output shapes for the rw-worktree capability's read/grep/ls tasks,
 # ported from internal/rwcheck/serve/{read,grep,ls}.go's response structs in
@@ -48,7 +59,7 @@ class Finding(BaseModel):
 # names agentfarm's agents/pr_review_agent/tools.py reads out of papi's
 # unwrapped worktree-invoke `result` (read_repo_file / grep_repo /
 # list_repo_dir): "startLine"/"endLine" for read, "matches"/"truncated" for
-# grep, "entries" for ls. `matches`/`entries` default to `[]`, never omitted
+# grep, "entries"/"truncated" for ls. `matches`/`entries` default to `[]`, never omitted
 # or null -- agentfarm's tools treat a missing/non-list value as a malformed
 # response, not an empty result (a previously-fixed bug in exactly this
 # shape is what that guard exists to catch).
@@ -88,6 +99,7 @@ class LsResult(BaseModel):
     """Output of the `ls` task."""
 
     entries: list[LsEntry] = Field(default_factory=list)
+    truncated: bool = False
 
 
 # --- Wire 3 (papi <-> capability): the request/result envelope -------------

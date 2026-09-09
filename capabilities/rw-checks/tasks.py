@@ -23,7 +23,7 @@ def ruff(ctx: Context, tree: Path, changed: list[str] | None):
     findings = ctx.sarif.parse(proc.stdout, root=tree)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": ctx.findings.cap(ctx.findings.fingerprint(findings))}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
@@ -45,4 +45,4 @@ def gitleaks(ctx: Context, tree: Path):
         cwd=tree,
     )
     findings = ctx.sarif.parse(proc.stdout, root=tree)
-    return {"findings": ctx.findings.fingerprint(findings)}
+    return {"findings": ctx.findings.cap(ctx.findings.fingerprint(findings))}

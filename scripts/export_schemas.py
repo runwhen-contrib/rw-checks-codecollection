@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPO_ROOT / "sdk"))
 
 from pydantic import TypeAdapter  # noqa: E402
 from runwhen_capability.models import (  # noqa: E402
-    Finding,
+    FindingsResult,
     GrepResult,
     LsResult,
     ReadResult,
@@ -27,12 +27,13 @@ from runwhen_capability.models import (  # noqa: E402
 # Which schema files each capability needs, by capability id -- one entry
 # per `tasks[].outputs.<name>.schema` the manifest declares. Every task in
 # rw-checks declares `outputs.findings.kind: rw.findings.v1, schema:
-# ./schemas/findings.json` -- the output is a list of Finding. rw-worktree's
-# read/grep/ls each declare a single `result` output with their own kind
-# and schema file.
+# ./schemas/findings.json` -- the output is a FindingsResult envelope
+# ({findings, truncated}), not a bare list of Finding, so a capped result
+# can say so. rw-worktree's read/grep/ls each declare a single `result`
+# output with their own kind and schema file.
 CAPABILITY_SCHEMAS: dict[str, dict[str, object]] = {
     "rw-checks": {
-        "findings.json": TypeAdapter(list[Finding]).json_schema(),
+        "findings.json": TypeAdapter(FindingsResult).json_schema(),
     },
     "rw-worktree": {
         "read.json": TypeAdapter(ReadResult).json_schema(),

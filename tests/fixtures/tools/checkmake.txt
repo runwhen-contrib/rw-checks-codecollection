@@ -1,8 +1,3 @@
-    RULE              DESCRIPTION             FILE NAME   LINE NUMBER  
-                                                                       
-  minphony   Missing required phony target    Makefile    0            
-             "all"                                                     
-  minphony   Missing required phony target    Makefile    0            
-             "clean"                                                   
-  minphony   Missing required phony target    Makefile    0            
-             "test"                                                    
+minphony|Makefile|0|Missing required phony target "all"
+minphony|Makefile|0|Missing required phony target "clean"
+minphony|Makefile|0|Missing required phony target "test"

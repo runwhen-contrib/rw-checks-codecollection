@@ -63,7 +63,6 @@ cap osv-scanner sarif osv-scanner --format sarif -r .
 cap checkov     sarif sh -c 'd=$(mktemp -d); checkov -d . --output sarif --output-file-path "$d" >/dev/null 2>&1; cat "$d/results_sarif.sarif"'
 cap zizmor      sarif zizmor --format sarif --no-progress .github/workflows
 cap tflint      sarif tflint --format sarif --chdir infra
-cap semgrep     sarif semgrep scan --sarif --quiet --config=p/default --metrics=off .
 
 echo "--- JSON ---"
 cap shellcheck  json shellcheck -f json1 scripts/deploy.sh
@@ -81,7 +80,8 @@ cap vale        json vale --output=JSON docs
 echo "--- text ---"
 cap yamllint    txt yamllint -f parsable .
 cap flake8      txt flake8 '--format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s' src
-cap checkmake   txt checkmake Makefile
+cap checkmake   txt checkmake --format="{{.Rule}}|{{.FileName}}|{{.LineNumber}}|{{.Violation}}
+" Makefile
 cap dotenv      txt dotenv-linter .env
 
 echo

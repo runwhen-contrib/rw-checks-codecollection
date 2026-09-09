@@ -14,7 +14,6 @@ ruff==0.16.6
 pylint==3.3.4
 flake8==7.1.1
 yamllint==1.35.1
-semgrep==1.145.0
 checkov==3.2.501
 sqlfluff==3.5.0
 zizmor==1.20.0

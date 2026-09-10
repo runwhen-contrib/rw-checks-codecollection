@@ -8,6 +8,7 @@ docs/static-checks/CAPABILITY-CONTRACT.md Part 2.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -97,12 +98,28 @@ class Context:
         argv: list[str],
         cwd: Path | str | None = None,
         timeout: float | None = None,
+        env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess:
         """Runs argv as a subprocess. stdout is captured (returned on
         `.stdout`); stderr is captured and forwarded line-by-line to
         ctx.log; the timeout (default DEFAULT_RUN_TIMEOUT) is enforced by
         subprocess itself -- a timeout raises subprocess.TimeoutExpired,
-        which the task host treats like any other task exception."""
+        which the task host treats like any other task exception.
+
+        `env` is MERGED OVER the parent environment, never a replacement:
+        a tool needs PATH and the rest of its runtime, and a caller that
+        only wants to add one variable must not have to reconstruct
+        everything else. Merged into a fresh dict per call rather than
+        mutating `os.environ`, because tools run concurrently in one
+        process -- a global mutation would leak into whatever else is
+        running alongside.
+
+        The case this exists for: the capability's root filesystem is
+        READ-ONLY, so a tool that writes to the default `/tmp` fails
+        outright. Only `workdir` (`/work`) is writable, so such a tool
+        must be pointed at it -- see `tools/trivy.py`, whose vulnerability
+        DB download died on `mkdir /tmp/trivy-...: read-only file system`.
+        """
         run_cwd = Path(cwd) if cwd is not None else self.workdir
         proc = subprocess.run(  # noqa: S603 -- argv is capability-controlled, by design
             argv,
@@ -110,6 +127,7 @@ class Context:
             capture_output=True,
             text=True,
             timeout=timeout or DEFAULT_RUN_TIMEOUT,
+            env={**os.environ, **env} if env else None,
         )
         if proc.stderr:
             prog = argv[0] if argv else "?"

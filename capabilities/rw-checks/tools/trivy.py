@@ -67,9 +67,31 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     if stop:
         return findings
 
+    # The capability's root filesystem is READ-ONLY; only `ctx.workdir`
+    # (`/work`, where `git.checkout` puts `tree`) is writable. trivy writes
+    # in two places and BOTH default under `/tmp`, so both have to move or
+    # the scan dies before it starts -- observed on a live pull request:
+    #   failed to download vulnerability DB: failed to create a temp dir:
+    #   mkdir /tmp/trivy-1758359052: read-only file system
+    # `--cache-dir` moves the DB itself; `TMPDIR` moves the scratch dir Go's
+    # os.MkdirTemp uses while unpacking it. Setting only one still fails.
+    scratch = ctx.workdir / ".trivy"
+    (scratch / "tmp").mkdir(parents=True, exist_ok=True)
     proc = ctx.run(
-        ["trivy", "fs", "--format", "sarif", "--quiet", "--scanners", "vuln", "."],
+        [
+            "trivy",
+            "fs",
+            "--cache-dir",
+            str(scratch / "cache"),
+            "--format",
+            "sarif",
+            "--quiet",
+            "--scanners",
+            "vuln",
+            ".",
+        ],
         cwd=tree,
+        env={"TMPDIR": str(scratch / "tmp")},
     )
     fail = _common.check_exit(ctx, tree, "trivy", proc, sys.modules[__name__])
     if fail is not None:

@@ -38,8 +38,8 @@ class Context:
     """Built once per setup/task invocation by the task host. `capability`
     and `operation` are the task host's own knowledge (from the manifest and
     the request), never read by the task function itself -- they exist on
-    Context so ctx.sarif and ctx.findings can tag/fingerprint findings
-    without the task passing them explicitly."""
+    Context so ctx.sarif and ctx.findings can tag findings with them without
+    the task passing them explicitly."""
 
     def __init__(
         self,

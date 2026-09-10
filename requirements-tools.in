@@ -1,0 +1,19 @@
+# Top-level static-check tools installed from PyPI.
+#
+# requirements-tools.txt is GENERATED from this file by
+# scripts/gen_pip_hashes.sh (uv pip compile --generate-hashes), run inside
+# the image's own base (linux/amd64 python:3.12-slim) so the resolution
+# matches what the image will actually install.
+#
+# The generated file is installed with `pip install --require-hashes`, which
+# refuses to install anything whose artifact hash is not listed -- and which
+# requires the FULL transitive closure to be pinned and hashed. That is the
+# standard mechanism for PyPI supply-chain integrity, and it is why this
+# cannot be a hand-maintained list of top-level pins.
+ruff==0.16.6
+pylint==3.3.4
+flake8==7.1.1
+yamllint==1.35.1
+checkov==3.2.501
+sqlfluff==3.5.0
+zizmor==1.20.0

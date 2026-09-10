@@ -1,20 +1,8 @@
 {
   "$defs": {
     "Finding": {
-      "description": "One static-check finding. `fingerprint` is None until\nContext.findings.fingerprint() has run over it -- see CONTRACT.md's\nfingerprint formula, ported byte-identical in findings.py.",
+      "description": "One static-check finding.\n\ncolumn/end_line/end_column exist for one reason: GitHub check-run\nannotations accept `start_column`/`end_column` (only meaningful when\n`end_line` equals `start_line`) plus `end_line` itself, and without them\na finding highlights the WHOLE line instead of the offending token.\nEvery tool this package wraps reports at least some of this; discarding\nit here would mean discarding it everywhere downstream too.",
       "properties": {
-        "fingerprint": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Fingerprint"
-        },
         "capability": {
           "title": "Capability",
           "type": "string"
@@ -34,6 +22,21 @@
         "line": {
           "default": 0,
           "title": "Line",
+          "type": "integer"
+        },
+        "column": {
+          "default": 0,
+          "title": "Column",
+          "type": "integer"
+        },
+        "end_line": {
+          "default": 0,
+          "title": "End Line",
+          "type": "integer"
+        },
+        "end_column": {
+          "default": 0,
+          "title": "End Column",
           "type": "integer"
         },
         "severity": {

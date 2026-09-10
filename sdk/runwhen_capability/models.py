@@ -24,16 +24,24 @@ Severity = Literal["error", "warning", "note"]
 
 
 class Finding(BaseModel):
-    """One static-check finding. `fingerprint` is None until
-    Context.findings.fingerprint() has run over it -- see CONTRACT.md's
-    fingerprint formula, ported byte-identical in findings.py."""
+    """One static-check finding.
 
-    fingerprint: str | None = None
+    column/end_line/end_column exist for one reason: GitHub check-run
+    annotations accept `start_column`/`end_column` (only meaningful when
+    `end_line` equals `start_line`) plus `end_line` itself, and without them
+    a finding highlights the WHOLE line instead of the offending token.
+    Every tool this package wraps reports at least some of this; discarding
+    it here would mean discarding it everywhere downstream too.
+    """
+
     capability: str
     operation: str
     rule: str
     path: str  # repo-relative, forward slashes, no leading "./"
     line: int = 0  # 0 if the finding carries no location
+    column: int = 0  # 1-based; 0 = not reported
+    end_line: int = 0  # 0 = single-line finding
+    end_column: int = 0  # 1-based; 0 = not reported
     severity: Severity
     message: str = ""
     context: str = ""  # normalized_context; "" if no region/line

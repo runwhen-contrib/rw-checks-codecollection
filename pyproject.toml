@@ -36,7 +36,7 @@ line-length = 100
 target-version = "py312"
 # tests/fixtures/repo and tests/fixtures/*.sarif* are deliberately "dirty"
 # fixture data static-check tools are meant to flag -- not code we lint.
-extend-exclude = ["tests/fixtures/repo"]
+extend-exclude = ["tests/fixtures/repo", "tests/fixtures/sample-repo"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]

@@ -8,21 +8,24 @@ Path normalisation mirrors the Go implementation exactly: an absolute
 trustworthy against the worktree root the operation actually ran in, so a
 location that does not resolve under `root` is DROPPED (logged, not silently
 passed through with an unnormalized path) -- such a path can never match the
-changed-files filter or be fingerprinted meaningfully.
+changed-files filter.
 """
 
 from __future__ import annotations
 
 import itertools
 import json
-import os
-import posixpath
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import unquote, urlparse
 
-from .findings import MAX_FINDINGS_PER_RESULT, normalize_context, normalize_path
+from .findings import (
+    MAX_FINDINGS_PER_RESULT,
+    normalize_context,
+    normalize_path,
+    normalize_uri,  # noqa: F401 -- re-exported: `sarif.normalize_uri` is a public import path
+    resolve_base_uri,
+)
 from .models import Finding
 from .pathsafe import safe_path
 
@@ -32,10 +35,13 @@ _READ_LINE_TIMEOUT_MSG = "line out of range"
 @dataclass
 class _RawFinding:
     rule_id: str
-    level: str
+    severity: str  # already mapped -- see `severity_fn` in _flatten
     message: str
     path: str  # "" if no location
     line: int  # 0 if no region
+    column: int  # 0 if region carries no startColumn
+    end_line: int  # 0 if region carries no endLine (or no region)
+    end_column: int  # 0 if region carries no endColumn
     snippet: str  # "" if the result carries no region.snippet.text
 
 
@@ -50,68 +56,35 @@ def severity(level: str) -> str:
     return "note"
 
 
-def normalize_uri(uri: str, worktree_root: str) -> tuple[str, bool]:
-    """Converts a SARIF artifactLocation URI (after any uriBaseId
-    resolution) into the CONTRACT.md path shape: repo-relative, forward
-    slashes, no leading './'. Returns ("", False) when uri is empty, names a
-    scheme this does not understand (anything but "file" or no scheme at
-    all), or resolves outside worktree_root -- callers must drop the finding
-    rather than fingerprint or diff-filter it against such a path."""
-    if not uri:
-        return "", False
-
-    p = uri
-    try:
-        parsed = urlparse(uri)
-    except ValueError:
-        parsed = None
-    if parsed is not None:
-        if parsed.scheme in ("", "file"):
-            if parsed.path:
-                p = unquote(parsed.path)  # percent-decoded, mirrors url.Parse
-        else:
-            return "", False
-    p = p.replace("\\", "/")
-
-    if not posixpath.isabs(p):
-        stripped = p[2:] if p.startswith("./") else p
-        clean = posixpath.normpath(stripped) if stripped else "."
-        if clean in (".", "..") or clean.startswith("../"):
-            return "", False
-        return clean, True
-
-    abs_root = os.path.abspath(worktree_root).replace("\\", "/")
-    try:
-        rel = posixpath.relpath(p, abs_root)
-    except ValueError:
-        return "", False
-    if rel == ".." or rel.startswith("../"):
-        return "", False
-    return rel[2:] if rel.startswith("./") else rel, True
+# `SarifClient.parse`'s own `severity` parameter (below) shadows this
+# function inside that method -- this alias is how `parse` still reaches
+# today's default mapping without renaming the public `sarif.severity`
+# helper tests/test_sarif.py already imports directly.
+_default_severity_from_level = severity
 
 
-def _resolve_base_uri(loc: dict, bases: dict[str, dict]) -> str:
-    """Resolves an artifactLocation's uriBaseId against the enclosing run's
-    originalUriBaseIds, per the SARIF spec: uriBaseId names an entry whose
-    own uri is the base a relative artifactLocation.uri is resolved against.
-    Returns the raw uri unresolved when there is no uriBaseId, the name is
-    unknown, or either URI fails to parse."""
-    uri = loc.get("uri", "") or ""
-    base_id = loc.get("uriBaseId")
-    if not base_id:
-        return uri
-    base = bases.get(base_id)
-    if not base or not base.get("uri"):
-        return uri
-    try:
-        from urllib.parse import urljoin
-
-        return urljoin(base["uri"], uri)
-    except ValueError:
-        return uri
+def _rule_properties(run: dict) -> dict[str, dict]:
+    """ruleId -> that rule's `properties` dict, from
+    runs[].tool.driver.rules[] -- the only place a SARIF report carries
+    structured per-rule metadata (e.g. trivy's `security-severity`) beyond
+    the bare `level` string on each result. {} for a rule with no
+    `properties`, or one `results[].ruleId` never lists in `rules` at all
+    (gitleaks: 222 rules, none of them carry properties)."""
+    driver = ((run.get("tool") or {}).get("driver")) or {}
+    out: dict[str, dict] = {}
+    for rule in driver.get("rules") or []:
+        rid = rule.get("id")
+        if rid:
+            out[rid] = rule.get("properties") or {}
+    return out
 
 
-def _flatten(report: dict, worktree_root: str, log) -> Iterator[_RawFinding]:
+def _flatten(
+    report: dict,
+    worktree_root: str,
+    log,
+    severity_fn: Callable[[str, str, dict], str],
+) -> Iterator[_RawFinding]:
     """A generator, not a list-builder: `SarifClient.parse` wraps this in
     `itertools.islice(..., MAX_FINDINGS_PER_RESULT + 1)`, which stops
     calling `next()` -- and therefore stops this function ever touching
@@ -122,19 +95,21 @@ def _flatten(report: dict, worktree_root: str, log) -> Iterator[_RawFinding]:
     parse()'s comment below."""
     for run in report.get("runs", []) or []:
         bases = run.get("originalUriBaseIds") or {}
+        rule_props = _rule_properties(run)
         for res in run.get("results", []) or []:
             rule_id = res.get("ruleId", "") or ""
             level = res.get("level", "") or ""
+            sev = severity_fn(rule_id, level, rule_props.get(rule_id, {}))
             message = (res.get("message") or {}).get("text", "") or ""
             locations = res.get("locations") or []
             if not locations:
-                yield _RawFinding(rule_id, level, message, "", 0, "")
+                yield _RawFinding(rule_id, sev, message, "", 0, 0, 0, 0, "")
                 continue
 
             phys = (locations[0] or {}).get("physicalLocation") or {}
             artifact = phys.get("artifactLocation") or {}
             region = phys.get("region") or {}
-            raw_uri = _resolve_base_uri(artifact, bases)
+            raw_uri = resolve_base_uri(artifact, bases)
             normalized, ok = normalize_uri(raw_uri, worktree_root)
             if not ok:
                 _warn_skipped_location(log, rule_id, artifact.get("uri", ""))
@@ -143,10 +118,13 @@ def _flatten(report: dict, worktree_root: str, log) -> Iterator[_RawFinding]:
             snippet = ((region.get("snippet") or {}).get("text", "")) or ""
             yield _RawFinding(
                 rule_id=rule_id,
-                level=level,
+                severity=sev,
                 message=message,
                 path=normalized,
                 line=region.get("startLine", 0) or 0,
+                column=region.get("startColumn", 0) or 0,
+                end_line=region.get("endLine", 0) or 0,
+                end_column=region.get("endColumn", 0) or 0,
                 snippet=snippet,
             )
 
@@ -224,8 +202,24 @@ class SarifClient:
     def __init__(self, ctx) -> None:
         self._ctx = ctx
 
-    def parse(self, text: str, root: Path | str) -> list[Finding]:
-        """Bounded at MAX_FINDINGS_PER_RESULT + 1 findings -- one past
+    def parse(
+        self,
+        text: str,
+        root: Path | str,
+        severity: Callable[[str, str, dict], str] | None = None,
+    ) -> list[Finding]:
+        """`severity`, when given, is called per result as
+        `severity(rule_id, sarif_level, rule_properties)` -- `rule_properties`
+        is that result's rule's `properties` dict from
+        runs[].tool.driver.rules[] (matched by id), or {} when absent -- and
+        must return "error"|"warning"|"note". This is a per-CAPABILITY
+        policy (capabilities/rw-checks/severity.py), not an SDK default: SARIF
+        `level` means a different thing for every tool -- see that module's
+        docstring for what each of the 7 SARIF tools actually emits. `None`
+        keeps today's behaviour exactly: `level` mapped by the module-level
+        `severity()` function above, ignoring `rule_id`/`rule_properties`.
+
+        Bounded at MAX_FINDINGS_PER_RESULT + 1 findings -- one past
         ctx.findings.cap()'s ceiling, so that call still sees `len(findings)
         > MAX_FINDINGS_PER_RESULT` and reports `truncated` correctly,
         without this function ever having built more than a ceiling's worth
@@ -241,8 +235,13 @@ class SarifClient:
         pathological case this ceiling exists for."""
         root = Path(root)
         report = json.loads(text)
+        severity_fn = (
+            severity
+            if severity is not None
+            else (lambda rule_id, level, props: _default_severity_from_level(level))
+        )
         raw_findings = itertools.islice(
-            _flatten(report, str(root), self._ctx.log), MAX_FINDINGS_PER_RESULT + 1
+            _flatten(report, str(root), self._ctx.log, severity_fn), MAX_FINDINGS_PER_RESULT + 1
         )
 
         line_reader = _LineReader()
@@ -256,7 +255,10 @@ class SarifClient:
                     rule=rf.rule_id,
                     path=rf.path,
                     line=rf.line,
-                    severity=severity(rf.level),
+                    column=rf.column,
+                    end_line=rf.end_line,
+                    end_column=rf.end_column,
+                    severity=rf.severity,
                     message=rf.message,
                     context=normalize_context(context),
                 )

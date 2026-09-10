@@ -1,0 +1,7 @@
+key:   value
+list:
+  - a
+  -  b
+duplicate: 1
+duplicate: 2
+trailing:   

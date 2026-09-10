@@ -1,0 +1,6 @@
+id: no-eval
+message: Avoid eval()
+severity: error
+language: python
+rule:
+  pattern: eval($$$ARGS)

@@ -1,0 +1,164 @@
+{
+  "violations": [
+    {
+      "title": "directory-package-mismatch",
+      "description": "Directory structure should mirror package",
+      "category": "idiomatic",
+      "level": "error",
+      "related_resources": [
+        {
+          "description": "documentation",
+          "ref": "https://docs.styra.com/regal/rules/idiomatic/directory-package-mismatch"
+        }
+      ],
+      "location": {
+        "end": {
+          "row": 1,
+          "col": 14
+        },
+        "text": "package authz",
+        "file": "policy/authz.rego",
+        "col": 9,
+        "row": 1
+      }
+    },
+    {
+      "title": "use-contains",
+      "description": "Use the `contains` keyword",
+      "category": "idiomatic",
+      "level": "error",
+      "related_resources": [
+        {
+          "description": "documentation",
+          "ref": "https://docs.styra.com/regal/rules/idiomatic/use-contains"
+        }
+      ],
+      "location": {
+        "end": {
+          "row": 11,
+          "col": 10
+        },
+        "text": "deny[msg] {",
+        "file": "policy/authz.rego",
+        "col": 1,
+        "row": 11
+      }
+    },
+    {
+      "title": "use-if",
+      "description": "Use the `if` keyword",
+      "category": "idiomatic",
+      "level": "error",
+      "related_resources": [
+        {
+          "description": "documentation",
+          "ref": "https://docs.styra.com/regal/rules/idiomatic/use-if"
+        }
+      ],
+      "location": {
+        "end": {
+          "row": 9,
+          "col": 2
+        },
+        "text": "allow {",
+        "file": "policy/authz.rego",
+        "col": 1,
+        "row": 7
+      }
+    },
+    {
+      "title": "use-if",
+      "description": "Use the `if` keyword",
+      "category": "idiomatic",
+      "level": "error",
+      "related_resources": [
+        {
+          "description": "documentation",
+          "ref": "https://docs.styra.com/regal/rules/idiomatic/use-if"
+        }
+      ],
+      "location": {
+        "end": {
+          "row": 13,
+          "col": 2
+        },
+        "text": "deny[msg] {",
+        "file": "policy/authz.rego",
+        "col": 1,
+        "row": 11
+      }
+    },
+    {
+      "title": "use-rego-v1",
+      "description": "Use `import rego.v1`",
+      "category": "imports",
+      "level": "error",
+      "related_resources": [
+        {
+          "description": "documentation",
+          "ref": "https://docs.styra.com/regal/rules/imports/use-rego-v1"
+        }
+      ],
+      "location": {
+        "end": {
+          "row": 1,
+          "col": 8
+        },
+        "text": "package authz",
+        "file": "policy/authz.rego",
+        "col": 1,
+        "row": 1
+      }
+    },
+    {
+      "title": "use-assignment-operator",
+      "description": "Prefer := over = for assignment",
+      "category": "style",
+      "level": "error",
+      "related_resources": [
+        {
+          "description": "documentation",
+          "ref": "https://docs.styra.com/regal/rules/style/use-assignment-operator"
+        }
+      ],
+      "location": {
+        "end": {
+          "row": 5,
+          "col": 16
+        },
+        "text": "default allow = false",
+        "file": "policy/authz.rego",
+        "col": 15,
+        "row": 5
+      }
+    },
+    {
+      "title": "unconditional-assignment",
+      "description": "Unconditional assignment in rule body",
+      "category": "style",
+      "level": "error",
+      "related_resources": [
+        {
+          "description": "documentation",
+          "ref": "https://docs.styra.com/regal/rules/style/unconditional-assignment"
+        }
+      ],
+      "location": {
+        "end": {
+          "row": 12,
+          "col": 15
+        },
+        "text": "\tmsg := \"nope\"",
+        "file": "policy/authz.rego",
+        "col": 2,
+        "row": 12
+      }
+    }
+  ],
+  "summary": {
+    "files_scanned": 1,
+    "files_failed": 1,
+    "rules_skipped": 0,
+    "num_violations": 7
+  }
+}

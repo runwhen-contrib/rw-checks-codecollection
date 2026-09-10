@@ -1,0 +1,5 @@
+syntax = "proto3";
+package Foo.v1;
+message bar_request {
+  string Name = 1;
+}

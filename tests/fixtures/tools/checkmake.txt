@@ -1,0 +1,3 @@
+minphony|Makefile|0|Missing required phony target "all"
+minphony|Makefile|0|Missing required phony target "clean"
+minphony|Makefile|0|Missing required phony target "test"

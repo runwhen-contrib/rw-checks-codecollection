@@ -1,0 +1,8 @@
+src/app.py:1:1:F401:'os' imported but unused
+src/app.py:1:1:F401:'sys' imported but unused
+src/app.py:1:10:E401:multiple imports on one line
+src/app.py:2:1:F401:'json' imported but unused
+src/app.py:6:5:F841:local variable 'password' is assigned to but never used
+src/app.py:7:5:F841:local variable 'unused' is assigned to but never used
+src/app.py:8:14:E711:comparison to None should be 'if cond is None:'
+src/config.py:3:6:E225:missing whitespace around operator

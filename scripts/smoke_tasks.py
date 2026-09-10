@@ -26,6 +26,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from runwhen_capability.models import FindingsResult
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "sdk"))
 
 from runwhen_capability import Context  # noqa: E402
@@ -77,7 +79,17 @@ def main() -> int:
             kwargs["changed"] = None
         try:
             out = taskdef.func(ctx, **kwargs)
-            findings = out.get("findings", [])
+            # `rw.findings.v1` is the {findings, truncated} envelope, not a bare
+            # list. This script read it as a list, so it passed happily while
+            # every task returned the wrong shape and papi rejected the result
+            # on a live pull request -- assert the contract instead.
+            envelope = out.get("findings")
+            if not isinstance(envelope, FindingsResult):
+                raise TypeError(
+                    "output 'findings' must be a FindingsResult envelope, "
+                    f"got {type(envelope).__name__}"
+                )
+            findings = envelope.findings
             detail = ""
             if findings:
                 detail = f"{findings[0].rule} {findings[0].path}:{findings[0].line}"

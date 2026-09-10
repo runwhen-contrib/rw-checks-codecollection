@@ -68,8 +68,6 @@ tasks:
       findings:
         kind: rw.findings.v1             # semantic kind -- how papi consumes it
         schema: ./schemas/findings.json  # JSON Schema -- how papi validates it
-    appliesTo:                           # optional; narrows the capability-level selector
-      - { platform: github, type: repository, where: { language: python } }
 
   - name: gitleaks
     description: Secret scanning
@@ -159,8 +157,6 @@ tasks:
       changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
-    appliesTo:
-      - { platform: github, type: repository, where: { language: python } }
 
   - name: sqlfluff
     description: SQL lint
@@ -210,8 +206,6 @@ tasks:
       changed: { from: "${setup.changed}" }
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
-    appliesTo:
-      - { platform: github, type: repository, where: { language: python } }
 
   - name: checkmake
     description: Makefile lint

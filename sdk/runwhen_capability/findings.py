@@ -112,6 +112,14 @@ class FindingsClient:
         against a large repo, should pass through untouched. See
         MAX_FINDINGS_PER_RESULT for the byte-budget arithmetic. Call this
         last, after filter_changed/fingerprint, so the cap applies to the
-        exact list the task is about to return."""
+        exact list the task is about to return.
+
+        The list handed in here is already bounded at MAX_FINDINGS_PER_RESULT
+        + 1 by SarifClient.parse (sarif.py) -- that is what stops a genuine
+        runaway from ever materialising a full-size findings list in the
+        first place. This is still where `truncated` gets decided and the
+        list gets sliced to the exact ceiling: parse() deliberately leaves
+        the "+1" in so this comparison (`len(findings) > MAX...`) still
+        fires correctly."""
         truncated = len(findings) > MAX_FINDINGS_PER_RESULT
         return FindingsResult(findings=findings[:MAX_FINDINGS_PER_RESULT], truncated=truncated)

@@ -31,6 +31,17 @@ execution:
   # to back (or in parallel across independent reviews sharing a pod)
   # while composing one review. Much higher than rw-checks's
   # maxConcurrentPerPod: 1, which throttles CPU-heavy lint/secret-scan runs.
+  #
+  # UNENFORCEABLE TODAY: `rwtask serve` is a single-threaded poll loop
+  # (serve.py), so a pod handed N leases runs them one at a time -- this
+  # value is a scheduling ceiling the runner respects, not something the
+  # executor can actually exploit in-pod (see FAILURE-POLICY.md's measured
+  # characteristics). serve.py's stateful-scope bookkeeping (the
+  # `stateful_scopes` OrderedDict and its `finally:` retain-or-wipe) is
+  # safe ONLY because of that single-threaded fact -- there is no lock
+  # around it and no test that would catch a race. If in-pod concurrency
+  # is ever added, that bookkeeping needs a lock (or equivalent) FIRST; it
+  # will not fail loudly on its own.
   maxConcurrentPerPod: 8
   # A deep review reads its tree in bursts across the minutes it takes the
   # agent to write one review, with real pauses between tool calls (model

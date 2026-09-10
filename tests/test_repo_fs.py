@@ -126,6 +126,19 @@ def test_read_empty_tree_raises_typed_error(tmp_path):
     assert str(tree) in str(exc_info.value)
 
 
+def test_read_git_only_tree_raises_typed_error(tmp_path):
+    """A clone that fetched objects into .git/ but was never checked out
+    (e.g. `git clone --no-checkout`) is not a materialized tree either --
+    exactly how the original silent-absence bug reached the agent:
+    read/grep/ls against it looked like a real, empty result rather than a
+    broken checkout. `.git` alone must not count as content."""
+    tree = make_tree(tmp_path, {".git/config": "[core]\n"})
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        read_lines(tree, "a.py")
+    assert str(tree) in str(exc_info.value)
+
+
 def test_read_over_the_byte_budget_stops_early_and_flags_truncated(tmp_path):
     # 4,000 lines of 1 KiB each -- far past MAX_READ_RESPONSE_BYTES.
     tree = make_tree(tmp_path, {"big.py": "\n".join("x" * 1024 for _ in range(4000))})
@@ -217,6 +230,56 @@ def test_grep_empty_tree_raises_typed_error(tmp_path):
     with pytest.raises(TreeNotMaterializedError) as exc_info:
         grep_tree(tree, "anything")
     assert str(tree) in str(exc_info.value)
+
+
+def test_grep_git_only_tree_raises_typed_error(tmp_path):
+    tree = make_tree(tmp_path, {".git/config": "[core]\n"})
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        grep_tree(tree, "anything")
+    assert str(tree) in str(exc_info.value)
+
+
+@skip_if_root
+def test_grep_unreadable_tree_root_raises_instead_of_reporting_matches_empty(tmp_path):
+    """grep has no sub-path scoping input the way ls_tree has `path` -- the
+    tree itself is the one thing a caller has no way to not be asking
+    about, so an unreadable root must raise, not render as `matches: []`
+    (indistinguishable from "nothing matched"). In practice
+    _check_tree_materialized's own tree.iterdir() call already raises for
+    this exact case before _walk_files ever runs; _walk_files' own
+    _on_walk_error guard exists for defense in depth (e.g. a permissions
+    change between that check and the walk itself) rather than being the
+    only thing standing between this and a silent empty result."""
+    tree = make_tree(tmp_path, {"ok.py": "import os\n"})
+    os.chmod(tree, 0o000)
+    try:
+        with pytest.raises(OSError):
+            grep_tree(tree, "import")
+    finally:
+        os.chmod(tree, 0o755)
+
+
+@skip_if_root
+def test_grep_unreadable_subdirectory_encountered_while_walking_is_still_silently_skipped(
+    tmp_path,
+):
+    """Unlike the tree root above, a subdirectory merely *encountered*
+    while walking is NOT something the caller explicitly asked about --
+    grep has no way to scope to it directly -- so it stays silently
+    skipped for now (deferred: disclosing it needs a new envelope field
+    plus papi/agentfarm changes, not an overload of `truncated`). This
+    pins that the deferral is deliberate, not a regression waiting to be
+    "fixed" by someone who does not know it was already considered."""
+    tree = make_tree(tmp_path, {"ok.py": "import os\n", "locked/secret.py": "import os\n"})
+    locked = tree / "locked"
+    os.chmod(locked, 0o000)
+    try:
+        got = grep_tree(tree, "import")
+        assert [m.path for m in got.matches] == ["ok.py"]
+        assert got.truncated is False
+    finally:
+        os.chmod(locked, 0o755)
 
 
 def test_grep_max_matches_caps_and_reports_truncated(tmp_path):
@@ -330,6 +393,18 @@ def test_ls_missing_tree_raises_typed_error(tmp_path):
 
 def test_ls_empty_tree_raises_typed_error(tmp_path):
     tree = make_tree(tmp_path, {})
+
+    with pytest.raises(TreeNotMaterializedError) as exc_info:
+        ls_tree(tree)
+    assert str(tree) in str(exc_info.value)
+
+
+def test_ls_git_only_tree_raises_typed_error(tmp_path):
+    """A directory containing only `.git` -- a clone whose objects were
+    fetched but never checked out -- is a false-positive materialisation:
+    `any(tree.iterdir())` alone would see one entry and call it done. This
+    is how the original silent-absence bug reached the agent."""
+    tree = make_tree(tmp_path, {".git/config": "[core]\n"})
 
     with pytest.raises(TreeNotMaterializedError) as exc_info:
         ls_tree(tree)

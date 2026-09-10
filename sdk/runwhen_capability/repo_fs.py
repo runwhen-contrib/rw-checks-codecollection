@@ -57,11 +57,12 @@ class BinaryFileError(ValueError):
 
 class TreeNotMaterializedError(RuntimeError):
     """`tree` is not a usable checkout -- it does not exist, is not a
-    directory, or is an empty directory. Raised by read/grep/ls before any
-    of their real work, so an infrastructure failure (a reaped scope, a
-    fresh pod, a checkout that never ran) can never be silently reported
-    as a genuine zero-match/zero-entry result -- see the module docstring
-    for why that distinction matters."""
+    directory, or has no checked-out content (empty, or containing only
+    `.git`). Raised by read/grep/ls before any of their real work, so an
+    infrastructure failure (a reaped scope, a fresh pod, a clone that
+    fetched objects but was never checked out) can never be silently
+    reported as a genuine zero-match/zero-entry result -- see the module
+    docstring for why that distinction matters."""
 
 
 def _check_tree_materialized(tree: Path) -> None:
@@ -69,8 +70,13 @@ def _check_tree_materialized(tree: Path) -> None:
         raise TreeNotMaterializedError(f"tree not materialized: {tree} does not exist")
     if not tree.is_dir():
         raise TreeNotMaterializedError(f"tree not materialized: {tree} is not a directory")
-    if not any(tree.iterdir()):
-        raise TreeNotMaterializedError(f"tree not materialized: {tree} is empty")
+    # A directory containing ONLY ".git" -- a clone that fetched objects
+    # but never checked out a working tree -- is not materialized either:
+    # this is exactly how the original silent-absence bug reached the
+    # agent (grep/ls/read against it looked like a real, empty result
+    # instead of a broken checkout). ".git" alone doesn't count as content.
+    if not any(entry.name != ".git" for entry in tree.iterdir()):
+        raise TreeNotMaterializedError(f"tree not materialized: {tree} has no checked-out content")
 
 
 def _confined(tree: Path, path: str) -> Path:
@@ -186,7 +192,24 @@ def _walk_files(tree: Path):
     symlink (file or directory) without following it -- ported from
     grepWorktree's walk in internal/rwcheck/serve/grep.go."""
     tree = Path(tree)
-    for root, dirnames, filenames in os.walk(tree, followlinks=False):
+    root_str = str(tree)
+
+    def _on_walk_error(exc: OSError) -> None:
+        # os.walk's default (onerror=None) silently skips any directory it
+        # cannot scandir and moves on to its siblings -- fine for a subtree
+        # merely *encountered* while walking (deferred, same as the
+        # per-file case in _grep_file below: disclosing it needs a new
+        # envelope field plus papi/agentfarm changes). But grep has no
+        # sub-path scoping input the way ls_tree has `path` -- `tree`
+        # itself is the one thing a grep caller has no way to NOT be
+        # asking about -- so an unreadable tree root is the caller's
+        # literal, explicit ask, and `matches: []` for it would be the same
+        # lie ls_tree's strict=True already closed for its own
+        # caller-supplied path (85b3a8b). Raise only for that one path.
+        if exc.filename == root_str:
+            raise exc
+
+    for root, dirnames, filenames in os.walk(tree, onerror=_on_walk_error, followlinks=False):
         root_path = Path(root)
         dirnames.sort()
         filenames.sort()
@@ -220,7 +243,16 @@ def _grep_file(
     try:
         data = full.read_bytes()
     except OSError:
-        return False  # an unreadable file must not fail the whole walk
+        # An unreadable file must not fail the whole walk -- but this is
+        # also a silent-absence gap: it renders identically to "the pattern
+        # didn't match here". It is deliberately left this way for now --
+        # `rel` was only *encountered* while walking, not a path the caller
+        # named directly the way ls_tree's `path` or _walk_files' own
+        # `tree` root are (see that function's _on_walk_error). Disclosing
+        # this needs a new envelope field (`skipped`/`unreadable`, not an
+        # overload of `truncated`) plus matching papi and agentfarm
+        # changes -- deferred, not missed.
+        return False
     if _is_binary(data):
         return False  # binary -- skip, not an error
 

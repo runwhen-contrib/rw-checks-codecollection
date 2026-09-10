@@ -426,6 +426,112 @@ def test_serve_refuses_a_scope_id_that_is_not_a_single_path_segment(
 
 
 @responses.activate
+def test_serve_rereads_the_token_immediately_before_posting_the_result(tmp_path, monkeypatch):
+    """A request can run up to requestTimeoutSeconds (600s for rw-checks)
+    between the poll and the result POST -- long enough for the token to
+    rotate mid-request. Re-reading only once per poll (at the top) would
+    make the POST carry a now-stale token and lose an already-computed
+    result to a 401; the POST must pick up the token as it stands
+    immediately before it fires, not the one the poll started with."""
+    import runwhen_capability.serve as serve_mod
+    from runwhen_capability.host import run_request as real_run_request
+
+    token_file = tmp_path / "token"
+    token_file.write_text("token-old")
+
+    def rotate_after_running(capability, request, credentials, scope_dir, log=None):
+        result = real_run_request(capability, request, credentials, scope_dir, log=log)
+        # The rotation happens AFTER the request ran but BEFORE the result
+        # is posted -- exactly the window _post_result must re-read across.
+        token_file.write_text("token-new")
+        return result
+
+    monkeypatch.setattr(serve_mod, "run_request", rotate_after_running)
+
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        json={
+            "requestId": "req-1",
+            "request": {"version": 1, "tasks": [{"task": "echo", "inputs": {}}]},
+            "credentials": {},
+            "scopeId": "scope-1",
+            "deadlineMs": 60000,
+        },
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-1/result", json={}, status=200)
+
+    serve(
+        relay=RELAY,
+        pool_id="pool-1",
+        workdir=tmp_path / "work",
+        capability_dir=FIXTURES / "echo",
+        token_file=token_file,
+        max_iterations=1,
+    )
+
+    next_call, result_call = responses.calls
+    assert next_call.request.headers["Authorization"] == "Bearer token-old"
+    assert result_call.request.headers["Authorization"] == "Bearer token-new"
+
+
+@responses.activate
+def test_serve_falls_back_to_the_polls_token_when_the_token_file_is_unreadable_at_post_time(
+    tmp_path, monkeypatch, caplog
+):
+    """A result already in hand must never be discarded because the token
+    file happens to be briefly unreadable right at post time -- fall back
+    to the token the poll already had, and say so in the log, rather than
+    posting with no Authorization header at all or dropping the result."""
+    import logging
+
+    import runwhen_capability.serve as serve_mod
+    from runwhen_capability.host import run_request as real_run_request
+
+    token_file = tmp_path / "token"
+    token_file.write_text("token-old")
+
+    def remove_token_after_running(capability, request, credentials, scope_dir, log=None):
+        result = real_run_request(capability, request, credentials, scope_dir, log=log)
+        token_file.unlink()  # transient unreadable-ness right before the POST
+        return result
+
+    monkeypatch.setattr(serve_mod, "run_request", remove_token_after_running)
+
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        json={
+            "requestId": "req-1",
+            "request": {"version": 1, "tasks": [{"task": "echo", "inputs": {}}]},
+            "credentials": {},
+            "scopeId": "scope-1",
+            "deadlineMs": 60000,
+        },
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-1/result", json={}, status=200)
+
+    with caplog.at_level(logging.WARNING):
+        serve(
+            relay=RELAY,
+            pool_id="pool-1",
+            workdir=tmp_path / "work",
+            capability_dir=FIXTURES / "echo",
+            token_file=token_file,
+            max_iterations=1,
+        )
+
+    next_call, result_call = responses.calls
+    assert next_call.request.headers["Authorization"] == "Bearer token-old"
+    # Falls back to the poll's own token -- the result still gets posted,
+    # not dropped -- and the fallback is logged, not silent.
+    assert result_call.request.headers["Authorization"] == "Bearer token-old"
+    assert "falling back to the token this poll started with" in caplog.text
+
+
+@responses.activate
 def test_serve_logs_a_non_2xx_on_the_result_post_instead_of_assuming_delivery(tmp_path, caplog):
     """A 500 (or a 401 from a rotated token) on PutResult means the result
     never landed. Silently treating the POST as delivered is the same

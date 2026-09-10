@@ -13,12 +13,20 @@ Relay HTTP contract (this is the wire the runner must implement to match):
            ("result" is a Wire-3 ResultEnvelope, present only on status "ok")
 
 Both relay calls carry `Authorization: Bearer <token>`, where <token> is read
-fresh from the executor token file on every poll (not cached at startup) --
-polls are ~30s apart so the cost is nil, and it lets a rotated or
-late-mounted token recover on its own instead of wedging the pod. The token
-file path comes from --token-file, else the EXECUTOR_TOKEN_FILE env var,
-else DEFAULT_TOKEN_FILE. A missing/unreadable token file is logged and the
-loop keeps polling -- it never falls back to an unauthenticated request.
+fresh from the executor token file rather than cached at startup -- reading
+is cheap and it lets a rotated or late-mounted token recover on its own
+instead of wedging the pod. The two calls read it at different points,
+though, not once per poll: GetTask reads it right before the poll, but
+PutResult reads it AGAIN right before posting the result, because a
+request can run for up to requestTimeoutSeconds (600s for rw-checks)
+between those two points -- long enough for a token to rotate mid-request,
+which would otherwise mean the POST silently used the stale one and lost
+an already-computed result to a 401. If that second read is briefly
+unreadable, PutResult falls back to the token GetTask used rather than
+dropping the result (see _post_result). The token file path comes from
+--token-file, else the EXECUTOR_TOKEN_FILE env var, else DEFAULT_TOKEN_FILE.
+A missing/unreadable token file at GetTask time is logged and the loop
+keeps polling -- it never falls back to an unauthenticated request.
 
 `scopeId` must be a single path segment (see _is_safe_scope_id): the loop
 creates and later deletes <workdir>/<scopeId>/, so anything else -- empty,
@@ -149,11 +157,41 @@ def _is_safe_scope_id(scope_id: str) -> bool:
     return scope_id not in ("", ".", "..") and scope_id == Path(scope_id).name
 
 
-def _post_result(session, relay: str, request_id: str, payload: dict, headers: dict, log) -> None:
-    """POSTs one PutResult. A transport failure or a non-2xx is logged and
-    dropped -- the runner's lease expiry is what recovers the request -- but
-    it is never treated as a delivered result: an unlogged 401/500 here is a
-    result that vanished with nothing to explain it."""
+def _post_result(
+    session,
+    relay: str,
+    request_id: str,
+    payload: dict,
+    token_file: Path,
+    fallback_token: str,
+    log,
+) -> None:
+    """POSTs one PutResult. Re-reads the bearer token from `token_file`
+    immediately before posting, rather than reusing the one the poll
+    started with: a request can run up to requestTimeoutSeconds (600s for
+    rw-checks) before this runs, so a mid-request rotation would otherwise
+    mean the POST carries a now-stale token and gets a 401 -- silently
+    losing a result that was already computed, which defeats the whole
+    reason the token is re-read per poll rather than cached at startup (see
+    the module docstring). If the token file is briefly unreadable right at
+    this moment, falls back to `fallback_token` -- the token the poll
+    already had -- and logs the fallback, rather than dropping a result in
+    hand over a transient read.
+
+    A transport failure or a non-2xx is logged and dropped -- the runner's
+    lease expiry is what recovers the request -- but it is never treated as
+    a delivered result: an unlogged 401/500 here is a result that vanished
+    with nothing to explain it."""
+    token = _read_token(token_file, log)
+    if token is None:
+        log.warning(
+            "could not re-read executor token before posting result for %s; "
+            "falling back to the token this poll started with",
+            request_id,
+        )
+        token = fallback_token
+    headers = {"Authorization": f"Bearer {token}"}
+
     try:
         resp = session.post(
             f"{relay}/v1/tasks/{request_id}/result",
@@ -265,7 +303,8 @@ def _poll_once(
             relay,
             task_request.requestId,
             {"status": "failed", "error": f"invalid scopeId {task_request.scopeId!r}"},
-            headers,
+            token_file,
+            token,
             log,
         )
         return
@@ -289,4 +328,4 @@ def _poll_once(
             capability, scope_dir, workdir, stateful_scopes, max_stateful_scopes, log
         )
 
-    _post_result(session, relay, task_request.requestId, payload, headers, log)
+    _post_result(session, relay, task_request.requestId, payload, token_file, token, log)

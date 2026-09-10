@@ -20,6 +20,11 @@ file path comes from --token-file, else the EXECUTOR_TOKEN_FILE env var,
 else DEFAULT_TOKEN_FILE. A missing/unreadable token file is logged and the
 loop keeps polling -- it never falls back to an unauthenticated request.
 
+`scopeId` must be a single path segment (see _is_safe_scope_id): the loop
+creates and later deletes <workdir>/<scopeId>/, so anything else -- empty,
+absolute, containing "/" or ".." -- is refused as a failed request before
+the filesystem is touched.
+
 Per request: create <workdir>/<scopeId>/, chdir there, run setup then each
 task in request.tasks order (host.run_request), aggregate into the result
 envelope, POST it. What happens to the scope dir next depends on the loaded
@@ -131,6 +136,43 @@ def serve(
         )
 
 
+def _is_safe_scope_id(scope_id: str) -> bool:
+    """A scopeId is used as ONE directory name under workdir, and that
+    directory is later rmtree'd (a stateless wipe, or an LRU eviction).
+    Anything that is not a single ordinary path segment makes
+    `workdir / scopeId` land somewhere else entirely -- `Path("/work") / "/x"`
+    is `/x`, `Path("/work") / ""` is `/work` itself, and `".."` walks up --
+    so a malformed scopeId would delete something that is not a scope. The
+    relay is authenticated, so this is not the security boundary; it is the
+    guard that keeps a bug on the other side of the wire from costing this
+    pod its whole workdir."""
+    return scope_id not in ("", ".", "..") and scope_id == Path(scope_id).name
+
+
+def _post_result(session, relay: str, request_id: str, payload: dict, headers: dict, log) -> None:
+    """POSTs one PutResult. A transport failure or a non-2xx is logged and
+    dropped -- the runner's lease expiry is what recovers the request -- but
+    it is never treated as a delivered result: an unlogged 401/500 here is a
+    result that vanished with nothing to explain it."""
+    try:
+        resp = session.post(
+            f"{relay}/v1/tasks/{request_id}/result",
+            json=payload,
+            timeout=RESULT_TIMEOUT,
+            headers=headers,
+        )
+    except requests.RequestException as exc:
+        log.error("post %s/v1/tasks/%s/result failed: %s", relay, request_id, exc)
+        return
+    if not 200 <= resp.status_code < 300:
+        log.error(
+            "post %s/v1/tasks/%s/result: unexpected status %s -- result not delivered",
+            relay,
+            request_id,
+            resp.status_code,
+        )
+
+
 def _read_token(token_file: Path, log) -> str | None:
     try:
         return token_file.read_text().strip()
@@ -207,6 +249,25 @@ def _poll_once(
         task_request = TaskHostRequest.model_validate(resp.json())
     except Exception as exc:  # noqa: BLE001 -- a malformed relay response must not crash the loop
         log.error("poll %s/v1/tasks/next: malformed response: %s", relay, exc)
+        time.sleep(RETRY_DELAY)  # a relay stuck on malformed 200s must not be hot-looped
+        return
+
+    if not _is_safe_scope_id(task_request.scopeId):
+        # Reported as a failed request rather than swallowed: the runner must
+        # learn why nothing ran. Nothing has touched the filesystem yet.
+        log.error(
+            "request %s: refusing scopeId %r -- not a single path segment",
+            task_request.requestId,
+            task_request.scopeId,
+        )
+        _post_result(
+            session,
+            relay,
+            task_request.requestId,
+            {"status": "failed", "error": f"invalid scopeId {task_request.scopeId!r}"},
+            headers,
+            log,
+        )
         return
 
     scope_dir = workdir / task_request.scopeId
@@ -228,12 +289,4 @@ def _poll_once(
             capability, scope_dir, workdir, stateful_scopes, max_stateful_scopes, log
         )
 
-    try:
-        session.post(
-            f"{relay}/v1/tasks/{task_request.requestId}/result",
-            json=payload,
-            timeout=RESULT_TIMEOUT,
-            headers=headers,
-        )
-    except requests.RequestException as exc:
-        log.error("post %s/v1/tasks/%s/result failed: %s", relay, task_request.requestId, exc)
+    _post_result(session, relay, task_request.requestId, payload, headers, log)

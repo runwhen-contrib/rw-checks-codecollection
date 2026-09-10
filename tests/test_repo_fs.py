@@ -6,17 +6,25 @@ and the containment rules read/grep/ls all share.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 from runwhen_capability.repo_fs import (
     MAX_LS_ENTRIES,
+    MAX_READ_RESPONSE_BYTES,
     BinaryFileError,
     PathEscapesTreeError,
     TreeNotMaterializedError,
     grep_tree,
     ls_tree,
     read_lines,
+)
+
+# An unreadable directory is unreadable only for a non-root user; root
+# ignores the mode bits and the test would assert the opposite of reality.
+skip_if_root = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory permissions"
 )
 
 
@@ -116,6 +124,31 @@ def test_read_empty_tree_raises_typed_error(tmp_path):
     with pytest.raises(TreeNotMaterializedError) as exc_info:
         read_lines(tree, "a.py")
     assert str(tree) in str(exc_info.value)
+
+
+def test_read_over_the_byte_budget_stops_early_and_flags_truncated(tmp_path):
+    # 4,000 lines of 1 KiB each -- far past MAX_READ_RESPONSE_BYTES.
+    tree = make_tree(tmp_path, {"big.py": "\n".join("x" * 1024 for _ in range(4000))})
+
+    got = read_lines(tree, "big.py")
+
+    assert got.truncated is True
+    assert len(got.content.encode("utf-8")) <= MAX_READ_RESPONSE_BYTES
+    assert got.totalLines == 4000
+    assert got.endLine < 4000  # the honest end of what we actually returned
+
+
+def test_read_single_line_larger_than_the_budget_is_clipped_and_flagged(tmp_path):
+    # One line, no trailing newline: nothing follows it to trip the "next
+    # line would overflow" check, so this is the path that used to return a
+    # multi-megabyte response with truncated: false -- a minified bundle or
+    # a one-line lock file in a real repo.
+    tree = make_tree(tmp_path, {"bundle.min.js": "z" * (3 * 1024 * 1024)})
+
+    got = read_lines(tree, "bundle.min.js")
+
+    assert got.truncated is True
+    assert len(got.content.encode("utf-8")) <= MAX_READ_RESPONSE_BYTES
 
 
 # --- grep ------------------------------------------------------------------
@@ -368,3 +401,18 @@ def test_ls_symlinked_entry_is_type_other_and_not_recursed(tmp_path):
     entry = next(e for e in got.entries if e.path == "link")
     assert entry.type == "other"
     assert not any(e.path.startswith("link/") for e in got.entries)
+
+
+@skip_if_root
+def test_ls_unreadable_directory_raises_instead_of_reporting_it_empty(tmp_path):
+    """The bug this branch exists to kill, on the ls path: a directory we
+    cannot read must never render as `entries: []`, which a caller reads as
+    "the directory is empty"."""
+    tree = make_tree(tmp_path, {"ok.py": "x", "locked/secret.py": "s"})
+    locked = tree / "locked"
+    os.chmod(locked, 0o000)
+    try:
+        with pytest.raises(OSError):
+            ls_tree(tree, path="locked")
+    finally:
+        os.chmod(locked, 0o755)

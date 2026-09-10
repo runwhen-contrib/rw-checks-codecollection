@@ -134,9 +134,18 @@ def _select_lines(lines: list[str], start: int, end: int) -> tuple[str, bool, in
     for i in range(start, min(end, len(lines)) + 1):
         line = lines[i - 1]
         add = len(line.encode("utf-8")) + (1 if parts else 0)  # +1: the joining newline
-        if size + add > READ_BUDGET and parts:
-            truncated = True
-            break
+        if size + add > READ_BUDGET:
+            if parts:
+                truncated = True
+                break
+            # A single line longer than the whole budget (a minified bundle,
+            # a one-line lock file): clip it rather than return a response
+            # many times MAX_READ_RESPONSE_BYTES while reporting
+            # truncated: false. Byte-sliced then decoded with
+            # errors="ignore" -- a split multi-byte rune is dropped, not
+            # mojibake'd -- exactly like grep's MAX_GREP_MATCH_TEXT_LEN.
+            clipped = line.encode("utf-8")[:READ_BUDGET].decode("utf-8", errors="ignore")
+            return clipped, True, i
         parts.append(line)
         size += add
         actual_end = i
@@ -267,11 +276,24 @@ def grep_tree(
 
 
 def _ls_walk(
-    directory: Path, rel_prefix: str, depth: int, max_depth: int, entries: list[LsEntry]
+    directory: Path,
+    rel_prefix: str,
+    depth: int,
+    max_depth: int,
+    entries: list[LsEntry],
+    strict: bool = False,
 ) -> None:
     try:
         names = sorted(os.listdir(directory))
     except OSError:
+        # `strict` is set only for the directory the caller actually asked
+        # for: failing to read THAT one must surface as an error, never as
+        # `entries: []` -- an unreadable directory and an empty one must not
+        # render identically (this module's docstring; the same rule
+        # _check_tree_materialized enforces one level up). A directory
+        # merely *encountered* while recursing is skipped as before.
+        if strict:
+            raise
         return
 
     for name in names:
@@ -314,7 +336,7 @@ def ls_tree(tree: Path, path: str | None = None, depth: int | None = None) -> Ls
 
     max_depth = depth if depth and depth > 0 else DEFAULT_LS_DEPTH
     entries: list[LsEntry] = []
-    _ls_walk(root, "", 1, max_depth, entries)
+    _ls_walk(root, "", 1, max_depth, entries, strict=True)
     return LsResult(entries=entries, truncated=len(entries) >= MAX_LS_ENTRIES)
 
 

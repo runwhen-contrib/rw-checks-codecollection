@@ -341,3 +341,27 @@ def test_stateless_leased_requests_are_unaffected_by_setup_caching(tmp_path):
 
     assert result_a.setup.status == "ok"
     assert result_b.setup.status == "ok"
+
+
+def test_an_unserialisable_setup_output_does_not_turn_a_successful_setup_into_a_failure(
+    tmp_path, monkeypatch
+):
+    """The setup-output cache is best-effort by contract. If writing it
+    raises -- json.dumps rejects any output _to_jsonable cannot convert --
+    the setup that already SUCCEEDED must still report `ok` with its real
+    outputs. Reporting `failed` for a checkout that actually materialised
+    is the same lie, pointed the other way."""
+    capability = load_capability(FIXTURES / "echo")
+    request = RequestEnvelope.model_validate(
+        {"version": 1, "setup": {"task": "prep", "inputs": {"userName": "world"}}, "tasks": []}
+    )
+
+    def _explode(_payload, *args, **kwargs):
+        raise TypeError("Object of type set is not JSON serializable")
+
+    monkeypatch.setattr("runwhen_capability.host.json.dumps", _explode)
+
+    result = run_request(capability, request, credentials={}, scope_dir=tmp_path)
+
+    assert result.setup.status == "ok"
+    assert result.setup.outputs == {"greeting": "hello world", "items": ["a", "b"]}

@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytest
 import responses
 from runwhen_capability.serve import serve
 
@@ -370,3 +371,87 @@ def test_serve_stateful_lru_eviction_wipes_the_evicted_scope_from_disk(tmp_path)
     assert not (workdir / "scope-1").exists()
     assert (workdir / "scope-2").exists()
     assert (workdir / "scope-3" / "tree" / "hello.txt").exists()
+
+
+# --- scopeId hygiene and result delivery ----------------------------------
+
+
+@responses.activate
+@pytest.mark.parametrize("bad_scope_id", ["", ".", "..", "../escape", "/absolute", "a/b"])
+def test_serve_refuses_a_scope_id_that_is_not_a_single_path_segment(
+    tmp_path, monkeypatch, caplog, bad_scope_id
+):
+    """`workdir / scopeId` is created and later rmtree'd, so a scopeId that
+    is not one path segment would delete something that is not a scope
+    (`Path("/work") / "/x"` is `/x`; `Path("/work") / ""` is the workdir
+    itself). The request is refused before anything touches disk, and the
+    runner is told why rather than being left to time the lease out."""
+    monkeypatch.setattr("runwhen_capability.serve.time.sleep", lambda _seconds: None)
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        json={
+            "requestId": "req-bad",
+            "request": {"version": 1, "tasks": [{"task": "echo", "inputs": {}}]},
+            "credentials": {},
+            "scopeId": bad_scope_id,
+            "deadlineMs": 60000,
+        },
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-bad/result", json={}, status=200)
+
+    workdir = tmp_path / "work"
+    canary = tmp_path / "canary.txt"
+    canary.write_text("must survive")
+
+    with caplog.at_level(logging.ERROR):
+        serve(
+            relay=RELAY,
+            pool_id="pool-1",
+            workdir=workdir,
+            capability_dir=FIXTURES / "echo",
+            token_file=_token_file(tmp_path),
+            max_iterations=1,
+        )
+
+    assert workdir.exists() and canary.exists()
+    assert "refusing scopeId" in caplog.text
+
+    import json as _json
+
+    result_body = _json.loads(responses.calls[1].request.body)
+    assert result_body["status"] == "failed"
+    assert "invalid scopeId" in result_body["error"]
+
+
+@responses.activate
+def test_serve_logs_a_non_2xx_on_the_result_post_instead_of_assuming_delivery(tmp_path, caplog):
+    """A 500 (or a 401 from a rotated token) on PutResult means the result
+    never landed. Silently treating the POST as delivered is the same
+    "looks fine, isn't" shape everything else here guards against."""
+    responses.add(
+        responses.POST,
+        f"{RELAY}/v1/tasks/next",
+        json={
+            "requestId": "req-3",
+            "request": {"version": 1, "tasks": [{"task": "echo", "inputs": {}}]},
+            "credentials": {},
+            "scopeId": "scope-3",
+            "deadlineMs": 60000,
+        },
+        status=200,
+    )
+    responses.add(responses.POST, f"{RELAY}/v1/tasks/req-3/result", json={}, status=500)
+
+    with caplog.at_level(logging.ERROR):
+        serve(
+            relay=RELAY,
+            pool_id="pool-1",
+            workdir=tmp_path / "work",
+            capability_dir=FIXTURES / "echo",
+            token_file=_token_file(tmp_path),
+            max_iterations=1,
+        )
+
+    assert "result not delivered" in caplog.text

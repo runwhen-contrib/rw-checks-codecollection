@@ -96,10 +96,20 @@ def _load_setup_cache(scope_dir: Path) -> dict[str, Any] | None:
 
 
 def _save_setup_cache(
-    scope_dir: Path, task: str, inputs: dict[str, Any], outputs: dict[str, Any]
+    scope_dir: Path,
+    task: str,
+    inputs: dict[str, Any],
+    outputs: dict[str, Any],
+    log: logging.Logger,
 ) -> None:
-    """Best-effort: a write failure here just means the next request
-    re-runs setup instead of hitting the cache, never a request failure."""
+    """Best-effort: a failure here just means the next request re-runs setup
+    instead of hitting the cache, never a request failure. TypeError/ValueError
+    are caught alongside OSError because json.dumps raises them for an output
+    _to_jsonable does not know how to convert (a set, a datetime): letting one
+    escape would abort a setup that had already SUCCEEDED, replacing its `ok`
+    result and its real outputs with `failed` -- reporting a materialised tree
+    as a broken checkout, which is precisely the class of lie this module
+    exists to prevent."""
     path_keys = [key for key, value in outputs.items() if isinstance(value, Path)]
     payload = {
         "task": task,
@@ -109,8 +119,10 @@ def _save_setup_cache(
     }
     try:
         _setup_cache_path(scope_dir).write_text(json.dumps(payload))
-    except OSError:
-        pass
+    except (OSError, TypeError, ValueError) as exc:
+        # Swallowed, but never silent: the next request paying for a full
+        # re-run of setup should be explainable from the logs.
+        log.warning("could not cache setup %r outputs in %s: %s", task, scope_dir, exc)
 
 
 def _cached_setup_outputs(
@@ -182,7 +194,9 @@ def run_request(
                     outputs = setup_def.func(ctx, **kwargs) or {}
                     setup_outputs = outputs
                     result.setup = SetupResult(status="ok", outputs=_to_jsonable(outputs))
-                    _save_setup_cache(scope_dir, request.setup.task, request.setup.inputs, outputs)
+                    _save_setup_cache(
+                        scope_dir, request.setup.task, request.setup.inputs, outputs, log
+                    )
                 except CredentialNotFoundError as exc:
                     # Not cached, and can't materialise here without a
                     # credential this request doesn't carry -- the sync

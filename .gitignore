@@ -1,0 +1,20 @@
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+dist
+build
+*egg-info
+.DS_Store
+.vscode/settings.json
+.venv
+
+# rwtask run's local scope directories, if left with --keep-workdir
+rwtask-run-*/
+
+# Local check output
+*.sarif
+*.sarif.json
+# ...except committed SARIF test fixtures.
+!tests/fixtures/**/*.sarif
+!tests/fixtures/**/*.sarif.json

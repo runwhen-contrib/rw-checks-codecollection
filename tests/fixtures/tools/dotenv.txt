@@ -1,0 +1,10 @@
+Checking .env
+.env:2 LowercaseKey: The foo2  key should be in uppercase
+.env:2 SpaceCharacter: The line has spaces around equal sign
+.env:3 LeadingCharacter: Invalid leading character detected
+.env:3 UnorderedKey: The  key should go before the FOO key
+.env:4 UnorderedKey: The DUPLICATE key should go before the FOO key
+.env:5 DuplicatedKey: The DUPLICATE key is duplicated
+.env:5 UnorderedKey: The DUPLICATE key should go before the DUPLICATE key
+
+Found 7 problems

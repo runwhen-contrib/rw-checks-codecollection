@@ -1,0 +1,69 @@
+# rw-worktree-codecollection: the rw-worktree capability image, not a
+# Robot codebundle image.
+#
+# Image == capability, 1:1 (sdk/runwhen_capability/loader.py's
+# discover_capability_dir docstring). rw-worktree is the ONE stateful
+# capability (see capabilities/rw-worktree/manifest.yaml's header) and must
+# run as its own executor pool, separate from rw-checks's stateless pool --
+# see Dockerfile.rw-checks for that one. The two share nothing at build
+# time except the SDK layer below.
+#
+# It ships:
+#   - the runwhen_capability SDK and its rwtask task host (sdk/)
+#   - the rw-worktree capability's tasks (capabilities/rw-worktree/)
+#   - git, for ctx.git.checkout() -- and NOTHING else. read/grep/ls
+#     (repo_fs.py) are pure Python; this capability has no lint/secret-scan
+#     tasks, so it does not ship ruff or gitleaks -- see Dockerfile.rw-checks
+#     for those.
+#
+# There is no Go binary and no self-install init container here -- the
+# runner (see docs/static-checks/EXECUTOR-CONTRACT.md) dials `rwtask serve`
+# as a warm executor over plain HTTP/JSON; it never execs into this
+# container to run a per-operation argv the way v1's rwcheck harness did.
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# git: ctx.git.checkout() (the `open` setup) shells out to the git CLI (see
+# sdk/runwhen_capability/git.py). ca-certificates: TLS for git fetches
+# against real remotes.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install the SDK (and its rwtask console script) as a real package, then
+# lay THIS capability on top -- only capabilities/rw-worktree/, never
+# capabilities/rw-checks/, so this image ships exactly one manifest.yaml
+# and rwtask's own single-capability auto-discovery (loader.py,
+# discover_capability_dir) is unambiguous by construction, not by luck.
+# Copying pyproject.toml + sdk/ before capabilities/rw-worktree/ keeps the
+# pip-install layer cacheable across capability-only edits.
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE /app/
+COPY sdk /app/sdk
+RUN pip install --no-cache-dir /app
+
+COPY capabilities/rw-worktree /app/capabilities/rw-worktree
+
+# Non-root. /work is rwtask serve's default --workdir -- every request's
+# scope directory (<workdir>/<scopeId>/) is created and wiped under it, so
+# it's the one directory this user needs to write.
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin runwhen \
+    && mkdir -p /work \
+    && chown -R runwhen:runwhen /work /app
+USER runwhen
+
+# rwtask's argv IS the container command -- no Robot runtime, nothing to
+# reset. ENTRYPOINT [] is kept explicit (rather than simply absent) so a
+# `docker run <image> <anything>` never surprises anyone who expects the
+# rw-base-runtime convention from this org's other collections.
+#
+# --capability-dir is baked in explicitly rather than left to
+# discover_capability_dir's default: this image's own argv must never rely
+# on "there happens to be exactly one capabilities/*/manifest.yaml" being
+# true -- that auto-discovery stays a local-dev convenience only (see
+# `rwtask run`, README.md).
+ENTRYPOINT []
+CMD ["rwtask", "serve", "--capability-dir", "/app/capabilities/rw-worktree"]

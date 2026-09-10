@@ -1,0 +1,90 @@
+{
+  "$defs": {
+    "Finding": {
+      "description": "One static-check finding.\n\ncolumn/end_line/end_column exist for one reason: GitHub check-run\nannotations accept `start_column`/`end_column` (only meaningful when\n`end_line` equals `start_line`) plus `end_line` itself, and without them\na finding highlights the WHOLE line instead of the offending token.\nEvery tool this package wraps reports at least some of this; discarding\nit here would mean discarding it everywhere downstream too.",
+      "properties": {
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "rule": {
+          "title": "Rule",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "line": {
+          "default": 0,
+          "title": "Line",
+          "type": "integer"
+        },
+        "column": {
+          "default": 0,
+          "title": "Column",
+          "type": "integer"
+        },
+        "end_line": {
+          "default": 0,
+          "title": "End Line",
+          "type": "integer"
+        },
+        "end_column": {
+          "default": 0,
+          "title": "End Column",
+          "type": "integer"
+        },
+        "severity": {
+          "enum": [
+            "error",
+            "warning",
+            "note"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "message": {
+          "default": "",
+          "title": "Message",
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "title": "Context",
+          "type": "string"
+        }
+      },
+      "required": [
+        "capability",
+        "operation",
+        "rule",
+        "path",
+        "severity"
+      ],
+      "title": "Finding",
+      "type": "object"
+    }
+  },
+  "description": "Output of a `kind: rw.findings.v1` task (ruff, gitleaks). An\nenvelope, not a bare list of Finding -- same reasoning as\nGrepResult/LsResult below: `truncated` is the only way a consumer can\ntell a capped list from a complete one. See findings.py's\nMAX_FINDINGS_PER_RESULT for the cap and the byte budget behind it.",
+  "properties": {
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "title": "FindingsResult",
+  "type": "object"
+}

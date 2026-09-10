@@ -1,0 +1,245 @@
+# Capability manifest for rw-checks -- shape defined by
+# docs/static-checks/CAPABILITY-CONTRACT.md Part 1 in runwhen-auto. That file
+# is binding; if this needs to diverge from it, stop and raise it there
+# first.
+#
+# `image` below is a build-time placeholder. CI resolves the digest of the
+# image it just pushed and rewrites this field to
+# ghcr.io/runwhen-contrib/rw-checks-codecollection@sha256:<actual digest>
+# before the manifest is picked up by the catalog. Do not hand-edit the
+# placeholder; do not ship it as-is.
+apiVersion: capability/v1
+capability: rw-checks
+version: "0.2.0"
+description: Static checks for source repositories
+image: ghcr.io/runwhen-contrib/rw-checks-codecollection@sha256:INJECTED_BY_CI
+
+# --- generic scheduling knobs; papi forwards these to the runner verbatim -------------
+execution:
+  mode: stateless
+  maxPodsPerPool: 3
+  maxConcurrentPerPod: 1
+  idleTtlSeconds: 900
+  requestTimeoutSeconds: 600
+
+# --- which subjects this capability applies to; ANY entry matching => applies ----------
+# No `where` at this level: this is now a multi-language check set (secret
+# scanning, IaC, dependency vulns, ...), not python-specific -- it applies to
+# any github repository. Individual tasks narrow with their own `appliesTo`
+# where the tool itself is language-specific (see `ruff` below).
+appliesTo:
+  - platform: github
+    type: repository
+
+# --- what the platform must supply ----------------------------------------------------
+needs:
+  credentials:
+    - name: repo                         # the local name a task reads it by
+      kind: github.installation          # provider-bound kind; papi binds it
+      access: contents:read              # least privilege the platform must satisfy
+  # egress is deliberately not declared here: it is not capability-static.
+  # The reachable git host follows from the credential/installation the
+  # platform binds (github.com, or a customer's GHE host) -- a literal
+  # here would be wrong by construction for GHE. When NetworkPolicy
+  # generation is built, it must derive destinations from the resolved
+  # installation, never from a literal in this file.
+
+# --- runs once per request, before any task ------------------------------------------
+setup:
+  task: checkout
+  inputs:
+    repoUrl: { from: request }
+    sha:     { from: request }
+    baseSha: { from: request, optional: true }
+  outputs:
+    tree:    { type: path }              # tasks reference it as ${setup.tree}
+    changed: { type: "string[]" }        # unquoted string[] is not valid YAML flow-mapping
+                                          # syntax ("[" opens a flow sequence) -- quoted here;
+                                          # same value CAPABILITY-CONTRACT.md Part 1 documents
+
+# --- the tasks themselves -------------------------------------------------------------
+tasks:
+  - name: ruff
+    description: Python lint and static analysis
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings:
+        kind: rw.findings.v1             # semantic kind -- how papi consumes it
+        schema: ./schemas/findings.json  # JSON Schema -- how papi validates it
+
+  - name: gitleaks
+    description: Secret scanning
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: trivy
+    description: Filesystem vulnerability, misconfiguration and secret scanning
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: osv_scanner                    # must equal the tasks.py function name: the host
+                                          # looks up registry.tasks by this exact string
+    description: Open-source dependency vulnerability scanning
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: checkov
+    description: Infrastructure-as-code static analysis
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: zizmor
+    description: GitHub Actions workflow security scanning
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: tflint
+    description: Terraform lint and static analysis
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: shellcheck
+    description: Shell script lint and static analysis
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: hadolint
+    description: Dockerfile lint and best-practice analysis
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: yamllint
+    description: YAML lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: actionlint
+    description: GitHub Actions workflow lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: pylint
+    description: Python lint and static analysis
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: sqlfluff
+    description: SQL lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: biome
+    description: JavaScript/TypeScript lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: ast_grep                       # must equal the tasks.py function name: the host
+                                          # looks up registry.tasks by this exact string
+    description: Structural code pattern lint via ast-grep
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: regal
+    description: Rego (OPA policy) lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: vale
+    description: Prose style lint for documentation
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: flake8
+    description: Python lint and style checking
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: checkmake
+    description: Makefile lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: dotenv_linter                  # must equal the tasks.py function name: the host
+                                          # looks up registry.tasks by this exact string
+    description: .env file lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: buf
+    description: Protocol Buffers lint
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+  - name: trufflehog
+    description: Filesystem secret scanning
+    inputs:
+      tree:    { from: "${setup.tree}" }
+      changed: { from: "${setup.changed}" }
+    outputs:
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+
+retention:
+  pod: on_failure                        # all | on_failure | none
+  result: 30d

@@ -1,0 +1,91 @@
+"""checkov -- IaC misconfiguration scanning.
+
+SECURITY: checkov's own config can point it at an external directory or git
+repo of check PLUGINS it imports and runs (see guards.py's module
+docstring) -- GUARD refuses to invoke checkov at all rather than run it
+against an untrusted repo's config and hope external-checks-dir/
+external-checks-git are absent. Diff-scoped like every other check: see
+_common.scoped for why a code review reports on the change, not the repo.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import guards
+import severity
+from runwhen_capability import Context
+
+from . import _common
+
+# tests/fixtures/tools/checkov.sarif: all 39 results are marked SARIF level
+# "error" -- passing that through would fail every IaC repo checkov ever
+# runs against, and checkov's OSS output carries no severity metadata to
+# discriminate on. The single value below is the whole (empty) vocabulary --
+# `_POLICY` (severity.constant) closes over it uniformly.
+SEVERITY = {"": "warning"}
+# Dockerfile* deliberately absent: hadolint owns Dockerfiles (see the
+# --skip-framework below, which is what actually enforces it -- checkov
+# scans `-d .` wholesale, so FILES alone only gates whether it runs).
+FILES = ("*.tf", "*.yaml", "*.yml")
+CONFIG = "optional"
+CI_BINARY = "checkov"
+# checkov's own config can point it at external check plugins it imports and
+# runs -- see guards.py's module docstring for the confirmed exploit shape.
+GUARD = guards.checkov
+# checkov exits 1 when it reports failed checks -- not a soft-fail run
+# (no --soft-fail), so 0 (clean) and 1 (findings) both mean "ran fine".
+EXPECT_EXIT = (0, 1)
+
+_POLICY = severity.constant(SEVERITY)
+
+
+def detect(tree: Path) -> list[Path]:
+    """checkov reads a root/nested .checkov.yaml/.checkov.yml if present;
+    it needs none."""
+    return [p.parent for p in _common.config_files(tree, ".checkov.yaml", ".checkov.yml")]
+
+
+def check(ctx: Context, tree: Path, changed: list[str] | None):
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
+
+    # checkov's `-o/--output sarif` prints a banner to stdout and writes
+    # nothing there -- the SARIF report lands on disk at
+    # <--output-file-path>/results_sarif.sarif (tests/fixtures/tools/
+    # capture.log). Write into a dir under ctx.workdir (the per-request
+    # scope dir, wiped every request -- NOT /tmp) and read that file back.
+    # checkov can exit non-zero when it reports findings; that is not a
+    # task failure (see EXPECT_EXIT above).
+    out_dir = ctx.workdir / "checkov-out"
+    try:
+        text = _common.run_to_file(
+            ctx,
+            # --skip-framework dockerfile: hadolint is the Dockerfile owner
+            # here. Measured on tests/fixtures, checkov's four Dockerfile
+            # checks were three duplicates of hadolint (CKV_DOCKER_4/DL3020,
+            # CKV_DOCKER_7/DL3007, CKV_DOCKER_8/DL3002) plus one it alone
+            # reports, CKV_DOCKER_2 (missing HEALTHCHECK) -- a real if small
+            # loss, accepted to stop reporting one defect under three names.
+            # Verified against the built image: Dockerfile results drop to
+            # zero, infra/*.tf and *.yaml coverage is unchanged.
+            [
+                "checkov",
+                "-d",
+                ".",
+                "--skip-framework",
+                "dockerfile",
+                "--output",
+                "sarif",
+                "--output-file-path",
+                str(out_dir),
+            ],
+            tree,
+            out_dir / "results_sarif.sarif",
+            sys.modules[__name__],
+        )
+    except _common.ToolFailed as exc:
+        return _common.check_failed_finding(ctx, tree, "checkov", exc.exit_code, exc.detail)
+    return _common.scoped(ctx, ctx.sarif.parse(text, root=tree, severity=_POLICY), changed)

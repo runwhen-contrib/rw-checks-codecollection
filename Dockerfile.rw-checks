@@ -1,0 +1,142 @@
+# rw-checks-codecollection: the rw-checks capability image, not a Robot
+# codebundle image.
+#
+# Image == capability, 1:1 (sdk/runwhen_capability/loader.py's
+# discover_capability_dir docstring). This repo ships two capabilities
+# (rw-checks, rw-worktree) that must run as separate executor pools -- see
+# Dockerfile.rw-worktree for the other one -- so each gets its own
+# Dockerfile and only ever COPYs its own capabilities/<name>/ directory.
+# The two share nothing at build time except the SDK layer below.
+#
+# It ships:
+#   - the runwhen_capability SDK and its rwtask task host (sdk/)
+#   - the rw-checks capability's tasks (capabilities/rw-checks/)
+#   - the pinned static-check tools rw-checks's tasks' argv invokes
+#     (rw-worktree needs none of them -- see the other Dockerfile)
+#
+# Every tool is pinned AND hash-verified, by one of three mechanisms, each
+# the standard one for its ecosystem:
+#
+#   GitHub release binaries -> sbom/tools.cdx.json (CycloneDX 1.6), installed
+#     by scripts/install_tools.sh, which verifies each download's sha256
+#     against the SBOM. A statically linked binary in /usr/local/bin is
+#     INVISIBLE to any scanner that reads a package database, so the SBOM's
+#     PURL per component is what makes these CVE-matchable at all.
+#   PyPI -> requirements-tools.txt, installed with `pip --require-hashes`,
+#     which refuses anything whose artifact hash is not listed and requires
+#     the full transitive closure to be pinned.
+#   apt -> version-pinned below; scanners read the dpkg database directly.
+#
+# There is no Go binary and no self-install init container here -- the
+# runner (see docs/static-checks/EXECUTOR-CONTRACT.md) dials `rwtask serve`
+# as a warm executor over plain HTTP/JSON; it never execs into this
+# container to run a per-operation argv the way v1's rwcheck harness did.
+FROM python:3.12-slim
+
+# Populated by buildx for the platform currently being built (amd64/arm64).
+# Used below to pick the right gitleaks release tarball.
+ARG TARGETARCH
+
+# Tool versions are NOT ARGs any more: they live in tools/tools.yaml ->
+# sbom/tools.cdx.json (binaries) and requirements-tools.in ->
+# requirements-tools.txt (PyPI). A build arg could override a version
+# without the matching hash, which is exactly the hole the pinning closes.
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# git: ctx.git.checkout()/changed_files() shell out to the git CLI (see
+# sdk/runwhen_capability/git.py). ca-certificates: TLS for git fetches
+# against real remotes. curl: fetching the pinned gitleaks release tarball
+# below (build-time only; not needed at runtime, but the slim base has no
+# apt cache to prune around it either way).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- static-check tools ------------------------------------------------------
+# jq: install_tools.sh reads the SBOM with it. unzip/xz-utils: archive kinds
+# the SBOM declares. All three are build-time only, but the slim base has no
+# apt cache to prune around them either way.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        jq \
+        unzip \
+        xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# PyPI tools. --require-hashes verifies every artifact against
+# requirements-tools.txt and fails the build on any mismatch; it also
+# refuses to install anything not pinned there, so a transitive dependency
+# cannot slip in unhashed.
+COPY requirements-tools.txt /build/requirements-tools.txt
+RUN pip install --no-cache-dir --require-hashes -r /build/requirements-tools.txt
+
+# GitHub-release binaries, sha256-verified against the SBOM. Installing
+# from the SBOM rather than from tools/tools.yaml is deliberate: a version
+# bumped in tools.yaml but not re-hashed by scripts/gen_tool_sbom.py still
+# carries the old URL and hash here, so it cannot reach an image.
+COPY sbom/tools.cdx.json /build/sbom/tools.cdx.json
+COPY scripts/install_tools.sh /build/scripts/install_tools.sh
+RUN TARGETARCH="${TARGETARCH}" SBOM=/build/sbom/tools.cdx.json \
+      sh /build/scripts/install_tools.sh \
+    && rm -rf /build
+
+# --- OCI image annotations (opencontainers.org/image-spec) -------------------
+# Standard keys registries and scanners read: `source` and `revision` are what
+# let a scan result be traced back to the commit that produced the image, and
+# what an SBOM consumer uses to correlate this image with sbom/tools.cdx.json.
+# REVISION/CREATED are build args because they are the only two values that
+# cannot be known from the source tree alone; CI passes them.
+ARG REVISION=unknown
+ARG CREATED=unknown
+LABEL org.opencontainers.image.title="rw-checks" \
+      org.opencontainers.image.description="Static-check capability image for the RunWhen platform" \
+      org.opencontainers.image.source="https://github.com/runwhen-contrib/rw-checks-codecollection" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      io.runwhen.capability="rw-checks" \
+      io.runwhen.sbom="/usr/share/rw-checks/tools.cdx.json"
+
+# Keep the tool SBOM IN the image, not only in the repo. A scanner handed the
+# image alone (the normal case for a registry scan) otherwise has no way to
+# learn about the statically linked binaries in /usr/local/bin -- they have no
+# dpkg or pip record. This is the file that makes them visible.
+COPY sbom/tools.cdx.json /usr/share/rw-checks/tools.cdx.json
+
+# Install the SDK (and its rwtask console script) as a real package, then
+# lay THIS capability on top -- only capabilities/rw-checks/, never
+# capabilities/rw-worktree/, so this image ships exactly one manifest.yaml
+# and rwtask's own single-capability auto-discovery (loader.py,
+# discover_capability_dir) is unambiguous by construction, not by luck.
+# Copying pyproject.toml + sdk/ before capabilities/rw-checks/ keeps the
+# pip-install layer cacheable across capability-only edits.
+WORKDIR /app
+COPY pyproject.toml README.md LICENSE /app/
+COPY sdk /app/sdk
+RUN pip install --no-cache-dir /app
+
+COPY capabilities/rw-checks /app/capabilities/rw-checks
+
+# Non-root. /work is rwtask serve's default --workdir -- every request's
+# scope directory (<workdir>/<scopeId>/) is created and wiped under it, so
+# it's the one directory this user needs to write.
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin runwhen \
+    && mkdir -p /work \
+    && chown -R runwhen:runwhen /work /app
+USER runwhen
+
+# rwtask's argv IS the container command -- no Robot runtime, nothing to
+# reset. ENTRYPOINT [] is kept explicit (rather than simply absent) so a
+# `docker run <image> <anything>` never surprises anyone who expects the
+# rw-base-runtime convention from this org's other collections.
+#
+# --capability-dir is baked in explicitly rather than left to
+# discover_capability_dir's default: this image's own argv must never rely
+# on "there happens to be exactly one capabilities/*/manifest.yaml" being
+# true -- that auto-discovery stays a local-dev convenience only (see
+# `rwtask run`, README.md).
+ENTRYPOINT []
+CMD ["rwtask", "serve", "--capability-dir", "/app/capabilities/rw-checks"]

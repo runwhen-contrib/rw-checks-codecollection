@@ -1,0 +1,44 @@
+{
+  "$defs": {
+    "GrepMatch": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "line": {
+          "title": "Line",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "line",
+        "text"
+      ],
+      "title": "GrepMatch",
+      "type": "object"
+    }
+  },
+  "description": "Output of the `grep` task.",
+  "properties": {
+    "matches": {
+      "items": {
+        "$ref": "#/$defs/GrepMatch"
+      },
+      "title": "Matches",
+      "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "title": "GrepResult",
+  "type": "object"
+}

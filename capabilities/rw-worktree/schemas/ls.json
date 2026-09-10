@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "LsEntry": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "file",
+            "dir",
+            "other"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "size": {
+          "default": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "type"
+      ],
+      "title": "LsEntry",
+      "type": "object"
+    }
+  },
+  "description": "Output of the `ls` task.",
+  "properties": {
+    "entries": {
+      "items": {
+        "$ref": "#/$defs/LsEntry"
+      },
+      "title": "Entries",
+      "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "title": "LsResult",
+  "type": "object"
+}

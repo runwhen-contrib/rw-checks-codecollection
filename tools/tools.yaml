@@ -1,0 +1,152 @@
+# Declarative source of truth for every static-check binary this image
+# installs from a GitHub release.
+#
+# This file is HAND-EDITED; sbom/tools.cdx.json is GENERATED from it by
+# scripts/gen_tool_sbom.py, which downloads each artifact and records its
+# sha256. The Dockerfile installs from the SBOM, never from this file, so a
+# version bump that has not been re-hashed cannot reach an image.
+#
+# Why an SBOM rather than a bespoke lock file: a statically linked binary
+# copied into /usr/local/bin is INVISIBLE to every scanner that works off a
+# package database (Trivy, Grype, osv-scanner all read dpkg/pip metadata).
+# Without this file such a scan reports a clean image while ~15 unmanaged
+# binaries sit in it. CycloneDX with a PURL per component is what makes them
+# visible to CVE matching.
+#
+# `purl` follows the package-url spec's `github` type; `binary` is the file
+# name inside the archive (or the downloaded file itself, for `kind: binary`).
+
+tools:
+  - name: shellcheck
+    version: "0.10.0"
+    purl: pkg:github/koalaman/shellcheck@v0.10.0
+    kind: tar.xz
+    binary: shellcheck
+    urls:
+      amd64: https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.x86_64.tar.xz
+      arm64: https://github.com/koalaman/shellcheck/releases/download/v0.10.0/shellcheck-v0.10.0.linux.aarch64.tar.xz
+
+  - name: hadolint
+    version: "2.12.0"
+    purl: pkg:github/hadolint/hadolint@v2.12.0
+    kind: binary
+    binary: hadolint
+    urls:
+      amd64: https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+      arm64: https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-arm64
+
+  - name: actionlint
+    version: "1.7.7"
+    purl: pkg:github/rhysd/actionlint@v1.7.7
+    kind: tar.gz
+    binary: actionlint
+    urls:
+      amd64: https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_amd64.tar.gz
+      arm64: https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlint_1.7.7_linux_arm64.tar.gz
+
+  - name: gitleaks
+    version: "8.30.1"
+    purl: pkg:github/gitleaks/gitleaks@v8.30.1
+    kind: tar.gz
+    binary: gitleaks
+    urls:
+      amd64: https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+      arm64: https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz
+
+  - name: trufflehog
+    version: "3.90.8"
+    purl: pkg:github/trufflesecurity/trufflehog@v3.90.8
+    kind: tar.gz
+    binary: trufflehog
+    urls:
+      amd64: https://github.com/trufflesecurity/trufflehog/releases/download/v3.90.8/trufflehog_3.90.8_linux_amd64.tar.gz
+      arm64: https://github.com/trufflesecurity/trufflehog/releases/download/v3.90.8/trufflehog_3.90.8_linux_arm64.tar.gz
+
+  - name: osv-scanner
+    version: "1.9.2"
+    purl: pkg:github/google/osv-scanner@v1.9.2
+    kind: binary
+    binary: osv-scanner
+    urls:
+      amd64: https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_amd64
+      arm64: https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_arm64
+
+  - name: trivy
+    version: "0.74.0"
+    purl: pkg:github/aquasecurity/trivy@v0.74.0
+    kind: tar.gz
+    binary: trivy
+    urls:
+      amd64: https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+      arm64: https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz
+
+  - name: tflint
+    version: "0.55.0"
+    purl: pkg:github/terraform-linters/tflint@v0.55.0
+    kind: zip
+    binary: tflint
+    urls:
+      amd64: https://github.com/terraform-linters/tflint/releases/download/v0.55.0/tflint_linux_amd64.zip
+      arm64: https://github.com/terraform-linters/tflint/releases/download/v0.55.0/tflint_linux_arm64.zip
+
+  - name: regal
+    version: "0.30.2"
+    purl: pkg:github/StyraInc/regal@v0.30.2
+    kind: binary
+    binary: regal
+    urls:
+      amd64: https://github.com/StyraInc/regal/releases/download/v0.30.2/regal_Linux_x86_64
+      arm64: https://github.com/StyraInc/regal/releases/download/v0.30.2/regal_Linux_arm64
+
+  - name: ast-grep
+    version: "0.39.5"
+    purl: pkg:github/ast-grep/ast-grep@0.39.5
+    kind: zip
+    binary: ast-grep
+    urls:
+      amd64: https://github.com/ast-grep/ast-grep/releases/download/0.39.5/app-x86_64-unknown-linux-gnu.zip
+      arm64: https://github.com/ast-grep/ast-grep/releases/download/0.39.5/app-aarch64-unknown-linux-gnu.zip
+
+  - name: biome
+    version: "2.3.14"
+    purl: pkg:npm/%40biomejs/biome@2.3.14
+    kind: binary
+    binary: biome
+    urls:
+      amd64: https://github.com/biomejs/biome/releases/download/%40biomejs%2Fbiome%402.3.14/biome-linux-x64
+      arm64: https://github.com/biomejs/biome/releases/download/%40biomejs%2Fbiome%402.3.14/biome-linux-arm64
+
+  - name: buf
+    version: "1.50.0"
+    purl: pkg:github/bufbuild/buf@v1.50.0
+    kind: binary
+    binary: buf
+    urls:
+      amd64: https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-Linux-x86_64
+      arm64: https://github.com/bufbuild/buf/releases/download/v1.50.0/buf-Linux-aarch64
+
+  - name: vale
+    version: "3.9.1"
+    purl: pkg:github/errata-ai/vale@v3.9.1
+    kind: tar.gz
+    binary: vale
+    urls:
+      amd64: https://github.com/errata-ai/vale/releases/download/v3.9.1/vale_3.9.1_Linux_64-bit.tar.gz
+      arm64: https://github.com/errata-ai/vale/releases/download/v3.9.1/vale_3.9.1_Linux_arm64.tar.gz
+
+  - name: dotenv-linter
+    version: "3.3.0"
+    purl: pkg:github/dotenv-linter/dotenv-linter@v3.3.0
+    kind: tar.gz
+    binary: dotenv-linter
+    urls:
+      amd64: https://github.com/dotenv-linter/dotenv-linter/releases/download/v3.3.0/dotenv-linter-linux-x86_64.tar.gz
+      arm64: https://github.com/dotenv-linter/dotenv-linter/releases/download/v3.3.0/dotenv-linter-linux-aarch64.tar.gz
+
+  - name: checkmake
+    version: "0.2.2"
+    purl: pkg:github/mrtazz/checkmake@0.2.2
+    kind: binary
+    binary: checkmake
+    urls:
+      amd64: https://github.com/mrtazz/checkmake/releases/download/0.2.2/checkmake-0.2.2.linux.amd64

@@ -15,11 +15,20 @@ from runwhen_capability import Context
 
 from . import _common
 
-SEVERITY = adapters.FLAKE8_SEVERITY
+# F (pyflakes) real defects, E/W (pycodestyle) style, C (mccabe)/N
+# (pep8-naming) nits.
+SEVERITY = {
+    "F": "error",
+    "E": "warning",
+    "W": "warning",
+    "C": "note",
+    "N": "note",
+}
 FILES = ("*.py",)
 CONFIG = "required"
 CI_BINARY = "flake8"
 GUARD = None
+EXPECT_EXIT = (0, 1)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -33,9 +42,15 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
     # "." replaces capture.log's fixture-specific "src" dir; unlike pylint,
     # flake8 walks directories on its own without an extra flag.
     proc = ctx.run(["flake8", "--format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s", "."], cwd=tree)
-    return _common.emit(ctx, adapters.flake8(proc.stdout), tree, changed, diff_filter=True)
+    fail = _common.check_exit(ctx, tree, "flake8", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _common.emit(
+        ctx, adapters.flake8(proc.stdout, SEVERITY), tree, changed, diff_filter=True
+    )

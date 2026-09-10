@@ -18,15 +18,18 @@ from runwhen_capability import Context
 from . import _common
 
 # A verified credential is known-live; an unverified one is a strong
-# candidate. adapters.trufflehog() maps both to `error` -- the distinction
-# belongs in the message, not in a downgrade to `warning`. Declared here
-# only to satisfy the package-wide contract; adapters.py is the actual
-# source of truth.
+# candidate. Both are errors -- the distinction belongs in the message, not
+# in a downgrade to `warning` -- so this is the whole (degenerate)
+# vocabulary.
 SEVERITY = {"": "error"}
 FILES = ()
 CONFIG = "optional"
 CI_BINARY = None
 GUARD = None
+# No --fail flag below, so trufflehog's "183 = verified secret found"
+# convention never fires; --no-verification also means nothing gets marked
+# verified in the first place. Exit stays 0 regardless of findings.
+EXPECT_EXIT = (0,)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -34,8 +37,9 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
     # --no-verification is required: verification means calling each
     # provider with the credential trufflehog just found, which this check
     # must never do. --exclude-paths (a file of newline-separated regexes,
@@ -58,6 +62,11 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
         ],
         cwd=tree,
     )
+    fail = _common.check_exit(ctx, tree, "trufflehog", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
     # Secret scan, not a lint -- not diff-filtered, same reasoning as
     # gitleaks/trivy/osv-scanner/checkov/zizmor.
-    return _common.emit(ctx, adapters.trufflehog(proc.stdout), tree, None, diff_filter=False)
+    return _common.emit(
+        ctx, adapters.trufflehog(proc.stdout, SEVERITY), tree, None, diff_filter=False
+    )

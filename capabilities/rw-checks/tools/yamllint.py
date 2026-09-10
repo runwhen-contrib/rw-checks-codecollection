@@ -14,11 +14,12 @@ from runwhen_capability import Context
 
 from . import _common
 
-SEVERITY = adapters.YAMLLINT_SEVERITY
+SEVERITY = {"error": "error", "warning": "warning"}
 FILES = ("*.yml", "*.yaml")
 CONFIG = "optional"
 CI_BINARY = "yamllint"
 GUARD = None
+EXPECT_EXIT = (0, 1)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -28,8 +29,14 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
     # capture.log's `.` is already repo-wide; no fixture-specific path here.
     proc = ctx.run(["yamllint", "-f", "parsable", "."], cwd=tree)
-    return _common.emit(ctx, adapters.yamllint(proc.stdout), tree, changed, diff_filter=True)
+    fail = _common.check_exit(ctx, tree, "yamllint", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _common.emit(
+        ctx, adapters.yamllint(proc.stdout, SEVERITY), tree, changed, diff_filter=True
+    )

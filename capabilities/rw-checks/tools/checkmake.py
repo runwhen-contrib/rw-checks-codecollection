@@ -17,14 +17,17 @@ from runwhen_capability import Context
 
 from . import _common
 
-# checkmake has no severity vocabulary at all -- adapters.checkmake() maps
-# every rule to `note` directly. Declared here only to satisfy the
-# package-wide contract; adapters.py is the actual source of truth.
+# checkmake has no severity vocabulary at all -- every rule is a style
+# convention about Makefile structure, so this is the whole (degenerate)
+# vocabulary.
 SEVERITY = {"": "note"}
 FILES = ("Makefile",)
 CONFIG = "optional"
 CI_BINARY = "checkmake"
 GUARD = None
+# tests/fixtures/tools/capture.log: exit 3 with findings present -- not a
+# tool failure.
+EXPECT_EXIT = (0, 3)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -32,8 +35,9 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
     proc = ctx.run(
         [
             "checkmake",
@@ -46,4 +50,9 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
         ],
         cwd=tree,
     )
-    return _common.emit(ctx, adapters.checkmake(proc.stdout), tree, changed, diff_filter=True)
+    fail = _common.check_exit(ctx, tree, "checkmake", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _common.emit(
+        ctx, adapters.checkmake(proc.stdout, SEVERITY), tree, changed, diff_filter=True
+    )

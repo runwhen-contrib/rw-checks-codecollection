@@ -31,14 +31,18 @@ from runwhen_capability import Context
 from . import _common
 
 # tests/fixtures/tools/tflint.sarif: same reasoning as zizmor -- trust the
-# level tflint reports rather than inventing a rule-id-based policy it
-# gives no evidence for. This map documents that vocabulary for the
-# package-wide test.
+# level tflint reports rather than inventing a rule-id-based policy it gives
+# no evidence for. `_POLICY` (severity.from_level) applies this map as-is.
 SEVERITY = {"error": "error", "warning": "warning", "note": "note"}
 FILES = ("*.tf",)
 CONFIG = "optional"
 CI_BINARY = "tflint"
 GUARD = None
+# tflint exits 2 when it reports findings (capture.log: exit 2, 2384B of
+# valid SARIF) -- not a tool failure.
+EXPECT_EXIT = (0, 2)
+
+_POLICY = severity.from_level(SEVERITY)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -51,8 +55,9 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    gated_findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return gated_findings
 
     tf_dirs: set[Path] = set()
     for f in _common.find_files(tree, *FILES):
@@ -64,11 +69,14 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
         # tflint exits 2 when it reports findings (capture.log: exit 2,
         # 2384B of valid SARIF) -- ctx.run does not raise on non-zero exit,
         # and that is correct here: a non-zero exit is the tool reporting
-        # findings, not a tool failure.
+        # findings, not a tool failure (see EXPECT_EXIT above).
         proc = ctx.run(["tflint", "--format", "sarif", "--chdir", rel.as_posix()], cwd=tree)
+        fail = _common.check_exit(ctx, tree, "tflint", proc, sys.modules[__name__])
+        if fail is not None:
+            return fail
         if not proc.stdout.strip():
             continue
-        findings.extend(ctx.sarif.parse(proc.stdout, root=tree, severity=severity.tflint))
+        findings.extend(ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY))
 
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)

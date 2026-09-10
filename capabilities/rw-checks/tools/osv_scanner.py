@@ -19,9 +19,8 @@ from . import _common
 # tests/fixtures/tools/osv-scanner.sarif: all 17 rules carry SARIF level
 # "warning" and no severity metadata in `properties` at all -- unlike
 # trivy, there is nothing here to discriminate a critical CVE from a low
-# one, so severity.osv_scanner (called below) maps every result to
-# "warning" uniformly. This map documents that (empty) vocabulary for the
-# package-wide test.
+# one. The single value below is the whole (empty) vocabulary; `_POLICY`
+# (severity.constant) forces every result to it.
 SEVERITY = {"": "warning"}
 FILES = (
     "requirements.txt",
@@ -37,6 +36,11 @@ FILES = (
 CONFIG = "optional"
 CI_BINARY = None
 GUARD = None
+# osv-scanner exits 1 when it finds vulnerabilities (capture.log: exit 1,
+# 197930B of valid SARIF) -- not a tool failure.
+EXPECT_EXIT = (0, 1)
+
+_POLICY = severity.constant(SEVERITY)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -46,14 +50,18 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
 
     # osv-scanner exits 1 when it finds vulnerabilities (capture.log: exit
     # 1, 197930B of valid SARIF) -- ctx.run does not raise on non-zero exit,
     # and that is correct here: a non-zero exit is the tool reporting
-    # findings, not a tool failure. Dependency vulns are not diff-filtered,
-    # for the same reason as gitleaks/trivy above.
+    # findings, not a tool failure (see EXPECT_EXIT above). Dependency vulns
+    # are not diff-filtered, for the same reason as gitleaks/trivy above.
     proc = ctx.run(["osv-scanner", "--format", "sarif", "-r", "."], cwd=tree)
+    fail = _common.check_exit(ctx, tree, "osv-scanner", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
     # Never diff-filtered: see _common.emit.
-    return ctx.sarif.parse(proc.stdout, root=tree, severity=severity.osv_scanner)
+    return ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY)

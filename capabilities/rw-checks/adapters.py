@@ -1,8 +1,9 @@
 """Tool output -> Finding records, one adapter per tool.
 
-Each adapter is a PURE function: raw tool stdout (str) -> list[dict]. It does
-no I/O and knows nothing about the Context. The dicts it returns are the
-record shape `ctx.findings.from_records()` consumes:
+Each adapter is a PURE function: raw tool stdout (str), plus the tool
+module's own SEVERITY map -> list[dict]. It does no I/O and knows nothing
+about the Context. The dicts it returns are the record shape
+`ctx.findings.from_records()` consumes:
 
     {path, rule, line, severity, message, snippet}
 
@@ -12,12 +13,14 @@ record shape `ctx.findings.from_records()` consumes:
             normalises and drops anything resolving outside the worktree, so
             an adapter never needs to make paths safe -- only to find the
             right field.
-  severity  is looked up in the adapter's own SEVERITY map. Mapping belongs
-            HERE, per tool, because every tool has its own vocabulary and
-            none of them mean the same thing: ruff marks every violation
-            `error`, shellcheck's `style` and pylint's `convention` are both
-            our `note`, and hadolint's `info` is not shellcheck's `info`.
-            A shared map would flatten exactly the distinction the Check Run
+  severity  is looked up in the `severity` map the CALLER passes in -- the
+            tool module's own SEVERITY, not a copy of it kept here. Mapping
+            belongs to the tool module because every tool has its own
+            vocabulary and none of them mean the same thing: ruff marks
+            every violation `error`, shellcheck's `style` and pylint's
+            `convention` are both our `note`, and hadolint's `info` is not
+            shellcheck's `info`. A shared map -- or two maps that can drift
+            apart -- would flatten exactly the distinction the Check Run
             conclusion depends on.
 
 Adapters live in the capability, not in the SDK, because which field holds a
@@ -34,6 +37,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from typing import Any
 
 # --- helpers ----------------------------------------------------------------
@@ -56,15 +60,12 @@ def _jsonl(text: str) -> list[dict]:
 # --- shellcheck -------------------------------------------------------------
 # `shellcheck -f json1` -> {"comments": [{file,line,column,level,code,message}]}
 # NOT a bare array: that is `-f json`. json1 is the stable, documented shape.
-SHELLCHECK_SEVERITY = {
-    "error": "error",
-    "warning": "warning",
-    "info": "note",
-    "style": "note",
-}
+# tools/shellcheck.py's SEVERITY is `error`/`warning` real defects, `info`/
+# `style` (advisory -- promoting them would fail a Check Run on a nit) both
+# `note`.
 
 
-def shellcheck(text: str) -> list[dict]:
+def shellcheck(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text)
     if not payload:
         return []
@@ -79,7 +80,7 @@ def shellcheck(text: str) -> list[dict]:
             "column": c.get("column", 0),
             "end_line": c.get("endLine", 0),
             "end_column": c.get("endColumn", 0),
-            "severity": SHELLCHECK_SEVERITY.get(str(c.get("level", "")).lower(), "warning"),
+            "severity": severity.get(str(c.get("level", "")).lower(), "warning"),
             "message": c.get("message", ""),
         }
         for c in payload.get("comments", [])
@@ -88,15 +89,10 @@ def shellcheck(text: str) -> list[dict]:
 
 # --- hadolint ---------------------------------------------------------------
 # `hadolint -f json` -> a bare array of {code,file,line,column,level,message}.
-HADOLINT_SEVERITY = {
-    "error": "error",
-    "warning": "warning",
-    "info": "note",
-    "style": "note",
-}
+# tools/hadolint.py's SEVERITY: `error`/`warning`/`info`->note/`style`->note.
 
 
-def hadolint(text: str) -> list[dict]:
+def hadolint(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text) or []
     return [
         {
@@ -105,7 +101,7 @@ def hadolint(text: str) -> list[dict]:
             "line": d.get("line", 0),
             # hadolint carries no end_line/end_column -- column only.
             "column": d.get("column", 0),
-            "severity": HADOLINT_SEVERITY.get(str(d.get("level", "")).lower(), "warning"),
+            "severity": severity.get(str(d.get("level", "")).lower(), "warning"),
             "message": d.get("message", ""),
         }
         for d in payload
@@ -119,10 +115,10 @@ def hadolint(text: str) -> list[dict]:
 _YAMLLINT_LINE = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+):\s+\[(?P<level>\w+)\]\s+(?P<message>.*?)\s*\((?P<rule>[\w-]+)\)\s*$"
 )
-YAMLLINT_SEVERITY = {"error": "error", "warning": "warning"}
+# tools/yamllint.py's SEVERITY: `error`/`warning` real, anything else `note`.
 
 
-def yamllint(text: str) -> list[dict]:
+def yamllint(text: str, severity: Mapping[str, str]) -> list[dict]:
     out = []
     for line in (text or "").splitlines():
         m = _YAMLLINT_LINE.match(line.strip())
@@ -134,7 +130,7 @@ def yamllint(text: str) -> list[dict]:
                 "rule": m["rule"],
                 "line": int(m["line"]),
                 "column": int(m["col"]),
-                "severity": YAMLLINT_SEVERITY.get(m["level"].lower(), "note"),
+                "severity": severity.get(m["level"].lower(), "note"),
                 "message": m["message"],
             }
         )
@@ -145,11 +141,11 @@ def yamllint(text: str) -> list[dict]:
 # `actionlint -format '{{json .}}'` -> a bare array of
 # {message,filepath,line,column,kind,snippet,end_column}. actionlint has no
 # severity vocabulary at all -- every lint it reports is an error-level
-# finding.
-ACTIONLINT_SEVERITY = {"error": "error"}
+# finding. tools/actionlint.py's SEVERITY is `{"error": "error"}`, the
+# whole (degenerate) vocabulary.
 
 
-def actionlint(text: str) -> list[dict]:
+def actionlint(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text) or []
     return [
         {
@@ -161,7 +157,7 @@ def actionlint(text: str) -> list[dict]:
             # actionlint reports no end_line -- every finding is single-line.
             "column": d.get("column", 0),
             "end_column": d.get("end_column", 0),
-            "severity": ACTIONLINT_SEVERITY["error"],
+            "severity": severity.get("error", "error"),
             "message": d.get("message", ""),
             # `snippet` is two lines: the source line, then a caret-underline
             # pointing at the column. The second line is not source text, so
@@ -175,17 +171,11 @@ def actionlint(text: str) -> list[dict]:
 # --- pylint -------------------------------------------------------------
 # `pylint --output-format=json` -> a bare array of
 # {type,module,obj,line,column,path,symbol,message,message-id,...}.
-PYLINT_SEVERITY = {
-    "fatal": "error",
-    "error": "error",
-    "warning": "warning",
-    "convention": "note",
-    "refactor": "note",
-    "info": "note",
-}
+# tools/pylint.py's SEVERITY: fatal/error->error, warning->warning,
+# convention/refactor/info->note.
 
 
-def pylint(text: str) -> list[dict]:
+def pylint(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text) or []
     out = []
     for d in payload:
@@ -207,7 +197,7 @@ def pylint(text: str) -> list[dict]:
                 "column": (col + 1) if isinstance(col, int) else 0,
                 "end_line": d.get("endLine", 0) or 0,
                 "end_column": (end_col + 1) if isinstance(end_col, int) else 0,
-                "severity": PYLINT_SEVERITY.get(str(d.get("type", "")).lower(), "warning"),
+                "severity": severity.get(str(d.get("type", "")).lower(), "warning"),
                 "message": d.get("message", ""),
             }
         )
@@ -219,11 +209,11 @@ def pylint(text: str) -> list[dict]:
 # {filepath, violations: [{start_line_no,code,description,name,warning,...}]}.
 # sqlfluff has no error/warning/info vocabulary of its own -- `warning` is a
 # bool distinguishing advisory formatting rules from ones that would fail a
-# build, so it is the whole map.
-SQLFLUFF_SEVERITY = {True: "warning", False: "note"}
+# build, so tools/sqlfluff.py's SEVERITY is `{True: "warning", False: "note"}`,
+# the whole map, keyed by that bool rather than a string.
 
 
-def sqlfluff(text: str) -> list[dict]:
+def sqlfluff(text: str, severity: Mapping[Any, str]) -> list[dict]:
     payload = _loads(text) or []
     return [
         {
@@ -234,7 +224,7 @@ def sqlfluff(text: str) -> list[dict]:
             "column": v.get("start_line_pos", 0),
             "end_line": v.get("end_line_no", 0),
             "end_column": v.get("end_line_pos", 0),
-            "severity": SQLFLUFF_SEVERITY.get(v.get("warning"), "note"),
+            "severity": severity.get(v.get("warning"), "note"),
             "message": v.get("description", ""),
         }
         for f in payload
@@ -249,15 +239,10 @@ def sqlfluff(text: str) -> list[dict]:
 # counting newlines before the span start. `description` is the plain-string
 # rendering of the structured `message` array and is what we want; `message`
 # itself is a list of content/markup fragments, not text.
-BIOME_SEVERITY = {
-    "error": "error",
-    "warning": "warning",
-    "information": "note",
-    "hint": "note",
-}
+# tools/biome.py's SEVERITY: error/warning real, information/hint->note.
 
 
-def biome(text: str) -> list[dict]:
+def biome(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text) or {}
     out = []
     for d in payload.get("diagnostics", []):
@@ -274,7 +259,7 @@ def biome(text: str) -> list[dict]:
                 # `line`, there is no way to derive one without re-decoding
                 # the byte offset against the source text's line/column
                 # grid. Left at the Finding default (0 == not reported).
-                "severity": BIOME_SEVERITY.get(str(d.get("severity", "")).lower(), "warning"),
+                "severity": severity.get(str(d.get("severity", "")).lower(), "warning"),
                 "message": d.get("description", ""),
             }
         )
@@ -285,15 +270,10 @@ def biome(text: str) -> list[dict]:
 # `ast-grep scan --json` -> a bare array of
 # {text,range:{start:{line,column},end:{...}},file,lines,ruleId,severity,message}.
 # `range.start.line` is 0-INDEXED, unlike every line-reporting tool above.
-AST_GREP_SEVERITY = {
-    "error": "error",
-    "warning": "warning",
-    "info": "note",
-    "hint": "note",
-}
+# tools/ast_grep.py's SEVERITY: error/warning real, info/hint->note.
 
 
-def ast_grep(text: str) -> list[dict]:
+def ast_grep(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text) or []
     out = []
     for d in payload:
@@ -316,7 +296,7 @@ def ast_grep(text: str) -> list[dict]:
                 "column": (col + 1) if isinstance(col, int) else 0,
                 "end_line": (end_line + 1) if isinstance(end_line, int) else 0,
                 "end_column": (end_col + 1) if isinstance(end_col, int) else 0,
-                "severity": AST_GREP_SEVERITY.get(str(d.get("severity", "")).lower(), "warning"),
+                "severity": severity.get(str(d.get("severity", "")).lower(), "warning"),
                 "message": d.get("message", ""),
                 "snippet": d.get("lines", ""),
             }
@@ -327,10 +307,11 @@ def ast_grep(text: str) -> list[dict]:
 # --- regal ------------------------------------------------------------------
 # `regal lint --format=json` -> {violations: [{title,description,category,
 # level,location:{file,row,col,text}}], summary}.
-REGAL_SEVERITY = {"error": "error", "warning": "warning"}
+# tools/regal.py's SEVERITY: `{"error": "error", "warning": "warning"}`;
+# anything else falls back to `note`.
 
 
-def regal(text: str) -> list[dict]:
+def regal(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text) or {}
     out = []
     for v in payload.get("violations", []):
@@ -345,7 +326,7 @@ def regal(text: str) -> list[dict]:
                 "column": loc.get("col", 0),
                 "end_line": end.get("row", 0),
                 "end_column": end.get("col", 0),
-                "severity": REGAL_SEVERITY.get(str(v.get("level", "")).lower(), "note"),
+                "severity": severity.get(str(v.get("level", "")).lower(), "note"),
                 "message": v.get("description", ""),
                 "snippet": loc.get("text", ""),
             }
@@ -357,10 +338,10 @@ def regal(text: str) -> list[dict]:
 # `vale --output=JSON` -> not an array: an OBJECT keyed by file path, each
 # value a list of {Check,Message,Line,Severity,Match,Span,...}. The path is
 # the dict key, not a field on the record.
-VALE_SEVERITY = {"error": "error", "warning": "warning", "suggestion": "note"}
+# tools/vale.py's SEVERITY: error/warning real, suggestion->note.
 
 
-def vale(text: str) -> list[dict]:
+def vale(text: str, severity: Mapping[str, str]) -> list[dict]:
     payload = _loads(text) or {}
     out = []
     for path, alerts in payload.items():
@@ -376,7 +357,7 @@ def vale(text: str) -> list[dict]:
                     "line": a.get("Line", 0),
                     "column": span[0] if len(span) > 0 else 0,
                     "end_column": span[1] if len(span) > 1 else 0,
-                    "severity": VALE_SEVERITY.get(str(a.get("Severity", "")).lower(), "note"),
+                    "severity": severity.get(str(a.get("Severity", "")).lower(), "note"),
                     "message": a.get("Message", ""),
                     "snippet": a.get("Match", ""),
                 }
@@ -390,16 +371,11 @@ def vale(text: str) -> list[dict]:
 # The message itself contains colons ("comparison to None should be 'if cond
 # is None:'"), so the split is bounded to 4 -- an unbounded split would
 # truncate the message at its first colon.
-FLAKE8_SEVERITY = {
-    "F": "error",  # pyflakes: real defects (undefined name, unused import)
-    "E": "warning",  # pycodestyle errors
-    "W": "warning",  # pycodestyle warnings
-    "C": "note",  # mccabe complexity
-    "N": "note",  # pep8-naming, if installed
-}
+# tools/flake8.py's SEVERITY: F (pyflakes -- real defects) error, E/W
+# (pycodestyle) warning, C (mccabe complexity)/N (pep8-naming) note.
 
 
-def flake8(text: str) -> list[dict]:
+def flake8(text: str, severity: Mapping[str, str]) -> list[dict]:
     out = []
     for line in (text or "").splitlines():
         if not line.strip():
@@ -418,7 +394,7 @@ def flake8(text: str) -> list[dict]:
                 # flake8/pycodestyle's %(col)d is already 1-indexed; no
                 # end_line/end_column in this format.
                 "column": int(col) if col.isdigit() else 0,
-                "severity": FLAKE8_SEVERITY.get(code[:1].upper(), "warning"),
+                "severity": severity.get(code[:1].upper(), "warning"),
                 "message": message.strip(),
             }
         )
@@ -432,8 +408,11 @@ def flake8(text: str) -> list[dict]:
 # so the task pins a delimited template:
 #   "{{.Rule}}|{{.FileName}}|{{.LineNumber}}|{{.Violation}}\n"
 # LineNumber is 0 for whole-file rules like minphony; 0 is the contract's
-# "no location" value and passes through unchanged.
-def checkmake(text: str) -> list[dict]:
+# "no location" value and passes through unchanged. checkmake has no
+# severity vocabulary at all -- every rule is a style convention about
+# Makefile structure -- so tools/checkmake.py's SEVERITY is the degenerate
+# `{"": "note"}`, looked up by the empty-string key documenting that.
+def checkmake(text: str, severity: Mapping[str, str]) -> list[dict]:
     out = []
     for line in (text or "").splitlines():
         if not line.strip():
@@ -447,10 +426,7 @@ def checkmake(text: str) -> list[dict]:
                 "path": path,
                 "rule": rule,
                 "line": int(line_no) if line_no.strip().isdigit() else 0,
-                # checkmake has no severity vocabulary at all -- every rule is
-                # a style convention about Makefile structure, so `note` is the
-                # honest mapping rather than inventing a gradation.
-                "severity": "note",
+                "severity": severity.get("", "note"),
                 "message": message.strip(),
             }
         )
@@ -464,7 +440,12 @@ def checkmake(text: str) -> list[dict]:
 _DOTENV_LINE = re.compile(r"^(?P<path>[^:]+):(?P<line>\d+)\s+(?P<rule>\w+):\s+(?P<message>.+)$")
 
 
-def dotenv_linter(text: str) -> list[dict]:
+# dotenv-linter emits no severity; its rules are conventions (casing,
+# ordering) except DuplicatedKey, which is a real defect -- a later key
+# silently wins. tools/dotenv_linter.py's SEVERITY is
+# `{"DuplicatedKey": "warning", "": "note"}`, the `""` key its default for
+# every other rule.
+def dotenv_linter(text: str, severity: Mapping[str, str]) -> list[dict]:
     out = []
     for line in (text or "").splitlines():
         m = _DOTENV_LINE.match(line.strip())
@@ -475,10 +456,7 @@ def dotenv_linter(text: str) -> list[dict]:
                 "path": m["path"],
                 "rule": m["rule"],
                 "line": int(m["line"]),
-                # dotenv-linter emits no severity; its rules are conventions
-                # (casing, ordering) except DuplicatedKey, which is a real
-                # defect -- a later key silently wins.
-                "severity": "warning" if m["rule"] == "DuplicatedKey" else "note",
+                "severity": severity.get(m["rule"], severity.get("", "note")),
                 "message": m["message"].strip(),
             }
         )
@@ -487,8 +465,11 @@ def dotenv_linter(text: str) -> list[dict]:
 
 # --- buf --------------------------------------------------------------------
 # `buf lint --error-format=json` emits JSON LINES, one object per finding --
-# not a JSON array. json.loads() on the whole payload raises.
-def buf(text: str) -> list[dict]:
+# not a JSON array. json.loads() on the whole payload raises. buf lint
+# findings are all failures of the configured rule set; there is no
+# severity axis to map, so tools/buf.py's SEVERITY is the degenerate
+# `{"": "warning"}`.
+def buf(text: str, severity: Mapping[str, str]) -> list[dict]:
     return [
         {
             "path": d.get("path", ""),
@@ -498,9 +479,7 @@ def buf(text: str) -> list[dict]:
             "column": d.get("start_column", 0),
             "end_line": d.get("end_line", 0),
             "end_column": d.get("end_column", 0),
-            # buf lint findings are all failures of the configured rule set;
-            # there is no severity axis to map.
-            "severity": "warning",
+            "severity": severity.get("", "warning"),
             "message": d.get("message", ""),
         }
         for d in _jsonl(text)
@@ -521,7 +500,11 @@ def buf(text: str) -> list[dict]:
 #    ".git/objects/30/030dd1..." which are useless to a reviewer and cannot be
 #    diff-filtered. Those are dropped here; the task also passes an exclusion,
 #    but the adapter must not depend on the argv being right.
-def trufflehog(text: str) -> list[dict]:
+# A verified credential is known-live; an unverified one is a strong
+# candidate. Both are errors -- the distinction belongs in the message, not
+# in a downgrade to `warning` -- so tools/trufflehog.py's SEVERITY is the
+# degenerate `{"": "error"}`.
+def trufflehog(text: str, severity: Mapping[str, str]) -> list[dict]:
     out = []
     for d in _jsonl(text):
         meta = ((d.get("SourceMetadata") or {}).get("Data") or {}).get("Filesystem") or {}
@@ -533,10 +516,7 @@ def trufflehog(text: str) -> list[dict]:
                 "path": path,
                 "rule": d.get("DetectorName", ""),
                 "line": meta.get("line", 0),
-                # A verified credential is known-live; an unverified one is a
-                # strong candidate. Both are errors -- the distinction belongs
-                # in the message, not in a downgrade to `warning`.
-                "severity": "error",
+                "severity": severity.get("", "error"),
                 "message": (
                     f"{d.get('DetectorName', 'unknown')} credential detected"
                     f"{' (verified live)' if d.get('Verified') else ''}"

@@ -15,11 +15,12 @@ from runwhen_capability import Context
 
 from . import _common
 
-SEVERITY = adapters.HADOLINT_SEVERITY
+SEVERITY = {"error": "error", "warning": "warning", "info": "note", "style": "note"}
 FILES = ("Dockerfile*", "*.dockerfile")
 CONFIG = "optional"
 CI_BINARY = "hadolint"
 GUARD = None
+EXPECT_EXIT = (0, 1)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -27,8 +28,9 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
     # Same reasoning as shellcheck: hadolint lints exactly one Dockerfile per
     # invocation and has no directory mode, so every Dockerfile/Dockerfile.*
     # in the tree is discovered and passed explicitly.
@@ -36,4 +38,9 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     if not dockerfiles:
         return []
     proc = ctx.run(["hadolint", "-f", "json", *dockerfiles], cwd=tree)
-    return _common.emit(ctx, adapters.hadolint(proc.stdout), tree, changed, diff_filter=True)
+    fail = _common.check_exit(ctx, tree, "hadolint", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _common.emit(
+        ctx, adapters.hadolint(proc.stdout, SEVERITY), tree, changed, diff_filter=True
+    )

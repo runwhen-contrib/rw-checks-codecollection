@@ -17,13 +17,14 @@ from runwhen_capability import Context
 
 from . import _common
 
-SEVERITY = adapters.VALE_SEVERITY
+SEVERITY = {"error": "error", "warning": "warning", "suggestion": "note"}
 FILES = ("*.md", "*.markdown", "*.txt")
 CONFIG = "required"
 CI_BINARY = "vale"
 # A non-empty `Packages` key makes vale download and install a style
 # package from a URL before it lints anything.
 GUARD = guards.vale
+EXPECT_EXIT = (0, 1)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -31,12 +32,13 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    skip = _common.gate(tree, sys.modules[__name__])
-    if skip and skip.startswith("unsafe-config:"):
-        return _common.unsafe_config_finding(ctx, tree, skip.split(":", 1)[1])
-    if skip:
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
 
     # "." replaces capture.log's fixture-specific "docs" dir.
     proc = ctx.run(["vale", "--output=JSON", "."], cwd=tree)
-    return _common.emit(ctx, adapters.vale(proc.stdout), tree, changed, diff_filter=True)
+    fail = _common.check_exit(ctx, tree, "vale", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _common.emit(ctx, adapters.vale(proc.stdout, SEVERITY), tree, changed, diff_filter=True)

@@ -10,11 +10,14 @@ from runwhen_capability import Context
 
 from . import _common
 
-SEVERITY = adapters.REGAL_SEVERITY
+SEVERITY = {"error": "error", "warning": "warning"}
 FILES = ("*.rego",)
 CONFIG = "optional"
 CI_BINARY = "regal"
 GUARD = None
+# tests/fixtures/tools/capture.log: exit 3 with findings present -- not a
+# tool failure.
+EXPECT_EXIT = (0, 3)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -25,8 +28,12 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
     # "." replaces capture.log's fixture-specific "policy" dir.
     proc = ctx.run(["regal", "lint", "--format", "json", "."], cwd=tree)
-    return _common.emit(ctx, adapters.regal(proc.stdout), tree, changed, diff_filter=True)
+    fail = _common.check_exit(ctx, tree, "regal", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _common.emit(ctx, adapters.regal(proc.stdout, SEVERITY), tree, changed, diff_filter=True)

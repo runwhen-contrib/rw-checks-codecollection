@@ -16,13 +16,17 @@ from runwhen_capability import Context
 
 from . import _common
 
-SEVERITY = adapters.SQLFLUFF_SEVERITY
+# sqlfluff has no error/warning/info vocabulary of its own -- `warning` is a
+# bool distinguishing advisory formatting rules from ones that would fail a
+# build, so it is the whole map.
+SEVERITY = {True: "warning", False: "note"}
 FILES = ("*.sql",)
 CONFIG = "optional"
 CI_BINARY = "sqlfluff"
 # `.sqlfluff`/pyproject.toml/setup.cfg/tox.ini may set the jinja templater's
 # library_path, which sqlfluff imports Python modules from.
 GUARD = guards.sqlfluff
+EXPECT_EXIT = (0, 1)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -39,13 +43,16 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    skip = _common.gate(tree, sys.modules[__name__])
-    if skip and skip.startswith("unsafe-config:"):
-        return _common.unsafe_config_finding(ctx, tree, skip.split(":", 1)[1])
-    if skip:
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
 
     # "." replaces capture.log's fixture-specific "db" dir; sqlfluff lint
     # recurses into whatever path it is given.
     proc = ctx.run(["sqlfluff", "lint", "--format", "json", "."], cwd=tree)
-    return _common.emit(ctx, adapters.sqlfluff(proc.stdout), tree, changed, diff_filter=True)
+    fail = _common.check_exit(ctx, tree, "sqlfluff", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _common.emit(
+        ctx, adapters.sqlfluff(proc.stdout, SEVERITY), tree, changed, diff_filter=True
+    )

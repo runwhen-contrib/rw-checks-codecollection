@@ -50,6 +50,47 @@ def test_declares_a_severity_map(name):
 
 
 @pytest.mark.parametrize("name", tool_modules())
+def test_severity_map_is_actually_read_by_check(name):
+    """A map nothing reads at run time is decoration, not policy -- exactly
+    the bug this guards against: a module could once declare a SEVERITY map
+    that disagreed with what actually got applied (adapters.<TOOL>_SEVERITY
+    or a hardcoded severity.py policy) and every test still passed. Every
+    `check()` must reference its own module's SEVERITY (adapter-based tools
+    pass it straight through) or a `_POLICY` built from it (the 7 SARIF
+    tools) -- proven statically via the compiled function's own name table,
+    so this holds even for tools whose gate a bare tmp_path never clears."""
+    mod = load(name)
+    referenced = mod.check.__code__.co_names
+    assert "SEVERITY" in referenced or "_POLICY" in referenced, (
+        f"{name}.check() never references SEVERITY or a _POLICY built from it"
+    )
+
+
+@pytest.mark.parametrize("name", tool_modules())
+def test_policy_closes_over_the_declared_severity_map(name):
+    """For the SARIF tools, `_POLICY` must wrap the EXACT SEVERITY object
+    the module declares -- not a copy, not a different tool's map -- or the
+    declared map and the one actually applied can drift apart silently."""
+    mod = load(name)
+    policy = getattr(mod, "_POLICY", None)
+    if policy is None:
+        pytest.skip(f"{name} passes SEVERITY directly to its adapter; no _POLICY built")
+    cell_values = [c.cell_contents for c in (policy.__closure__ or ())]
+    # `severity.constant()` extracts its map's one value up front rather
+    # than keeping the whole (single-entry) dict alive -- there is nothing
+    # left to look up. Accept either shape: the map itself in the closure
+    # (from_level/by_rule_prefix/by_cvss), or the map's own single value
+    # (constant).
+    closes_over_map = any(v is mod.SEVERITY for v in cell_values)
+    closes_over_constant = len(mod.SEVERITY) == 1 and any(
+        v in mod.SEVERITY.values() for v in cell_values
+    )
+    assert closes_over_map or closes_over_constant, (
+        f"{name}._POLICY does not close over {name}.SEVERITY"
+    )
+
+
+@pytest.mark.parametrize("name", tool_modules())
 def test_declares_the_applicability_contract(name):
     mod = load(name)
     assert isinstance(getattr(mod, "FILES", None), tuple), f"{name}.FILES must be a tuple"

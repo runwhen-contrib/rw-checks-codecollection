@@ -18,16 +18,19 @@ from . import _common
 
 # tests/fixtures/tools/ruff.sarif: all 3 result-bearing rules carry SARIF
 # level "error" -- ruff does not use `level` to distinguish severity at all.
-# The rule CODE PREFIX is pyflakes/ruff's own vocabulary instead (F/S real
-# defects, E/W/B style, everything else a nit) -- this map documents that
-# vocabulary for the package-wide test; severity.ruff (called below) is the
-# actual policy.
+# The rule CODE PREFIX is pyflakes/ruff's own vocabulary instead: F/S are
+# real defects, E/W/B are style, everything else (I isort, D, N, UP, C, PL,
+# ...) is a nit -- `_POLICY` (severity.by_rule_prefix) applies this map by
+# prefix, "note" for anything the map doesn't name.
 SEVERITY = {"F": "error", "S": "error", "E": "warning", "W": "warning", "B": "warning", "I": "note"}
 FILES = ("*.py",)
 # CONFIG optional: see module docstring.
 CONFIG = "optional"
 CI_BINARY = "ruff"
 GUARD = None
+EXPECT_EXIT = (0, 1)
+
+_POLICY = severity.by_rule_prefix(SEVERITY)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -43,14 +46,18 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    if _common.gate(tree, sys.modules[__name__]):
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
 
     # ruff resolves its own (possibly nested) config for every file it
     # walks under ".", so one repo-wide invocation is enough -- no need to
     # run once per root the way pylint.py must.
     proc = ctx.run(["ruff", "check", "--output-format=sarif", "."], cwd=tree)
-    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=severity.ruff)
+    fail = _common.check_exit(ctx, tree, "ruff", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY)
     if changed:
         findings = ctx.findings.filter_changed(findings, changed)
     return findings

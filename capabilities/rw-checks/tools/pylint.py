@@ -15,7 +15,14 @@ from runwhen_capability import Context
 
 from . import _common
 
-SEVERITY = adapters.PYLINT_SEVERITY
+SEVERITY = {
+    "fatal": "error",
+    "error": "error",
+    "warning": "warning",
+    "convention": "note",
+    "refactor": "note",
+    "info": "note",
+}
 FILES = ("*.py",)
 # CONFIG required, following CodeRabbit: an opinionated linter run WITHOUT the
 # repository's own config reports findings the repo never asked for. ruff is
@@ -24,6 +31,9 @@ CONFIG = "required"
 CI_BINARY = "pylint"
 # `.pylintrc` may set init-hook, which executes arbitrary Python in our pod.
 GUARD = guards.pylint
+# --exit-zero (below) forces exit 0 regardless of findings -- anything else
+# is a genuine failure to run.
+EXPECT_EXIT = (0,)
 
 
 def detect(tree: Path) -> list[Path]:
@@ -46,11 +56,9 @@ def detect(tree: Path) -> list[Path]:
 
 
 def check(ctx: Context, tree: Path, changed: list[str] | None):
-    skip = _common.gate(tree, sys.modules[__name__])
-    if skip and skip.startswith("unsafe-config:"):
-        return _common.unsafe_config_finding(ctx, tree, skip.split(":", 1)[1])
-    if skip:
-        return []
+    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
+    if stop:
+        return findings
 
     records = []
     for root in detect(tree):
@@ -61,8 +69,11 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
             ["pylint", "--output-format=json", "--exit-zero", "--recursive=y", "."],
             cwd=root,
         )
+        fail = _common.check_exit(ctx, tree, "pylint", proc, sys.modules[__name__])
+        if fail is not None:
+            return fail
         rel = root.relative_to(tree)
-        for rec in adapters.pylint(proc.stdout):
+        for rec in adapters.pylint(proc.stdout, SEVERITY):
             # Paths come back relative to the root pylint ran in, not the repo.
             rec["path"] = (rel / rec["path"]).as_posix() if rel.parts else rec["path"]
             records.append(rec)

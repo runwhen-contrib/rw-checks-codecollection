@@ -2,7 +2,8 @@
 
 Always applicable: a secret does not stop being a secret because the repo has
 no `.gitleaks.toml`, and CI_BINARY is None because we want this even when the
-repo already scans for secrets itself.
+repo already scans for secrets itself. Diff-scoped like every other
+check: see _common.scoped.
 """
 
 from __future__ import annotations
@@ -67,5 +68,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
         )
     except _common.ToolFailed as exc:
         return _common.check_failed_finding(ctx, tree, "gitleaks", exc.exit_code, exc.detail)
-    # Never diff-filtered: see _common.emit.
-    return ctx.sarif.parse(text, root=tree, severity=_POLICY)
+    return _common.scoped(ctx, ctx.sarif.parse(text, root=tree, severity=_POLICY), changed)

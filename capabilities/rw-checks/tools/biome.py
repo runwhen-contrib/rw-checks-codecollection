@@ -51,4 +51,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
             # Paths come back relative to the root biome ran in, not the repo.
             rec["path"] = (rel / rec["path"]).as_posix() if rel.parts else rec["path"]
             records.append(rec)
-    return _common.emit(ctx, records, tree, changed, diff_filter=True)
+    return _common.emit(ctx, records, tree, changed)

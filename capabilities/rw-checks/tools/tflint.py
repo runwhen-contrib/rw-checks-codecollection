@@ -1,6 +1,6 @@
 """tflint -- Terraform linting.
 
-Lint tool (like ruff), not a security/vuln scan -- diff-filtered.
+Diff-scoped like every other check: see _common.scoped.
 
 tasks.py's original argv hardcoded `--chdir infra`, tests/fixtures/
 sample-repo's own layout, not a real target repo's -- tflint has no
@@ -78,6 +78,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
             continue
         findings.extend(ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY))
 
-    if changed:
-        findings = ctx.findings.filter_changed(findings, changed)
-    return findings
+    return _common.scoped(ctx, findings, changed)

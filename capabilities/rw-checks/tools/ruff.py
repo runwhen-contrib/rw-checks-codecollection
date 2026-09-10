@@ -57,7 +57,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     fail = _common.check_exit(ctx, tree, "ruff", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    findings = ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY)
-    if changed:
-        findings = ctx.findings.filter_changed(findings, changed)
-    return findings
+    return _common.scoped(ctx, ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY), changed)

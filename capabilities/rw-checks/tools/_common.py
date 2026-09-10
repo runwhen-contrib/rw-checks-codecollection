@@ -21,6 +21,10 @@ A tool module declares:
     CONFIG      "required" (skip when unconfigured) | "optional" (use defaults)
     CI_BINARY   skip when the repo's own CI already runs this; None to never skip
     GUARD       callable(tree) -> reason|None, for configs that can execute code
+    SUPERSEDED_BY
+                module name, OPTIONAL -- skip this tool when the named tool
+                would run here and covers the same ground (ruff reimplements
+                flake8 and emits its rule IDs). See supersession_skip().
     EXPECT_EXIT tuple of exit codes, REQUIRED -- codes that mean "ran
                 fine", including ones that mean "ran fine and found things"
                 (pylint's --exit-zero forces 0; tflint reports findings via
@@ -42,6 +46,7 @@ tool configured" means the two cannot drift apart.
 from __future__ import annotations
 
 import configparser
+import importlib
 import io
 import re
 import tomllib
@@ -196,12 +201,22 @@ class Skip:
     unsafe: bool = False
 
 
-def gate(tree: Path, module: Any) -> Skip | None:
+def gate(tree: Path, module: Any, *, follow_supersession: bool = True) -> Skip | None:
     """Why this tool should not run here, or None to run it.
 
-    Order matters: the security guard is checked FIRST, so a config that can
-    execute code is refused even when every other gate would have skipped the
-    tool anyway.
+    Order matters twice over. The security guard is checked FIRST, so a
+    config that can execute code is refused even when every other gate
+    would have skipped the tool anyway. Supersession is checked LAST, so a
+    tool that would not have run regardless reports the reason that
+    actually applies ("not configured in this repository") rather than a
+    misleading "superseded by".
+
+    `follow_supersession=False` answers the narrower question "would this
+    tool run here on its own merits", which is what the supersession check
+    itself asks about the superseding tool. It is also what makes this
+    non-recursive: a superseder's own SUPERSEDED_BY is never followed, so
+    a cycle cannot hang the gate (test_tool_modules asserts acyclicity
+    anyway, because a cycle would still be a bug).
     """
     guard = getattr(module, "GUARD", None)
     if guard is not None:
@@ -221,7 +236,39 @@ def gate(tree: Path, module: Any) -> Skip | None:
         ci = ci_already_runs(tree, binary)
         if ci:
             return Skip(ci)
+
+    if follow_supersession:
+        superseded = supersession_skip(tree, module)
+        if superseded:
+            return superseded
     return None
+
+
+def supersession_skip(tree: Path, module: Any) -> Skip | None:
+    """Skip a tool whose work another tool here already does.
+
+    Several of these tools overlap outright: ruff reimplements flake8 and
+    emits flake8's own rule IDs, trufflehog without verification (which we
+    disable) finds what gitleaks finds. Running both reports one defect
+    twice under two vocabularies, which reads to an author as two problems.
+
+    A module names its superseder in SUPERSEDED_BY, and it applies only
+    when that tool would actually run against THIS tree -- dropping flake8
+    in favour of a ruff that is itself skipped would silently check
+    nothing.
+
+    NOTE this is a capability-level decision a repository cannot currently
+    reverse: `static_checks_denied` is a denylist, so it can subtract a
+    check but never restore one the capability skipped. The skip reason is
+    therefore written to be self-explanatory in the check-run summary.
+    """
+    name = getattr(module, "SUPERSEDED_BY", None)
+    if not name:
+        return None
+    other = importlib.import_module(f"{__package__}.{name}")
+    if gate(tree, other, follow_supersession=False) is not None:
+        return None
+    return Skip(f"superseded by {name}, which covers the same checks and runs here")
 
 
 def gated(ctx, tree: Path, module: Any) -> tuple[list, bool]:
@@ -250,18 +297,41 @@ def gated(ctx, tree: Path, module: Any) -> tuple[list, bool]:
 WHOLE_REPO_PATH = "<repository>"
 
 
-def emit(ctx, records, tree: Path, changed: list[str] | None, *, diff_filter: bool):
-    """records -> Findings, optionally reduced to the pull request's diff.
+def scoped(ctx, findings, changed: list[str] | None):
+    """Reduce findings to the files this pull request touched.
 
-    `diff_filter` is a per-tool decision, never a default: lint findings are
-    about the change, security findings are about the repository. A secret
-    committed three months ago is still live whether or not this PR touched
-    that file.
+    EVERY check is diff-scoped, security scanners included. This capability
+    runs as part of a code review, and a review asks "does this change
+    introduce a problem?", not "what is wrong with this repository?". An
+    exhaustive scan is a different product on a different cadence: it
+    belongs on a schedule against the default branch, where its backlog can
+    be worked down deliberately instead of landing on whoever happens to
+    open the next unrelated pull request.
+
+    `changed` is the PR's cumulative diff against its base, so a secret
+    added in the first commit of a twelve-commit branch is still in scope.
+    What drops out is only what was already on the base branch.
+
+    A falsy `changed` means there is no diff to scope to -- a non-PR
+    invocation -- and the full result set is returned UNFILTERED, not
+    empty. `filter_changed` allows nothing through when `changed` is empty,
+    so this guard is the only thing keeping a whole-repo run from silently
+    reporting clean.
+
+    Scoping is deliberately not applied to the synthetic findings raised by
+    `gate` and `check_exit`: a refused config or a tool that failed to run
+    is a fact about the CHECK, not about a file, carries WHOLE_REPO_PATH,
+    and would be dropped by any path-based filter. Those return early,
+    before this is reached.
     """
-    findings = ctx.findings.from_records(records, root=tree)
-    if diff_filter and changed:
-        findings = ctx.findings.filter_changed(findings, changed)
-    return findings
+    if not changed:
+        return findings
+    return ctx.findings.filter_changed(findings, changed)
+
+
+def emit(ctx, records, tree: Path, changed: list[str] | None):
+    """Adapter records -> Findings, scoped to the diff. See `scoped`."""
+    return scoped(ctx, ctx.findings.from_records(records, root=tree), changed)
 
 
 def unsafe_config_finding(ctx, tree: Path, reason: str):

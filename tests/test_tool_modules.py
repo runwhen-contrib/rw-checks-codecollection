@@ -172,9 +172,8 @@ def test_tool_modules_manifest_and_registry_all_agree():
 
 
 def test_every_task_declares_both_inputs():
-    """Whether a tool's findings are reduced to the diff is the MODULE's
-    decision (`_common.emit`'s `diff_filter`). The manifest passes both
-    inputs uniformly — expressing the policy in both places lets them drift.
+    """Every task takes both `tree` and `changed`: findings are scoped to
+    the diff (`_common.scoped`), so every module needs the diff to scope to.
     """
     import yaml
 
@@ -183,3 +182,79 @@ def test_every_task_declares_both_inputs():
         assert sorted(entry.get("inputs") or {}) == ["changed", "tree"], (
             f"{entry['name']} does not declare both tree and changed"
         )
+
+
+def test_every_module_scopes_its_findings_to_the_diff():
+    """Every check reports on the CHANGE, security scanners included.
+
+    A tool that returns `ctx.sarif.parse(...)` or `ctx.findings.from_records(...)`
+    straight out of `check()` reports the whole repository, which on a
+    three-line pull request buries the review under a backlog the author did
+    not create. `_common.scoped` (and `_common.emit`, which wraps it) is the
+    single place that policy lives; this asserts nothing bypasses it.
+
+    Source-level on purpose: the behavioural version needs the real tool
+    binaries, which only exist inside the built image.
+    """
+    import re
+
+    offenders = {}
+    for name in tool_modules():
+        src = (TOOLS / f"{name}.py").read_text()
+        body = src[src.index("def check(") :]
+        returns = [
+            ln.strip()
+            for ln in body.splitlines()
+            if re.match(r"\s*return (ctx\.sarif\.parse|ctx\.findings\.from_records)", ln)
+        ]
+        if returns:
+            offenders[name] = returns
+    assert not offenders, (
+        "these modules return unscoped findings instead of routing through "
+        f"_common.scoped/_common.emit: {offenders}"
+    )
+
+
+def test_supersession_targets_exist_and_do_not_cycle():
+    """SUPERSEDED_BY must name a real module, and the graph must be acyclic.
+
+    `gate()` does not follow a superseder's own SUPERSEDED_BY, so a cycle
+    cannot hang it -- but a cycle would still mean two tools each waiting
+    for the other, and whichever ran would be an accident of order.
+    """
+    edges = {}
+    for name in tool_modules():
+        target = getattr(load(name), "SUPERSEDED_BY", None)
+        if target:
+            assert target in tool_modules(), f"{name}.SUPERSEDED_BY names unknown module {target!r}"
+            assert target != name, f"{name} supersedes itself"
+            edges[name] = target
+    for start in edges:
+        seen, node = [start], start
+        while node in edges:
+            node = edges[node]
+            assert node not in seen, f"supersession cycle: {' -> '.join(seen + [node])}"
+            seen.append(node)
+
+
+def test_superseded_tool_runs_when_its_superseder_does_not_apply():
+    """Dropping flake8 in favour of a ruff that is itself skipped would
+    silently check nothing -- the failure mode supersession must not have.
+    """
+    import tools._common as _common
+
+    flake8, ruff = load("flake8"), load("ruff")
+    assert flake8.SUPERSEDED_BY == "ruff"
+
+    # ruff applies (repo has .py): flake8 is superseded.
+    tree = Path(__file__).parent / "fixtures" / "sample-repo"
+    skip = _common.supersession_skip(tree, flake8)
+    assert skip is not None and "superseded by ruff" in skip.reason
+
+    # A tree with no Python at all: ruff does not apply, so nothing is
+    # superseded and flake8's own gates decide.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as empty:
+        assert _common.gate(Path(empty), ruff) is not None, "ruff should not apply to an empty tree"
+        assert _common.supersession_skip(Path(empty), flake8) is None

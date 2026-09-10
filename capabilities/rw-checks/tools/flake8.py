@@ -28,6 +28,9 @@ FILES = ("*.py",)
 CONFIG = "required"
 CI_BINARY = "flake8"
 GUARD = None
+# ruff reimplements pyflakes/pycodestyle and emits flake8's OWN rule ids --
+# measured on tests/fixtures: F401/F841 reported at identical lines by both.
+SUPERSEDED_BY = "ruff"
 EXPECT_EXIT = (0, 1)
 
 
@@ -51,6 +54,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     fail = _common.check_exit(ctx, tree, "flake8", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    return _common.emit(
-        ctx, adapters.flake8(proc.stdout, SEVERITY), tree, changed, diff_filter=True
-    )
+    return _common.emit(ctx, adapters.flake8(proc.stdout, SEVERITY), tree, changed)

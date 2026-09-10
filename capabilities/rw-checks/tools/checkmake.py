@@ -53,6 +53,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     fail = _common.check_exit(ctx, tree, "checkmake", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    return _common.emit(
-        ctx, adapters.checkmake(proc.stdout, SEVERITY), tree, changed, diff_filter=True
-    )
+    return _common.emit(ctx, adapters.checkmake(proc.stdout, SEVERITY), tree, changed)

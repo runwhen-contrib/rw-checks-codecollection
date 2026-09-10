@@ -1,7 +1,6 @@
 """zizmor -- GitHub Actions workflow security scanning.
 
-Not diff-filtered: a vulnerable workflow doesn't stop being vulnerable
-because this diff didn't touch it.
+Diff-scoped like every other check: see _common.scoped.
 """
 
 from __future__ import annotations
@@ -44,8 +43,6 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     if stop:
         return findings
 
-    # GitHub Actions security scan: not diff-filtered, same reasoning as
-    # gitleaks/trivy/osv-scanner/checkov above.
     proc = ctx.run(
         ["zizmor", "--format", "sarif", "--no-progress", ".github/workflows"],
         cwd=tree,
@@ -53,5 +50,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     fail = _common.check_exit(ctx, tree, "zizmor", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    # Never diff-filtered: see _common.emit.
-    return ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY)
+    return _common.scoped(ctx, ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY), changed)

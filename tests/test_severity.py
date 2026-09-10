@@ -164,8 +164,11 @@ def test_osv_scanner_is_always_warning():
 
 
 def test_checkov_downgrades_sarif_error_to_warning():
+    # 35, not 39: checkov runs with --skip-framework dockerfile, so its four
+    # Dockerfile checks are gone -- hadolint owns Dockerfiles. .tf/.yaml
+    # coverage is unchanged. See tools/checkov.py.
     results = _results("checkov.sarif")
-    assert len(results) == 39
+    assert len(results) == 35
     assert all(level == "error" for _, level, _ in results), (
         "checkov's SARIF marks everything error"
     )

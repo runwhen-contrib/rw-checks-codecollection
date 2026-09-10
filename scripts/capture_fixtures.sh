@@ -58,9 +58,13 @@ cap() {
 echo "--- SARIF-native ---"
 cap ruff        sarif ruff check --output-format=sarif .
 cap gitleaks    sarif sh -c 'gitleaks dir . --report-format sarif --report-path /tmp/gl.sarif --no-banner --exit-code 0 >/dev/null 2>&1; cat /tmp/gl.sarif'
-cap trivy       sarif trivy fs --format sarif --quiet --scanners vuln,misconfig,secret .
+# Must mirror tools/trivy.py exactly: it is narrowed to --scanners vuln so
+# hadolint/checkov/gitleaks own their own families. A fixture captured with
+# the wider argv would be evidence for code paths that no longer run.
+cap trivy       sarif trivy fs --format sarif --quiet --scanners vuln .
 cap osv-scanner sarif osv-scanner --format sarif -r .
-cap checkov     sarif sh -c 'd=$(mktemp -d); checkov -d . --output sarif --output-file-path "$d" >/dev/null 2>&1; cat "$d/results_sarif.sarif"'
+# Must mirror tools/checkov.py exactly, --skip-framework dockerfile included.
+cap checkov     sarif sh -c 'd=$(mktemp -d); checkov -d . --skip-framework dockerfile --output sarif --output-file-path "$d" >/dev/null 2>&1; cat "$d/results_sarif.sarif"'
 cap zizmor      sarif zizmor --format sarif --no-progress .github/workflows
 cap tflint      sarif tflint --format sarif --chdir infra
 

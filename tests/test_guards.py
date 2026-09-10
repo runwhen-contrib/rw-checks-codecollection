@@ -248,7 +248,9 @@ def test_guarded_task_skips_the_tool_and_reports_one_finding(tmp_path, monkeypat
     ctx = _NoRunContext(capability="rw-checks", operation=task_name, workdir=tmp_path)
     result = getattr(tasks, task_name)(ctx, tree=tmp_path, changed=None)
 
-    findings = result["findings"]
+    # `rw.findings.v1` is the {findings, truncated} envelope, not a bare list --
+    # papi validates against that schema and rejects a bare array.
+    findings = result["findings"].findings
     assert len(findings) == 1
     finding = findings[0]
     assert finding.rule == "rw-checks/unsafe-config"

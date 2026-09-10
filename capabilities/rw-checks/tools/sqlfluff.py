@@ -1,8 +1,26 @@
 """sqlfluff -- SQL lint.
 
-CONFIG is optional (sqlfluff's default dialect/rules are broadly agreeable,
-unlike pylint's/flake8's), but its own config is an arbitrary-code-execution
-vector through the jinja templater's `library_path` -- see guards.py.
+CONFIG is REQUIRED, unlike most tools here. sqlfluff has no default dialect
+and refuses to lint without one:
+
+    User Error: No dialect was specified. You must configure a dialect or
+    specify one on the command line using --dialect
+
+That is exit 2, which is not in EXPECT_EXIT, so every repository holding a
+`.sql` file but no sqlfluff config produced a `check-failed` finding on every
+review -- noise attributable to us, not to the code under review. This file
+previously claimed "sqlfluff's default dialect/rules are broadly agreeable";
+there is no default dialect, so that premise was simply wrong.
+
+Gating on config instead of guessing a dialect is deliberate. `--dialect ansi`
+would let every review run, but ansi silently mis-parses the dialect-specific
+SQL most repositories actually write, so the findings would be confidently
+wrong rather than absent -- and a wrong finding on someone's pull request
+costs more than a skipped check. A repository that wants SQL linting says
+which dialect it speaks, in any of the three places `detect` already reads.
+
+Its own config is also an arbitrary-code-execution vector through the jinja
+templater's `library_path` -- see guards.py.
 """
 
 from __future__ import annotations
@@ -21,7 +39,7 @@ from . import _common
 # build, so it is the whole map.
 SEVERITY = {True: "warning", False: "note"}
 FILES = ("*.sql",)
-CONFIG = "optional"
+CONFIG = "required"
 CI_BINARY = "sqlfluff"
 # `.sqlfluff`/pyproject.toml/setup.cfg/tox.ini may set the jinja templater's
 # library_path, which sqlfluff imports Python modules from.

@@ -2,9 +2,11 @@
 
 Always applicable, like gitleaks: a secret does not stop being a secret
 because the repo has no config for this tool, and CI_BINARY is None because
-secret scanning is wanted regardless of what the repo's own CI does. NOT
-diff-filtered: a secret committed before this diff is still a leaked secret
-today.
+secret scanning is wanted regardless of what the repo's own CI does.
+Diff-scoped like every other check (see _common.scoped): a secret already
+on the base branch belongs to a scheduled full scan, not to whoever opened
+the next unrelated pull request. `changed` is the PR's cumulative diff, so
+a secret added anywhere in the branch is still caught.
 """
 
 from __future__ import annotations
@@ -65,8 +67,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     fail = _common.check_exit(ctx, tree, "trufflehog", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    # Secret scan, not a lint -- not diff-filtered, same reasoning as
-    # gitleaks/trivy/osv-scanner/checkov/zizmor.
-    return _common.emit(
-        ctx, adapters.trufflehog(proc.stdout, SEVERITY), tree, None, diff_filter=False
-    )
+    return _common.emit(ctx, adapters.trufflehog(proc.stdout, SEVERITY), tree, changed)

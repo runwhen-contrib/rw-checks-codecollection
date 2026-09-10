@@ -4,8 +4,8 @@ SECURITY: checkov's own config can point it at an external directory or git
 repo of check PLUGINS it imports and runs (see guards.py's module
 docstring) -- GUARD refuses to invoke checkov at all rather than run it
 against an untrusted repo's config and hope external-checks-dir/
-external-checks-git are absent. Not diff-filtered: an IaC misconfiguration
-doesn't stop being one because this diff didn't touch the affected file.
+external-checks-git are absent. Diff-scoped like every other check: see
+_common.scoped for why a code review reports on the change, not the repo.
 """
 
 from __future__ import annotations
@@ -67,5 +67,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
         )
     except _common.ToolFailed as exc:
         return _common.check_failed_finding(ctx, tree, "checkov", exc.exit_code, exc.detail)
-    # Never diff-filtered: see _common.emit.
-    return ctx.sarif.parse(text, root=tree, severity=_POLICY)
+    return _common.scoped(ctx, ctx.sarif.parse(text, root=tree, severity=_POLICY), changed)

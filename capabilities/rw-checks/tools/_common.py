@@ -250,18 +250,41 @@ def gated(ctx, tree: Path, module: Any) -> tuple[list, bool]:
 WHOLE_REPO_PATH = "<repository>"
 
 
-def emit(ctx, records, tree: Path, changed: list[str] | None, *, diff_filter: bool):
-    """records -> Findings, optionally reduced to the pull request's diff.
+def scoped(ctx, findings, changed: list[str] | None):
+    """Reduce findings to the files this pull request touched.
 
-    `diff_filter` is a per-tool decision, never a default: lint findings are
-    about the change, security findings are about the repository. A secret
-    committed three months ago is still live whether or not this PR touched
-    that file.
+    EVERY check is diff-scoped, security scanners included. This capability
+    runs as part of a code review, and a review asks "does this change
+    introduce a problem?", not "what is wrong with this repository?". An
+    exhaustive scan is a different product on a different cadence: it
+    belongs on a schedule against the default branch, where its backlog can
+    be worked down deliberately instead of landing on whoever happens to
+    open the next unrelated pull request.
+
+    `changed` is the PR's cumulative diff against its base, so a secret
+    added in the first commit of a twelve-commit branch is still in scope.
+    What drops out is only what was already on the base branch.
+
+    A falsy `changed` means there is no diff to scope to -- a non-PR
+    invocation -- and the full result set is returned UNFILTERED, not
+    empty. `filter_changed` allows nothing through when `changed` is empty,
+    so this guard is the only thing keeping a whole-repo run from silently
+    reporting clean.
+
+    Scoping is deliberately not applied to the synthetic findings raised by
+    `gate` and `check_exit`: a refused config or a tool that failed to run
+    is a fact about the CHECK, not about a file, carries WHOLE_REPO_PATH,
+    and would be dropped by any path-based filter. Those return early,
+    before this is reached.
     """
-    findings = ctx.findings.from_records(records, root=tree)
-    if diff_filter and changed:
-        findings = ctx.findings.filter_changed(findings, changed)
-    return findings
+    if not changed:
+        return findings
+    return ctx.findings.filter_changed(findings, changed)
+
+
+def emit(ctx, records, tree: Path, changed: list[str] | None):
+    """Adapter records -> Findings, scoped to the diff. See `scoped`."""
+    return scoped(ctx, ctx.findings.from_records(records, root=tree), changed)
 
 
 def unsafe_config_finding(ctx, tree: Path, reason: str):

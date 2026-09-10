@@ -1,8 +1,9 @@
 """trivy -- vulnerability / misconfig / secret scanning across IaC and
 container-adjacent files.
 
-Not diff-filtered: an existing vulnerability doesn't stop being one just
-because this diff didn't touch the affected file.
+Diff-scoped like every other check: see _common.scoped. NOTE trivy's
+scanners overlap several specialists here -- hadolint on Dockerfiles,
+checkov on IaC, gitleaks/trufflehog on secrets, osv-scanner on lockfiles.
 """
 
 from __future__ import annotations
@@ -42,9 +43,6 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     if stop:
         return findings
 
-    # Vulnerability/misconfig/secret scan: not diff-filtered, same reasoning
-    # as gitleaks -- an existing vulnerability doesn't stop being one just
-    # because this diff didn't touch the affected file.
     proc = ctx.run(
         ["trivy", "fs", "--format", "sarif", "--quiet", "--scanners", "vuln,misconfig,secret", "."],
         cwd=tree,
@@ -52,5 +50,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     fail = _common.check_exit(ctx, tree, "trivy", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    # Never diff-filtered: see _common.emit.
-    return ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY)
+    return _common.scoped(ctx, ctx.sarif.parse(proc.stdout, root=tree, severity=_POLICY), changed)

@@ -172,9 +172,8 @@ def test_tool_modules_manifest_and_registry_all_agree():
 
 
 def test_every_task_declares_both_inputs():
-    """Whether a tool's findings are reduced to the diff is the MODULE's
-    decision (`_common.emit`'s `diff_filter`). The manifest passes both
-    inputs uniformly — expressing the policy in both places lets them drift.
+    """Every task takes both `tree` and `changed`: findings are scoped to
+    the diff (`_common.scoped`), so every module needs the diff to scope to.
     """
     import yaml
 
@@ -183,3 +182,34 @@ def test_every_task_declares_both_inputs():
         assert sorted(entry.get("inputs") or {}) == ["changed", "tree"], (
             f"{entry['name']} does not declare both tree and changed"
         )
+
+
+def test_every_module_scopes_its_findings_to_the_diff():
+    """Every check reports on the CHANGE, security scanners included.
+
+    A tool that returns `ctx.sarif.parse(...)` or `ctx.findings.from_records(...)`
+    straight out of `check()` reports the whole repository, which on a
+    three-line pull request buries the review under a backlog the author did
+    not create. `_common.scoped` (and `_common.emit`, which wraps it) is the
+    single place that policy lives; this asserts nothing bypasses it.
+
+    Source-level on purpose: the behavioural version needs the real tool
+    binaries, which only exist inside the built image.
+    """
+    import re
+
+    offenders = {}
+    for name in tool_modules():
+        src = (TOOLS / f"{name}.py").read_text()
+        body = src[src.index("def check(") :]
+        returns = [
+            ln.strip()
+            for ln in body.splitlines()
+            if re.match(r"\s*return (ctx\.sarif\.parse|ctx\.findings\.from_records)", ln)
+        ]
+        if returns:
+            offenders[name] = returns
+    assert not offenders, (
+        "these modules return unscoped findings instead of routing through "
+        f"_common.scoped/_common.emit: {offenders}"
+    )

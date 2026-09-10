@@ -37,6 +37,4 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     fail = _common.check_exit(ctx, tree, "yamllint", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    return _common.emit(
-        ctx, adapters.yamllint(proc.stdout, SEVERITY), tree, changed, diff_filter=True
-    )
+    return _common.emit(ctx, adapters.yamllint(proc.stdout, SEVERITY), tree, changed)

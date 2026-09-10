@@ -37,6 +37,10 @@ FILES = (
 CONFIG = "optional"
 CI_BINARY = None
 GUARD = None
+# Both scan the same lockfiles against overlapping advisory data, but trivy's
+# finding names the FIXED version ("Installed 2.19.0 ... Fixed Version:
+# 2.20.0"), which is the first thing a reviewer needs; osv-scanner's does not.
+SUPERSEDED_BY = "trivy"
 # osv-scanner exits 1 when it finds vulnerabilities (capture.log: exit 1,
 # 197930B of valid SARIF) -- not a tool failure.
 EXPECT_EXIT = (0, 1)

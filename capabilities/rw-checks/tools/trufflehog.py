@@ -28,6 +28,11 @@ FILES = ()
 CONFIG = "optional"
 CI_BINARY = None
 GUARD = None
+# trufflehog's differentiator over gitleaks is credential VERIFICATION, and
+# this check must never verify (it would call the provider with the secret it
+# just found -- see --no-verification below). Without it the two find the same
+# things: both flagged the identical PAT at src/config.py:8 on the fixture.
+SUPERSEDED_BY = "gitleaks"
 # No --fail flag below, so trufflehog's "183 = verified secret found"
 # convention never fires; --no-verification also means nothing gets marked
 # verified in the first place. Exit stays 0 regardless of findings.

@@ -25,7 +25,10 @@ from . import _common
 # discriminate on. The single value below is the whole (empty) vocabulary --
 # `_POLICY` (severity.constant) closes over it uniformly.
 SEVERITY = {"": "warning"}
-FILES = ("*.tf", "Dockerfile*", "*.yaml", "*.yml")
+# Dockerfile* deliberately absent: hadolint owns Dockerfiles (see the
+# --skip-framework below, which is what actually enforces it -- checkov
+# scans `-d .` wholesale, so FILES alone only gates whether it runs).
+FILES = ("*.tf", "*.yaml", "*.yml")
 CONFIG = "optional"
 CI_BINARY = "checkov"
 # checkov's own config can point it at external check plugins it imports and
@@ -60,7 +63,25 @@ def check(ctx: Context, tree: Path, changed: list[str] | None):
     try:
         text = _common.run_to_file(
             ctx,
-            ["checkov", "-d", ".", "--output", "sarif", "--output-file-path", str(out_dir)],
+            # --skip-framework dockerfile: hadolint is the Dockerfile owner
+            # here. Measured on tests/fixtures, checkov's four Dockerfile
+            # checks were three duplicates of hadolint (CKV_DOCKER_4/DL3020,
+            # CKV_DOCKER_7/DL3007, CKV_DOCKER_8/DL3002) plus one it alone
+            # reports, CKV_DOCKER_2 (missing HEALTHCHECK) -- a real if small
+            # loss, accepted to stop reporting one defect under three names.
+            # Verified against the built image: Dockerfile results drop to
+            # zero, infra/*.tf and *.yaml coverage is unchanged.
+            [
+                "checkov",
+                "-d",
+                ".",
+                "--skip-framework",
+                "dockerfile",
+                "--output",
+                "sarif",
+                "--output-file-path",
+                str(out_dir),
+            ],
             tree,
             out_dir / "results_sarif.sarif",
             sys.modules[__name__],

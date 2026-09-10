@@ -28,6 +28,9 @@ FILES = ("*.py",)
 CONFIG = "required"
 CI_BINARY = "flake8"
 GUARD = None
+# ruff reimplements pyflakes/pycodestyle and emits flake8's OWN rule ids --
+# measured on tests/fixtures: F401/F841 reported at identical lines by both.
+SUPERSEDED_BY = "ruff"
 EXPECT_EXIT = (0, 1)
 
 

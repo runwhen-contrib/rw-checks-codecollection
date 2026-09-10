@@ -213,3 +213,48 @@ def test_every_module_scopes_its_findings_to_the_diff():
         "these modules return unscoped findings instead of routing through "
         f"_common.scoped/_common.emit: {offenders}"
     )
+
+
+def test_supersession_targets_exist_and_do_not_cycle():
+    """SUPERSEDED_BY must name a real module, and the graph must be acyclic.
+
+    `gate()` does not follow a superseder's own SUPERSEDED_BY, so a cycle
+    cannot hang it -- but a cycle would still mean two tools each waiting
+    for the other, and whichever ran would be an accident of order.
+    """
+    edges = {}
+    for name in tool_modules():
+        target = getattr(load(name), "SUPERSEDED_BY", None)
+        if target:
+            assert target in tool_modules(), f"{name}.SUPERSEDED_BY names unknown module {target!r}"
+            assert target != name, f"{name} supersedes itself"
+            edges[name] = target
+    for start in edges:
+        seen, node = [start], start
+        while node in edges:
+            node = edges[node]
+            assert node not in seen, f"supersession cycle: {' -> '.join(seen + [node])}"
+            seen.append(node)
+
+
+def test_superseded_tool_runs_when_its_superseder_does_not_apply():
+    """Dropping flake8 in favour of a ruff that is itself skipped would
+    silently check nothing -- the failure mode supersession must not have.
+    """
+    import tools._common as _common
+
+    flake8, ruff = load("flake8"), load("ruff")
+    assert flake8.SUPERSEDED_BY == "ruff"
+
+    # ruff applies (repo has .py): flake8 is superseded.
+    tree = Path(__file__).parent / "fixtures" / "sample-repo"
+    skip = _common.supersession_skip(tree, flake8)
+    assert skip is not None and "superseded by ruff" in skip.reason
+
+    # A tree with no Python at all: ruff does not apply, so nothing is
+    # superseded and flake8's own gates decide.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as empty:
+        assert _common.gate(Path(empty), ruff) is not None, "ruff should not apply to an empty tree"
+        assert _common.supersession_skip(Path(empty), flake8) is None

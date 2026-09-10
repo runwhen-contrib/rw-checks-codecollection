@@ -11,9 +11,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import severity
 from runwhen_capability import Context
+
+from . import _common
 
 # tests/fixtures/tools/ruff.sarif: all 3 result-bearing rules carry SARIF
 # level "error" -- ruff does not use `level` to distinguish severity at all.

@@ -1,59 +1,49 @@
 """rw-checks task registrations.
 
-Thin by design. Everything about a tool -- its argv, severity map, config
-discovery, applicability and diff-filtering -- lives in its own module under
-`tools/`. This file only names the tools and wires each one to the SDK's task
-registry.
+One `@task` per tool, each a real named function you can jump to and grep for.
+The body is one line because everything else about a tool -- its argv, severity
+map, config discovery, applicability and diff-filter decision -- lives in its
+own module under `tools/`, beside the `detect()` the discovery task will call.
 
-The 22 registrations are generated from `_TOOLS` rather than hand-written,
-because the bodies were identical 22 times over and that duplication is what
-this split exists to remove. `_TOOLS` is still the explicit, greppable
-inventory: a test asserts it matches the manifest's `tasks[]` in both
-directions, and the SDK registers by `func.__name__`, so a name here must
-equal a name there or dispatch silently 404s.
+An earlier version generated these in a loop with `importlib.import_module`
+and `globals()[name] = ...`. Shorter, and worse: `tasks.ruff` existed at run
+time but nowhere in the source, so nothing could jump to it and nothing could
+grep it. The duplication the tools/ split removed was the three-line
+run/parse/filter TAIL repeated 22 times -- a list of what this capability
+offers is worth writing out.
+
+No sys.path juggling here: `load_capability` puts the capability directory and
+`tools/` on the path before this file is exec'd, because a tasks.py loaded by
+path belongs to no package.
 """
 
 from __future__ import annotations
 
-import importlib
-import sys
 from pathlib import Path
 
-# tasks.py is loaded by importlib.util.spec_from_file_location under a
-# generated module name (see sdk/runwhen_capability/loader.py), so it is never
-# part of a package and a plain `import tools.ruff` has nothing to resolve
-# against. Put this directory and tools/ on the path first.
-sys.path.insert(0, str(Path(__file__).parent))
-sys.path.insert(0, str(Path(__file__).parent / "tools"))
-
-from runwhen_capability import Context, setup, task  # noqa: E402
-
-#: Every tool this capability ships, one module each under tools/.
-#: MUST match the manifest's tasks[] exactly -- see tests/test_manifest_tasks.py.
-_TOOLS = (
-    "actionlint",
-    "ast_grep",
-    "biome",
-    "buf",
-    "checkmake",
-    "checkov",
-    "dotenv_linter",
-    "flake8",
-    "gitleaks",
-    "hadolint",
-    "osv_scanner",
-    "pylint",
-    "regal",
-    "ruff",
-    "shellcheck",
-    "sqlfluff",
-    "tflint",
-    "trivy",
-    "trufflehog",
-    "vale",
-    "yamllint",
-    "zizmor",
-)
+import tools.actionlint
+import tools.ast_grep
+import tools.biome
+import tools.buf
+import tools.checkmake
+import tools.checkov
+import tools.dotenv_linter
+import tools.flake8
+import tools.gitleaks
+import tools.hadolint
+import tools.osv_scanner
+import tools.pylint
+import tools.regal
+import tools.ruff
+import tools.shellcheck
+import tools.sqlfluff
+import tools.tflint
+import tools.trivy
+import tools.trufflehog
+import tools.vale
+import tools.yamllint
+import tools.zizmor
+from runwhen_capability import Context, setup, task
 
 
 @setup(outputs=["tree", "changed"])
@@ -63,30 +53,133 @@ def checkout(ctx: Context, repo_url: str, sha: str, base_sha: str | None = None)
     return {"tree": tree, "changed": changed}
 
 
-def _register(name: str) -> None:
-    """Register one tool module as a task of the same name.
-
-    `changed` defaults to None so a task whose manifest entry omits it still
-    binds -- but every entry declares it now: whether a tool's findings are
-    reduced to the diff is the MODULE's decision (`_common.emit`'s
-    `diff_filter`), not the manifest's. Declaring it in both places is two
-    expressions of one policy, and they drift.
-    """
-    module = importlib.import_module(name)
-
-    def run(ctx: Context, tree: Path, changed: list[str] | None = None):
-        return {"findings": module.check(ctx, tree, changed)}
-
-    run.__name__ = name
-    run.__qualname__ = name
-    run.__doc__ = (module.__doc__ or "").strip().splitlines()[0] if module.__doc__ else name
-    task(outputs={"findings": "rw.findings.v1"})(run)
-    # Also bind as a module attribute, so `tasks.pylint(...)` works exactly as
-    # a hand-written function would. The decorator alone only populates the
-    # registry; tests and anything else importing this module reach the tasks
-    # by name.
-    globals()[name] = run
+@task(outputs={"findings": "rw.findings.v1"})
+def actionlint(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """actionlint -- GitHub Actions workflow lint."""
+    return {"findings": tools.actionlint.check(ctx, tree, changed)}
 
 
-for _name in _TOOLS:
-    _register(_name)
+@task(outputs={"findings": "rw.findings.v1"})
+def ast_grep(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """ast-grep -- structural code search/lint against the repo's OWN rules."""
+    return {"findings": tools.ast_grep.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def biome(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """biome -- JS/TS/JSON/CSS lint."""
+    return {"findings": tools.biome.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def buf(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """buf -- protobuf lint."""
+    return {"findings": tools.buf.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def checkmake(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """checkmake -- Makefile lint."""
+    return {"findings": tools.checkmake.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def checkov(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """checkov -- IaC misconfiguration scanning."""
+    return {"findings": tools.checkov.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def dotenv_linter(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """dotenv-linter -- .env file lint."""
+    return {"findings": tools.dotenv_linter.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def flake8(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """flake8 -- fast Python lint, ahead of pylint's deeper (slower) pass."""
+    return {"findings": tools.flake8.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def gitleaks(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """gitleaks -- committed-credential scanning."""
+    return {"findings": tools.gitleaks.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def hadolint(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """hadolint -- Dockerfile defects."""
+    return {"findings": tools.hadolint.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def osv_scanner(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """osv-scanner -- dependency (lockfile) vulnerability scanning."""
+    return {"findings": tools.osv_scanner.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def pylint(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """pylint -- deeper Python analysis than ruff, and slower."""
+    return {"findings": tools.pylint.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def regal(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """regal -- Rego (OPA policy) lint."""
+    return {"findings": tools.regal.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def ruff(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """ruff -- fast Python linting."""
+    return {"findings": tools.ruff.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def shellcheck(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """ShellCheck -- shell script defects."""
+    return {"findings": tools.shellcheck.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def sqlfluff(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """sqlfluff -- SQL lint."""
+    return {"findings": tools.sqlfluff.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def tflint(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """tflint -- Terraform linting."""
+    return {"findings": tools.tflint.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def trivy(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """trivy -- vulnerability / misconfig / secret scanning across IaC and."""
+    return {"findings": tools.trivy.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def trufflehog(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """trufflehog -- committed-credential scanning."""
+    return {"findings": tools.trufflehog.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def vale(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """vale -- prose lint for docs."""
+    return {"findings": tools.vale.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def yamllint(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """yamllint -- YAML lint."""
+    return {"findings": tools.yamllint.check(ctx, tree, changed)}
+
+
+@task(outputs={"findings": "rw.findings.v1"})
+def zizmor(ctx: Context, tree: Path, changed: list[str] | None = None):
+    """zizmor -- GitHub Actions workflow security scanning."""
+    return {"findings": tools.zizmor.check(ctx, tree, changed)}

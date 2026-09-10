@@ -5,6 +5,7 @@ and its tasks.py (for the registered setup/task functions).
 from __future__ import annotations
 
 import importlib.util
+import sys
 import uuid
 from pathlib import Path
 
@@ -51,6 +52,17 @@ def load_capability(capability_dir: Path) -> LoadedCapability:
     tasks_path = capability_dir / "tasks.py"
     if not tasks_path.is_file():
         raise CapabilityLoadError(f"no tasks.py in {capability_dir}")
+
+    # A capability's tasks.py is loaded by path, so it never belongs to a
+    # package -- `import adapters` or `import tools.ruff` inside it has
+    # nothing to resolve against. Put the capability directory on sys.path
+    # HERE, once, rather than making every capability open with its own
+    # sys.path juggling. Only the capability dir: a subpackage like `tools/`
+    # must be reachable by ONE name, or the same file gets imported twice as
+    # two distinct module objects.
+    resolved = str(capability_dir.resolve())
+    if resolved not in sys.path:
+        sys.path.insert(0, resolved)
 
     registry = Registry()
     token = _current_registry.set(registry)

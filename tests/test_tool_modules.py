@@ -19,7 +19,6 @@ import pytest
 CAPABILITY = Path(__file__).parent.parent / "capabilities" / "rw-checks"
 TOOLS = CAPABILITY / "tools"
 sys.path.insert(0, str(CAPABILITY))
-sys.path.insert(0, str(TOOLS))
 
 VALID_SEVERITIES = {"error", "warning", "note"}
 VALID_CONFIG = {"required", "optional"}
@@ -31,7 +30,10 @@ def tool_modules():
 
 
 def load(name):
-    return importlib.import_module(name)
+    """Always under the package name. Importing the same file as both
+    `pylint` and `tools.pylint` would create two module objects, so a test
+    patching one would silently not affect the other."""
+    return importlib.import_module(f"tools.{name}")
 
 
 @pytest.mark.parametrize("name", tool_modules())
@@ -79,7 +81,7 @@ def test_detect_returns_paths_on_an_empty_tree(tmp_path, name):
 def test_config_required_tools_skip_an_unconfigured_repo(tmp_path):
     """A `required` tool must not run without the repo's own config -- an
     opinionated linter run on defaults reports findings nobody asked for."""
-    import _common
+    from tools import _common
 
     (tmp_path / "a.py").write_text("import os\n")
     for name in tool_modules():

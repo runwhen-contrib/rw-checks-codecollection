@@ -10,9 +10,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import adapters
 from runwhen_capability import Context
+
+from . import _common
 
 SEVERITY = adapters.ACTIONLINT_SEVERITY
 FILES = (".github/workflows/*.yml", ".github/workflows/*.yaml")

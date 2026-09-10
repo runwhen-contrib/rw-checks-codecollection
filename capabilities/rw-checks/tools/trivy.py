@@ -10,9 +10,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import severity
 from runwhen_capability import Context
+
+from . import _common
 
 # tests/fixtures/tools/trivy.sarif: CVE rules carry a `security-severity`
 # property (GitHub code-scanning's own numeric-string convention); severity.

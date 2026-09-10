@@ -9,9 +9,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import adapters
 from runwhen_capability import Context
+
+from . import _common
 
 SEVERITY = adapters.YAMLLINT_SEVERITY
 FILES = ("*.yml", "*.yaml")

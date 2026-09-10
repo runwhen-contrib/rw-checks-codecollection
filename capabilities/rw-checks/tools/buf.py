@@ -5,9 +5,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import adapters
 from runwhen_capability import Context
+
+from . import _common
 
 # buf lint findings are all failures of the configured rule set; there is no
 # severity axis to map. adapters.buf() hardcodes `warning`. Declared here

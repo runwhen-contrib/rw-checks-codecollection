@@ -12,9 +12,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import adapters
 from runwhen_capability import Context
+
+from . import _common
 
 # A verified credential is known-live; an unverified one is a strong
 # candidate. adapters.trufflehog() maps both to `error` -- the distinction

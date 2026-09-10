@@ -10,9 +10,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import adapters
 from runwhen_capability import Context
+
+from . import _common
 
 # `style` and `info` are advisory -- promoting them would fail a check run on
 # a nit. Note hadolint's `info` is NOT this `info`: hence a map per tool.

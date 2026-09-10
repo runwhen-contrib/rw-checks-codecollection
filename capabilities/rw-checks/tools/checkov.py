@@ -13,10 +13,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import guards
 import severity
 from runwhen_capability import Context
+
+from . import _common
 
 # tests/fixtures/tools/checkov.sarif: all 39 results are marked SARIF level
 # "error" -- passing that through would fail every IaC repo checkov ever

@@ -9,9 +9,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import adapters
 from runwhen_capability import Context
+
+from . import _common
 
 # dotenv-linter emits no severity of its own; adapters.dotenv_linter() maps
 # DuplicatedKey (a later key silently wins) to `warning` and every other

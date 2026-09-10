@@ -25,9 +25,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import severity
 from runwhen_capability import Context
+
+from . import _common
 
 # tests/fixtures/tools/tflint.sarif: same reasoning as zizmor -- trust the
 # level tflint reports rather than inventing a rule-id-based policy it

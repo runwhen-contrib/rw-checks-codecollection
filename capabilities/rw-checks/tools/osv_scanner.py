@@ -11,9 +11,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import severity
 from runwhen_capability import Context
+
+from . import _common
 
 # tests/fixtures/tools/osv-scanner.sarif: all 17 rules carry SARIF level
 # "warning" and no severity metadata in `properties` at all -- unlike

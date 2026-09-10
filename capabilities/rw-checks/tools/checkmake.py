@@ -12,9 +12,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import adapters
 from runwhen_capability import Context
+
+from . import _common
 
 # checkmake has no severity vocabulary at all -- adapters.checkmake() maps
 # every rule to `note` directly. Declared here only to satisfy the

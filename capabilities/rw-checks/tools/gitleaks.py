@@ -10,9 +10,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import _common
 import severity
 from runwhen_capability import Context
+
+from . import _common
 
 # gitleaks' SARIF carries NO `level` field at all, so the SDK's default
 # mapping made every committed credential a `note` -- and a check run fails

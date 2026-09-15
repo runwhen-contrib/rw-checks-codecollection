@@ -585,3 +585,96 @@ def test_regal_empty_rules_dir_is_safe(tmp_path):
     config = write(tmp_path, "pol/.regal/config.yaml", "rules: {}\n")
     (tmp_path / "pol" / ".regal" / "rules").mkdir()
     assert guards.regal(tmp_path, [config]) is None
+
+
+# --- ruff (final-fix-5 G5) --------------------------------------------------
+
+
+def test_ruff_toml_absolute_extend_trips_the_guard(tmp_path):
+    path = write(tmp_path, "ruff.toml", 'extend = "/var/run/secrets/kubernetes.io/token"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "ruff.toml" in reason
+    assert "extend" in reason
+
+
+def test_dot_ruff_toml_dotdot_extend_trips_the_guard(tmp_path):
+    path = write(tmp_path, ".ruff.toml", 'extend = "../../etc/x"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert ".ruff.toml" in reason
+    assert "extend" in reason
+
+
+def test_ruff_toml_relative_extend_is_safe(tmp_path):
+    path = write(tmp_path, "ruff.toml", 'extend = "base.toml"\n')
+    assert guards.ruff(tmp_path, [path]) is None
+
+
+def test_ruff_pyproject_toml_scoped_to_tool_ruff_trips_the_guard(tmp_path):
+    path = write(tmp_path, "pyproject.toml", '[tool.ruff]\nextend = "/etc/x"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "pyproject.toml" in reason
+    assert "extend" in reason
+
+
+def test_ruff_no_config_is_safe(tmp_path):
+    assert guards.ruff(tmp_path, []) is None
+
+
+def test_ruff_malformed_config_is_unsafe(tmp_path):
+    path = write(tmp_path, "ruff.toml", "this is not [[[ valid toml\n===\n")
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "ruff.toml" in reason
+
+
+def test_ruff_tilde_extend_trips_the_guard(tmp_path):
+    path = write(tmp_path, "ruff.toml", 'extend = "~/x"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "extend" in reason
+
+
+# --- biome (final-fix-5 G6) --------------------------------------------------
+
+
+def test_biome_json_absolute_extends_trips_the_guard(tmp_path):
+    path = write(tmp_path, "biome.json", '{"extends": ["/etc/passwd"]}\n')
+    reason = guards.biome(tmp_path, [path])
+    assert reason is not None
+    assert "biome.json" in reason
+    assert "extends" in reason
+
+
+def test_biome_jsonc_relative_extends_is_safe(tmp_path):
+    path = write(tmp_path, "biome.jsonc", '{\n  // a comment\n  "extends": ["./base.json"]\n}\n')
+    assert guards.biome(tmp_path, [path]) is None
+
+
+def test_biome_jsonc_block_comment_parses(tmp_path):
+    path = write(
+        tmp_path,
+        "biome.jsonc",
+        '/* header */\n{\n  "extends": ["../../etc/passwd"]\n}\n',
+    )
+    reason = guards.biome(tmp_path, [path])
+    assert reason is not None
+    assert "biome.jsonc" in reason
+
+
+def test_biome_no_config_is_safe(tmp_path):
+    assert guards.biome(tmp_path, []) is None
+
+
+def test_biome_malformed_config_is_unsafe(tmp_path):
+    path = write(tmp_path, "biome.json", "{not valid json\n")
+    reason = guards.biome(tmp_path, [path])
+    assert reason is not None
+    assert "biome.json" in reason
+
+
+def test_biome_no_extends_key_is_safe(tmp_path):
+    path = write(tmp_path, "biome.json", '{"formatter": {"enabled": true}}\n')
+    assert guards.biome(tmp_path, [path]) is None

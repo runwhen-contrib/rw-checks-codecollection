@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import adapters
+import guards
 from runwhen_capability import Context
 
 from . import _common, _plan, _runner
@@ -24,7 +25,9 @@ FILES = ("*.js", "*.jsx", "*.ts", "*.tsx", "*.json", "*.css")
 CONFIG = "required"
 CONFIG_NAMES = (_plan.ConfigName("biome.json"), _plan.ConfigName("biome.jsonc"))
 CI_BINARY = "biome"
-GUARD = None
+# `extends` resolves from disk, npm-style -- an absolute or ..-escaping entry
+# reads outside the repo -- see guards.py.
+GUARD = guards.biome
 LANE = "B"  # two root biome.json files in one run hard-error (verified); biome reads the cwd config
 EXPECT_EXIT = (0, 1)
 

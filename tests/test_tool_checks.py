@@ -609,3 +609,28 @@ def test_regal_custom_rules_config_is_refused(tmp_path):
     assert result.skipped == "every applicable regal config is unsafe"
     assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
     assert [f.path for f in result.findings] == ["policy/.regal/rules/pwn.rego"]
+
+
+# --- final-fix-5 guards: ruff, biome -----------------------------------------
+
+
+def test_ruff_unsafe_extend_config_is_refused(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "ruff.toml", 'extend = "/var/run/secrets/kubernetes.io/token"\n')
+    write(tree, "a.py")
+    ctx, result = run(tmp_path, "ruff", ["a.py"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable ruff config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+    assert [f.path for f in result.findings] == ["ruff.toml"]
+
+
+def test_biome_unsafe_extends_config_is_refused(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "web/biome.json", '{"extends": ["/etc/passwd"]}\n')
+    write(tree, "web/src/a.ts")
+    ctx, result = run(tmp_path, "biome", ["web/src/a.ts"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable biome config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+    assert [f.path for f in result.findings] == ["web/biome.json"]

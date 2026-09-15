@@ -37,6 +37,35 @@ def test_tool_env_points_home_cache_tmp_at_workdir(tmp_path):
         assert Path(env[key]).is_dir() and Path(env[key]).is_relative_to(ctx.workdir)
 
 
+def test_tool_env_is_a_complete_allow_list(tmp_path):
+    """final-fix-5 G7: tool_env is the WHOLE child env (ctx.run(inherit_env=False)),
+    not a few extra vars merged over the pod's own environment -- so every key
+    a tool needs to run at all must be set explicitly here."""
+    ctx = RecordingContext(tmp_path)
+    env = _runner.tool_env(ctx)
+    for key in ("PATH", "HOME", "XDG_CACHE_HOME", "TMPDIR", "LANG"):
+        assert key in env
+    assert env["LANG"] == "C.UTF-8"
+
+
+def test_tool_env_passes_a_set_proxy_variable_through(tmp_path, monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("no_proxy", "localhost")
+    ctx = RecordingContext(tmp_path)
+    env = _runner.tool_env(ctx)
+    assert env["HTTPS_PROXY"] == "http://proxy.example:3128"
+    assert env["no_proxy"] == "localhost"
+
+
+def test_tool_env_excludes_a_secret_looking_variable(tmp_path, monkeypatch):
+    """The probe's payload read GPG_KEY out of the pod's own env -- tool_env
+    must not carry it, or anything else that isn't on the allow-list."""
+    monkeypatch.setenv("GPG_KEY", "totally-secret")
+    ctx = RecordingContext(tmp_path)
+    env = _runner.tool_env(ctx)
+    assert "GPG_KEY" not in env
+
+
 def test_records_are_remapped_to_repo_relative(tmp_path):
     tree = tmp_path / "tree"
     (tree / "svc").mkdir(parents=True)

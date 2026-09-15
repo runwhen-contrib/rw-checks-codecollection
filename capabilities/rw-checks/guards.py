@@ -32,6 +32,20 @@ listener, and the response was surfaced in the finding -- an outbound
 network channel and an exfiltration path, even though Rego has no
 file-read builtin and is not itself RCE).
 
+A third probe pass covered the two tools still left at `GUARD = None` and
+found a file-read vector in each, not exec: ruff (`ruff.toml`/`.ruff.toml`/
+`pyproject.toml`'s `[tool.ruff]`'s `extend` names another config file ruff
+reads and merges in -- an absolute or `..`-escaping target makes ruff read
+an arbitrary host file and echo its content into the TOML parse error it
+raises, which then lands verbatim in the PR finding: confirmed
+deterministic against the built image) and biome (`biome.json`/
+`biome.jsonc`'s `extends` resolves the same way, from disk rather than
+fetched -- an absolute or `..`-escaping entry made biome read `/etc/passwd`
+and echo it to stderr, which every run forwards to `ctx.log`, and into a
+finding whenever biome then exits outside `EXPECT_EXIT`: confirmed, though
+not deterministically outside `(0, 1)`). GritQL `plugins` in a biome config
+are declarative -- no exec, no fetch -- and are not guarded.
+
 One guard function per affected tool, called by `_plan.plan` per config group
 BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
 or None when it is safe to run the tool. The reason always begins
@@ -53,10 +67,11 @@ the parser's own recursive descent.
 from __future__ import annotations
 
 import configparser
+import json
 import re
 import tomllib
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -117,6 +132,30 @@ _WALK_MAX_DEPTH = 64
 _TOO_DEEP = object()
 
 
+def _walk_kv(obj: Any, keys: set[str], depth: int = 0) -> Any:
+    """Like `_walk`, but returns the matching `(key, value)` PAIR instead of
+    only the key -- for a guard that must inspect the value itself (ruff's
+    `extend` path, biome's `extends` entries), not merely detect that the
+    key is present. Same depth bound and `_TOO_DEEP` sentinel as `_walk`,
+    which is defined in terms of this rather than duplicating the walk."""
+    if depth > _WALK_MAX_DEPTH:
+        return _TOO_DEEP
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            key = str(k).lower()
+            if key in keys and v:
+                return key, v
+            found = _walk_kv(v, keys, depth + 1)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _walk_kv(item, keys, depth + 1)
+            if found:
+                return found
+    return None
+
+
 def _walk(obj: Any, keys: set[str], depth: int = 0) -> Any:
     """Recursively search a parsed TOML/YAML document for any of `keys` as
     a dict key with a truthy value, at ANY nesting depth. Whoever writes a
@@ -127,22 +166,10 @@ def _walk(obj: Any, keys: set[str], depth: int = 0) -> Any:
     `_WALK_MAX_DEPTH` -- a config nested that deep is hiding something, and
     the caller must treat "we gave up looking" as unsafe, not as None -- or
     None when nothing was found within the bound."""
-    if depth > _WALK_MAX_DEPTH:
-        return _TOO_DEEP
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            key = str(k).lower()
-            if key in keys and v:
-                return key
-            found = _walk(v, keys, depth + 1)
-            if found:
-                return found
-    elif isinstance(obj, list):
-        for item in obj:
-            found = _walk(item, keys, depth + 1)
-            if found:
-                return found
-    return None
+    found = _walk_kv(obj, keys, depth)
+    if found is None or found is _TOO_DEEP:
+        return found
+    return found[0]
 
 
 def _too_deep(tree: Path, path: Path) -> str:
@@ -160,6 +187,19 @@ def _toml_table(doc: Any, *path: str) -> Any:
             return None
         cur = cur[step]
     return cur
+
+
+def _unsafe_path(value: str) -> bool:
+    """True when `value` -- a path a tool config points somewhere else on
+    disk -- would resolve outside the repository: absolute, `~`-relative (a
+    tool's own path handling may expand that to the user's home, which is
+    outside the repo too), or containing a `..` segment. A plain relative
+    path that stays inside the repo is ordinary config reuse and is safe."""
+    if value.startswith("~"):
+        return True
+    if PurePosixPath(value).is_absolute():
+        return True
+    return ".." in PurePosixPath(value).parts
 
 
 # --- pylint -------------------------------------------------------------
@@ -564,4 +604,130 @@ def regal(tree: Path, paths: Sequence[Path]) -> str | None:
             return _unparseable(tree, path, e)
         if rule_files:
             return _reason(tree, rule_files[0], "custom rules", _REGAL_WHY)
+    return None
+
+
+# --- ruff (final-fix-5 G5) ---------------------------------------------------
+# `extend` in ruff.toml/.ruff.toml, or under `[tool.ruff]` in pyproject.toml,
+# names another ruff config file that ruff reads and merges in. An absolute
+# or `..`-escaping target makes ruff read an arbitrary host file and echo its
+# content into the TOML parse error it then raises -- confirmed against the
+# built image: ruff exits 2 EVERY time on such a target, outside
+# EXPECT_EXIT, so `_common.check_failed_finding` embeds `proc.stderr` --
+# which is that file's content -- straight into the PR finding. Searched at
+# any nesting depth via `_walk_kv`, same defense-in-depth as every other
+# guard here, even though ruff's own schema only ever reads `extend` from
+# the top level (of the file, or of `[tool.ruff]`).
+_RUFF_KEYS = {"extend"}
+_RUFF_WHY = "which ruff reads from outside the repository"
+
+
+def ruff(tree: Path, paths: Sequence[Path]) -> str | None:
+    """Reason to refuse, or None when safe."""
+    for path in _selected(paths, "ruff.toml", ".ruff.toml"):
+        try:
+            doc = tomllib.loads(path.read_text())
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as e:
+            return _unparseable(tree, path, e)
+        found = _walk_kv(doc, _RUFF_KEYS)
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
+        if found:
+            key, value = found
+            if isinstance(value, str) and _unsafe_path(value):
+                return _reason(tree, path, key, _RUFF_WHY)
+
+    for path in _selected(paths, "pyproject.toml"):
+        try:
+            doc = tomllib.loads(path.read_text())
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as e:
+            return _unparseable(tree, path, e)
+        section = _toml_table(doc, "tool", "ruff")
+        found = _walk_kv(section, _RUFF_KEYS) if section is not None else None
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
+        if found:
+            key, value = found
+            if isinstance(value, str) and _unsafe_path(value):
+                return _reason(tree, path, key, _RUFF_WHY)
+
+    return None
+
+
+# --- biome (final-fix-5 G6) --------------------------------------------------
+# biome.json/.jsonc's `extends` resolves entries from DISK, npm-style -- not
+# fetched, so no network vector -- but an absolute or `..`-escaping entry
+# makes biome READ an arbitrary host file and echo its content to stderr:
+# confirmed against the built image (an absolute `extends` target surfaced
+# /etc/passwd's own content). `ctx.run` forwards every run's stderr to
+# `ctx.log`, so that alone is a log-exfil channel; when biome then exits
+# outside EXPECT_EXIT the same content lands in the PR finding (observed,
+# though not made deterministic). GritQL `plugins` are declarative -- no
+# exec, no fetch -- and are not guarded. No YAML/HCL parser needed: JSONC is
+# JSON with `//` and `/* ... */` comments stripped first, same shape as
+# tflint's HCL comment strip.
+_BIOME_WHY = "which biome reads from outside the repository"
+
+
+def _strip_jsonc_comments(text: str) -> str:
+    """`//` to end of line and `/* ... */` blocks, never stripped inside a
+    quoted JSON string -- same approach as `_strip_hcl_comments` above."""
+    out: list[str] = []
+    in_string = False
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if text[i : i + 2] == "//":
+            j = text.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if text[i : i + 2] == "/*":
+            j = text.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _unsafe_extends(value: Any) -> bool:
+    """`extends` is a string or a list of strings; any entry that resolves
+    outside the repo trips the guard. A non-string entry (or a differently
+    shaped `extends`) names no path at all, so it is left alone."""
+    if isinstance(value, str):
+        return _unsafe_path(value)
+    if isinstance(value, list):
+        return any(isinstance(v, str) and _unsafe_path(v) for v in value)
+    return False
+
+
+def biome(tree: Path, paths: Sequence[Path]) -> str | None:
+    """Reason to refuse, or None when safe."""
+    for path in _selected(paths, "biome.json", "biome.jsonc"):
+        try:
+            doc = json.loads(_strip_jsonc_comments(path.read_text()))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as e:
+            return _unparseable(tree, path, e)
+        found = _walk_kv(doc, {"extends"})
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
+        if found:
+            _, value = found
+            if _unsafe_extends(value):
+                return _reason(tree, path, "extends", _BIOME_WHY)
     return None

@@ -34,14 +34,48 @@ def batches(files: Sequence[str]) -> list[tuple[str, ...]]:
     return out
 
 
+#: rw-checks G7: a tool subprocess's ENTIRE environment, not a few extras
+#: merged over the executor pod's own -- `ctx.run(..., inherit_env=False)`
+#: below makes this the whole child env. A probe's payload read `GPG_KEY`
+#: straight out of a tool's inherited environment; combined with any config
+#: -driven exec/network vector (guards.py), that is credential exfiltration.
+#: Kept to what a linter/scanner actually needs: PATH and locale so it can
+#: run at all, HOME/XDG_CACHE_HOME/TMPDIR so it has a writable home on the
+#: read-only root filesystem, and the handful of TLS-trust/proxy variables
+#: osv-scanner and a self-hosted proxy setup legitimately need -- none of
+#: which are secrets. Everything else in the pod's environment -- tokens,
+#: credentials, anything else an operator or the platform set -- is simply
+#: never in this dict, so a tool can never see it.
+_PASSTHROUGH_ENV = (
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+)
+
+
 def tool_env(ctx: Any) -> dict[str, str]:
-    """The root filesystem is read-only: buf (`mkdir /.cache`), tflint (plugin
-    init needs a writable HOME) and pylint (no usable temp dir) all fail without this."""
+    """The complete allow-listed environment for a tool subprocess -- see
+    `_PASSTHROUGH_ENV` above. The root filesystem is read-only: buf (`mkdir
+    /.cache`), tflint (plugin init needs a writable HOME) and pylint (no
+    usable temp dir) all fail without HOME/XDG_CACHE_HOME/TMPDIR."""
     base = Path(ctx.workdir) / ".tool-home"
-    env = {}
+    env = {
+        "PATH": os.environ.get(
+            "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        ),
+        "LANG": "C.UTF-8",
+    }
     for key, sub in (("HOME", "home"), ("XDG_CACHE_HOME", "cache"), ("TMPDIR", "tmp")):
         (base / sub).mkdir(parents=True, exist_ok=True)
         env[key] = str(base / sub)
+    for key in _PASSTHROUGH_ENV:
+        if key in os.environ:
+            env[key] = os.environ[key]
     return env
 
 
@@ -62,7 +96,11 @@ def config_arg(inv: Invocation) -> str | None:
 
 
 def run(ctx: Any, argv: list[str], *, cwd: Path, env: dict[str, str] | None = None):
-    return ctx.run(argv, cwd=cwd, env={**tool_env(ctx), **(env or {})})
+    # inherit_env=False: `tool_env` is the tool's WHOLE environment, not a
+    # few extras merged over the executor pod's own -- see _PASSTHROUGH_ENV
+    # above. A caller's own `env` (e.g. tflint.py's TFLINT_PLUGIN_DIR) still
+    # merges on TOP of the allow-list, same as before.
+    return ctx.run(argv, cwd=cwd, env={**tool_env(ctx), **(env or {})}, inherit_env=False)
 
 
 def run_to_file(ctx: Any, argv: list[str], *, cwd: Path, report: Path, module: Any) -> str:

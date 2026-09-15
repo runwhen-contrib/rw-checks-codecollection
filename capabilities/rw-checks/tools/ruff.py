@@ -8,6 +8,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import guards
 import severity
 from runwhen_capability import Context
 
@@ -30,7 +31,9 @@ CONFIG_NAMES = (
     _plan.ConfigName("pyproject.toml", ("tool", "ruff")),
 )
 CI_BINARY = "ruff"
-GUARD = None
+# `extend` names another config file ruff reads and merges in -- an absolute
+# or ..-escaping target reads outside the repo -- see guards.py.
+GUARD = guards.ruff
 LANE = "A"  # ruff resolves each file's nearest config itself (verified)
 EXPECT_EXIT = (0, 1)
 

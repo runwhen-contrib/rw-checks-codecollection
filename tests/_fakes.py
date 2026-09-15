@@ -18,9 +18,14 @@ class RecordingContext(Context):
         self.returncode = returncode
         self.calls: list[dict] = []
 
-    def run(self, argv, cwd=None, timeout=None, env=None):  # noqa: ARG002
+    def run(self, argv, cwd=None, timeout=None, env=None, *, inherit_env=True):  # noqa: ARG002
         self.calls.append(
-            {"argv": list(argv), "cwd": Path(cwd) if cwd else None, "env": dict(env or {})}
+            {
+                "argv": list(argv),
+                "cwd": Path(cwd) if cwd else None,
+                "env": dict(env or {}),
+                "inherit_env": inherit_env,
+            }
         )
         stdout = self.outputs.get(argv[0], "")
         if "--report-path" in argv:

@@ -54,7 +54,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from runwhen_capability.errors import OutputTooLargeError
 from runwhen_capability.findings import normalize_uri
+from runwhen_capability.sarif import SARIF_BYTE_BUDGET
 
 # --- file discovery ---------------------------------------------------------
 
@@ -417,9 +419,24 @@ def run_to_file(ctx, argv: list[str], tree: Path, report: Path, module: Any) -> 
     outside `module.EXPECT_EXIT`, or when the report is missing/empty: an
     empty report used to be read as "this tool found nothing," which is
     exactly as wrong when the tool never actually ran.
+
+    Also raises `OutputTooLargeError` -- checked via `report.stat()`, BEFORE
+    `report.read_text()` -- when the report file itself exceeds
+    SARIF_BYTE_BUDGET. `ctx.run`'s own stdout cap does not cover this path:
+    gitleaks/checkov write their report to a FILE, not stdout, which is the
+    whole reason this function exists (see the module docstring above). A
+    file-sized runaway would otherwise be read into memory whole -- and
+    could OOM the pod -- before `ctx.sarif.parse` (the caller, in both
+    gitleaks.py and checkov.py) ever got a chance to apply its own guard.
     """
     report.parent.mkdir(parents=True, exist_ok=True)
     proc = ctx.run(argv, cwd=tree)
+    try:
+        size = report.stat().st_size
+    except OSError:
+        size = 0
+    if size > SARIF_BYTE_BUDGET:
+        raise OutputTooLargeError(f"check output too large to process: {size} bytes")
     try:
         text = report.read_text()
     except OSError:

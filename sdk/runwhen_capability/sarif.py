@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import OutputTooLargeError
 from .findings import (
     MAX_FINDINGS_PER_RESULT,
     normalize_context,
@@ -102,18 +103,26 @@ _READ_LINE_TIMEOUT_MSG = "line out of range"
 SARIF_BYTE_BUDGET = 64 * 1024 * 1024  # 67,108,864 bytes (64 MiB)
 
 
-class SarifTooLargeError(ValueError):
+class SarifTooLargeError(OutputTooLargeError):
     """Raised by SarifClient.parse() when `text` exceeds SARIF_BYTE_BUDGET,
     checked BEFORE json.loads runs -- see SARIF_BYTE_BUDGET's docstring for
-    why that ordering is the whole point. An ordinary exception, kept local
-    to this module the way repo_fs.py's TreeNotMaterializedError is rather
-    than moved to errors.py: uncaught here, it propagates out of the
-    capability's task function and is caught by host.py's generic handler
-    like any other task exception, recorded as `TaskResult(status="failed",
-    error=str(exc))`. That is a disclosed failure -- papi surfaces it
-    through failed_runs/scanFailed -- never a silently empty or partial
-    findings list, per FAILURE-POLICY.md's "the failure that hurts is ... a
-    clean, complete-looking result"."""
+    why that ordering is the whole point. A subclass of the SDK-wide
+    OutputTooLargeError (errors.py) rather than its own unrelated type: this
+    is the same "oversized payload, caught before it's fully materialised"
+    failure as Context.run()'s stdout cap and run_to_file()'s report-file
+    stat check, just at the point where the text is already in hand as a
+    Python str and the next step is `json.loads`. Kept as a distinct
+    subclass (not a bare alias) so a caller that specifically cares "was
+    this SARIF text already parsed-in-hand when it got refused" can catch
+    it by name; anything that just wants the general failure catches
+    OutputTooLargeError instead -- both work, since `except
+    OutputTooLargeError` also matches this subclass. Uncaught (the normal
+    case), it propagates out of the capability's task function and is
+    caught by host.py's generic handler, recorded as
+    `TaskResult(status="failed", error=str(exc))`. That is a disclosed
+    failure -- papi surfaces it through failed_runs/scanFailed -- never a
+    silently empty or partial findings list, per FAILURE-POLICY.md's "the
+    failure that hurts is ... a clean, complete-looking result"."""
 
 
 @dataclass

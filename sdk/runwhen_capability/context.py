@@ -10,15 +10,69 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 from pathlib import Path
 
-from .errors import CredentialNotFoundError
+from .errors import CredentialNotFoundError, OutputTooLargeError
 from .findings import FindingsClient
 from .git import GitClient
 from .repo_fs import RepoFsClient
-from .sarif import SarifClient
+from .sarif import SARIF_BYTE_BUDGET, SarifClient
 
 DEFAULT_RUN_TIMEOUT = 600  # seconds
+
+# A subprocess's stdout shares SARIF_BYTE_BUDGET (sarif.py) rather than
+# defining its own: it is the same risk (an oversized blob held in memory
+# before anything downstream can react), on the same size scale (SARIF text
+# IS a tool's captured stdout, for every SARIF-emitting tool) -- see
+# OutputTooLargeError's docstring (errors.py) for why one budget covers both.
+#
+# stderr gets its own, much smaller budget: it is diagnostic text
+# (check_exit()/run_to_file() fold it into one `rw-checks/check-failed`
+# finding message), never the payload a task's findings come from, so there
+# is no reason to let it grow anywhere near stdout's size before capping it.
+# 1 MiB comfortably fits even a large stack trace or a verbose crash dump
+# without asking a legitimate failure message to compete with the same
+# OOM risk stdout has.
+_STDERR_BYTE_BUDGET = 1024 * 1024  # 1 MiB
+
+# Read size for both the stdout and stderr drain threads below. Arbitrary
+# but conventional -- matches the common OS pipe buffer size, so a read
+# rarely blocks waiting for more than one chunk's worth of data.
+_RUN_READ_CHUNK = 65536
+
+
+def _drain(stream, budget: int, chunks: list[str], state: dict, kill) -> None:
+    """Read `stream` (a text-mode pipe) to EOF in bounded chunks, appending
+    each to `chunks` until the running character total exceeds `budget` --
+    at which point `kill()` is called (once) and this keeps reading WITHOUT
+    appending, so the child can still exit (its pipe keeps draining) instead
+    of blocking forever on a full pipe buffer. `state["chars"]`/`state["over"]`
+    are only written once, right when the excess is first detected, and are
+    the caller's signal -- read only AFTER joining this thread, so there is
+    no race between this thread setting them and the caller checking them.
+
+    Character count, not `len(bytes)`, is the budget unit here -- the same
+    trade SarifClient.parse() makes (see its docstring): bytes >= chars
+    always, so a character total already over `budget` proves the byte
+    total is over it too, without ever encoding a chunk just to count it.
+    For nearly-all-ASCII tool output (SARIF/JSON, which is what every one
+    of these tools emits) this is effectively exact; worst case it lets a
+    heavily multi-byte stream run up to ~4x `budget` bytes before tripping,
+    which is still far short of the pod's own memory limit."""
+    total = 0
+    over = False
+    for piece in iter(lambda: stream.read(_RUN_READ_CHUNK), ""):
+        total += len(piece)
+        if not over and total > budget:
+            over = True
+            state["chars"] = total
+            state["over"] = True
+            kill()
+        if not over:
+            chunks.append(piece)
+    state.setdefault("chars", total)
+    state.setdefault("over", False)
 
 
 class StorageClient:
@@ -102,9 +156,9 @@ class Context:
     ) -> subprocess.CompletedProcess:
         """Runs argv as a subprocess. stdout is captured (returned on
         `.stdout`); stderr is captured and forwarded line-by-line to
-        ctx.log; the timeout (default DEFAULT_RUN_TIMEOUT) is enforced by
-        subprocess itself -- a timeout raises subprocess.TimeoutExpired,
-        which the task host treats like any other task exception.
+        ctx.log; the timeout (default DEFAULT_RUN_TIMEOUT) is enforced --
+        a timeout raises subprocess.TimeoutExpired, which the task host
+        treats like any other task exception.
 
         `env` is MERGED OVER the parent environment, never a replacement:
         a tool needs PATH and the rest of its runtime, and a caller that
@@ -119,18 +173,85 @@ class Context:
         outright. Only `workdir` (`/work`) is writable, so such a tool
         must be pointed at it -- see `tools/trivy.py`, whose vulnerability
         DB download died on `mkdir /tmp/trivy-...: read-only file system`.
+
+        Bounded at SARIF_BYTE_BUDGET: a tool's stdout is captured
+        INCREMENTALLY (Popen + a dedicated drain thread per stream, not
+        subprocess.run's capture_output, which buffers everything before
+        the caller sees any of it) so a pathological amount of output
+        raises OutputTooLargeError -- the process is killed -- instead of
+        being held in memory in full. This is the same failure this
+        module's docstring already documents for SarifClient.parse(): the
+        oversized-payload guard has to run BEFORE the bytes are fully
+        materialised, not after, or the guard cannot prevent the OOM it
+        exists to stop. Unlike parse() (which already has the whole SARIF
+        text in hand and can check its length directly), ctx.run has to
+        stop READING partway through, so it can only report a lower bound
+        on the true size -- hence ">N bytes" rather than "N bytes" in the
+        message. stderr gets the same treatment against a much smaller
+        budget (_STDERR_BYTE_BUDGET) -- see that constant's comment.
+
+        Both streams are drained by their own thread regardless of what the
+        other is doing, specifically so the child can never block writing
+        to a full pipe while this method is only reading the other one --
+        the classic two-pipe deadlock. On a timeout OR an oversized-stdout
+        kill, the process is killed and then waited on (never left a
+        zombie) before either raising TimeoutExpired or returning control
+        to the oversized-output check below.
         """
         run_cwd = Path(cwd) if cwd is not None else self.workdir
-        proc = subprocess.run(  # noqa: S603 -- argv is capability-controlled, by design
+        proc = subprocess.Popen(  # noqa: S603 -- argv is capability-controlled, by design
             argv,
             cwd=str(run_cwd),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout or DEFAULT_RUN_TIMEOUT,
             env={**os.environ, **env} if env else None,
         )
-        if proc.stderr:
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        stdout_state: dict = {}
+        stderr_state: dict = {}
+        stdout_thread = threading.Thread(
+            target=_drain,
+            args=(proc.stdout, SARIF_BYTE_BUDGET, stdout_chunks, stdout_state, proc.kill),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=_drain,
+            args=(proc.stderr, _STDERR_BYTE_BUDGET, stderr_chunks, stderr_state, lambda: None),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+        try:
+            proc.wait(timeout=timeout or DEFAULT_RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            raise
+        finally:
+            # Joined (and streams closed) on every path, including the
+            # timeout re-raise above -- an oversized-stdout kill and a
+            # timeout kill both end the process, which EOFs both pipes and
+            # lets these threads finish on their own; join() just proves it
+            # before this method either raises or reads `stdout_state`.
+            stdout_thread.join()
+            stderr_thread.join()
+            proc.stdout.close()
+            proc.stderr.close()
+
+        if stdout_state["over"]:
+            raise OutputTooLargeError(
+                f"check output too large to process: >{stdout_state['chars']} bytes"
+            )
+
+        stdout = "".join(stdout_chunks)
+        stderr = "".join(stderr_chunks)
+        if stderr_state["over"]:
+            stderr += f"\n... stderr truncated at {_STDERR_BYTE_BUDGET} bytes"
+
+        if stderr:
             prog = argv[0] if argv else "?"
-            for line in proc.stderr.splitlines():
+            for line in stderr.splitlines():
                 self.log.info("%s: %s", prog, line)
-        return proc
+        return subprocess.CompletedProcess(argv, proc.returncode, stdout=stdout, stderr=stderr)

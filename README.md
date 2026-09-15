@@ -83,16 +83,16 @@ time with `scripts/manifest_label.py` and bakes it in via the `CAPABILITY_MANIFE
 arg, so the codecollection catalog can discover a capability's manifest straight off the pushed
 image, without a platform release.
 
-To inspect the label on a published image (either works; `crane` is the more direct path
-straight to the label, `docker buildx imagetools inspect --raw` is useful when you already have
-buildx and want the raw image-config JSON to poke at):
+To inspect the label on a published image (no pull needed; both images are multi-arch, and the
+label is identical on every platform):
 
 ```
-# crane -- reads the image config directly, no pull
-crane config <ref> | jq -r '.config.Labels["com.runwhen.capability.manifest.v1"]' | base64 -d
+# crane -- resolves the index to the current platform's image config
+crane config --platform linux/amd64 <ref> | jq -r '.config.Labels["com.runwhen.capability.manifest.v1"]' | base64 -d
 
-# docker buildx -- --raw on the per-platform manifest returns the image config
-docker buildx imagetools inspect --raw <ref> | jq -r '.config.Labels["com.runwhen.capability.manifest.v1"]' | base64 -d
+# docker buildx -- .Image is keyed by platform for a multi-arch index
+docker buildx imagetools inspect <ref> --format '{{ json (index .Image "linux/amd64") }}' \
+  | jq -r '.config.Labels["com.runwhen.capability.manifest.v1"]' | base64 -d
 ```
 
 ## Tests

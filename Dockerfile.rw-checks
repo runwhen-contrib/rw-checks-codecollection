@@ -118,6 +118,16 @@ COPY pyproject.toml README.md LICENSE /app/
 COPY sdk /app/sdk
 RUN pip install --no-cache-dir /app
 
+# Base64 of capabilities/rw-checks/manifest.yaml, produced at build time by
+# scripts/manifest_label.py -- see Contract 1 (docs/ccv-capability-catalog
+# PLAN.md in runwhen-auto). This is how the catalog discovers this
+# capability's manifest without a platform release: it reads the label off
+# the pushed image, never a repo checkout. Declared after the pip-install
+# layer, not with the labels above: every RUN after an ARG is a cache miss
+# when its value changes, and this one changes on every manifest edit.
+ARG CAPABILITY_MANIFEST_B64=""
+LABEL com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
+
 COPY capabilities/rw-checks /app/capabilities/rw-checks
 
 # Non-root. /work is rwtask serve's default --workdir -- every request's

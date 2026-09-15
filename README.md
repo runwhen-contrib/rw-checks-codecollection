@@ -74,6 +74,27 @@ long-polls the runner as a warm executor (see `EXECUTOR-CONTRACT.md`'s "Wire 2")
 request (`setup` + N tasks) at a time and posting the result back. Each image's `CMD` already
 bakes in its own `--capability-dir` so it never has to guess which capability it is serving.
 
+## Manifest label
+
+Neither `manifest.yaml` declares an `image:` key -- an image cannot know its own digest. Instead
+each image carries its own manifest as an OCI label, `com.runwhen.capability.manifest.v1`: the
+base64 (no line breaks) of that capability's `manifest.yaml`, verbatim. CI computes it at build
+time with `scripts/manifest_label.py` and bakes it in via the `CAPABILITY_MANIFEST_B64` build
+arg, so the codecollection catalog can discover a capability's manifest straight off the pushed
+image, without a platform release.
+
+To inspect the label on a published image (no pull needed; both images are multi-arch, and the
+label is identical on every platform):
+
+```
+# crane -- resolves the index to the current platform's image config
+crane config --platform linux/amd64 <ref> | jq -r '.config.Labels["com.runwhen.capability.manifest.v1"]' | base64 -d
+
+# docker buildx -- .Image is keyed by platform for a multi-arch index
+docker buildx imagetools inspect <ref> --format '{{ json (index .Image "linux/amd64") }}' \
+  | jq -r '.config.Labels["com.runwhen.capability.manifest.v1"]' | base64 -d
+```
+
 ## Tests
 
 ```

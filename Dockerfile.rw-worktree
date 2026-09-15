@@ -45,6 +45,28 @@ COPY pyproject.toml README.md LICENSE /app/
 COPY sdk /app/sdk
 RUN pip install --no-cache-dir /app
 
+# --- OCI image annotations (opencontainers.org/image-spec) -------------------
+# Placed here -- after the pip-install layer, not before it, unlike
+# Dockerfile.rw-checks -- so a REVISION/CREATED/manifest-label rebuild never
+# busts the dependency-install cache. See Dockerfile.rw-checks's own comment
+# for what these keys are and why they matter to scanners/SBOM consumers.
+ARG REVISION=unknown
+ARG CREATED=unknown
+# Base64 of capabilities/rw-worktree/manifest.yaml, produced at build time by
+# scripts/manifest_label.py -- see Contract 1 (docs/ccv-capability-catalog
+# PLAN.md in runwhen-auto). This is how the catalog discovers this
+# capability's manifest without a platform release: it reads the label off
+# the pushed image, never a repo checkout.
+ARG CAPABILITY_MANIFEST_B64=""
+LABEL org.opencontainers.image.title="rw-worktree" \
+      org.opencontainers.image.description="Repository tree cache capability image for the RunWhen platform" \
+      org.opencontainers.image.source="https://github.com/runwhen-contrib/rw-checks-codecollection" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      io.runwhen.capability="rw-worktree" \
+      com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
+
 COPY capabilities/rw-worktree /app/capabilities/rw-worktree
 
 # Non-root. /work is rwtask serve's default --workdir -- every request's

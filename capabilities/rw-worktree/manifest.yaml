@@ -14,13 +14,13 @@
 # expiry error, and nothing here may surface a "handle expired" condition
 # to a caller.
 #
-# `image` below is a build-time placeholder -- see rw-checks/manifest.yaml's
-# comment; CI rewrites it to the published digest. Do not hand-edit it.
+# There is no `image` key here -- see rw-checks/manifest.yaml's comment: an
+# image cannot know its own digest, so this manifest rides the image itself,
+# as the OCI label com.runwhen.capability.manifest.v1.
 apiVersion: capability/v1
 capability: rw-worktree
 version: "0.1.0"
 description: Read-only repository tree cache for deep PR review (agent reads)
-image: ghcr.io/runwhen-contrib/rw-worktree-codecollection@sha256:INJECTED_BY_CI
 
 # --- generic scheduling knobs; papi forwards these to the runner verbatim -------------
 execution:
@@ -55,6 +55,13 @@ execution:
   # `open` does a shallow clone, bounded by git.py's own GIT_TIMEOUT
   # (300s); read/grep/ls each finish in a small fraction of that.
   requestTimeoutSeconds: 300
+  resources:
+    cpuRequest: "250m"
+    cpuLimit: "1"
+    memoryRequest: "512Mi"
+    memoryLimit: "1Gi"
+  # Holds materialised checkouts across requests.
+  workSizeLimit: "4Gi"
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------
 appliesTo:

@@ -3,16 +3,15 @@
 # is binding; if this needs to diverge from it, stop and raise it there
 # first.
 #
-# `image` below is a build-time placeholder. CI resolves the digest of the
-# image it just pushed and rewrites this field to
-# ghcr.io/runwhen-contrib/rw-checks-codecollection@sha256:<actual digest>
-# before the manifest is picked up by the catalog. Do not hand-edit the
-# placeholder; do not ship it as-is.
+# There is no `image` key here: an image cannot know its own digest. This
+# manifest instead rides the image itself, as the OCI label
+# com.runwhen.capability.manifest.v1 (base64 of this file, verbatim) --
+# scripts/manifest_label.py produces that value at build time. The digest is
+# owned by the registry/catalog, not this file.
 apiVersion: capability/v1
 capability: rw-checks
 version: "0.2.0"
 description: Static checks for source repositories
-image: ghcr.io/runwhen-contrib/rw-checks-codecollection@sha256:INJECTED_BY_CI
 
 # --- generic scheduling knobs; papi forwards these to the runner verbatim -------------
 execution:
@@ -21,6 +20,13 @@ execution:
   maxConcurrentPerPod: 1
   idleTtlSeconds: 900
   requestTimeoutSeconds: 600
+  # Measured peak ~333Mi on a 5.9k-file repo, which is why the limit is 1Gi.
+  resources:
+    cpuRequest: "250m"
+    cpuLimit: "1"
+    memoryRequest: "512Mi"
+    memoryLimit: "1Gi"
+  workSizeLimit: "2Gi"
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------
 # No `where` at this level: this is now a multi-language check set (secret

@@ -51,11 +51,12 @@ name: Build And Push
 #   merge (matrix) -- one job per capability: pulls that capability's
 #                     per-platform digests and uses `docker buildx imagetools
 #                     create` to stitch them into a single multi-arch
-#                     manifest under every tag prepare computed, then
-#                     renders that capability's own manifest.yaml with the
-#                     resolved digest and uploads it as a build artifact --
-#                     "CI resolves the digest ... and rewrites this field"
-#                     per each manifest's own header comment.
+#                     manifest under every tag prepare computed. There is no
+#                     rendered-manifest artifact any more: the manifest rides
+#                     each image itself, as the com.runwhen.capability.manifest.v1
+#                     label the `build` job sets from scripts/manifest_label.py
+#                     (Contract 1) -- the catalog reads it straight off the
+#                     pushed image, never a build artifact.
 #
 # `test` runs independently and gates `build`: the SDK's own pytest/ruff
 # suite is cheap and fast, and a broken task host should never reach an
@@ -251,8 +252,11 @@ jobs:
 
           # Keys docs/static-checks/CAPABILITY-CONTRACT.md Part 1 requires on
           # every capability manifest. Keep this list in sync with that file.
+          # No "image": an image cannot know its own digest -- see each
+          # manifest's own header comment; it rides the image as the
+          # com.runwhen.capability.manifest.v1 label instead (Contract 1).
           REQUIRED_KEYS = {
-              "apiVersion", "capability", "version", "description", "image",
+              "apiVersion", "capability", "version", "description",
               "execution", "appliesTo", "needs", "setup", "tasks", "retention",
           }
 
@@ -269,6 +273,8 @@ jobs:
               missing = REQUIRED_KEYS - manifest.keys()
               if missing:
                   sys.exit(f"{path}: missing required keys: {sorted(missing)}")
+              if "image" in manifest:
+                  sys.exit(f"{path}: must not have an 'image' key -- an image cannot know its own digest")
               if manifest["capability"] != expected_id:
                   sys.exit(f"{path}: 'capability' must be {expected_id!r}, got {manifest['capability']!r}")
               if manifest["execution"].get("mode") != expected_mode:
@@ -276,6 +282,12 @@ jobs:
                       f"{path}: execution.mode must be {expected_mode!r}, "
                       f"got {manifest['execution'].get('mode')!r}"
                   )
+              resources = manifest["execution"].get("resources")
+              if resources is not None and not isinstance(resources, dict):
+                  sys.exit(f"{path}: execution.resources must be a mapping, got {type(resources).__name__}")
+              work_size_limit = manifest["execution"].get("workSizeLimit")
+              if work_size_limit is not None and not isinstance(work_size_limit, str):
+                  sys.exit(f"{path}: execution.workSizeLimit must be a string, got {type(work_size_limit).__name__}")
               print(f"{path}: has all required top-level keys, capability={expected_id}, mode={expected_mode}")
           PY
 
@@ -336,6 +348,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Base64 of this leg's capability manifest, for the
+      # com.runwhen.capability.manifest.v1 label (Contract 1) -- computed
+      # once here and passed as a build-arg to both docker builds below so
+      # the smoke-test image and the pushed image carry the same label.
+      - name: Compute capability manifest label
+        id: manifest_label
+        run: |
+          set -euo pipefail
+          b64="$(python3 scripts/manifest_label.py capabilities/${{ matrix.capability }})"
+          echo "b64=${b64}" >> "$GITHUB_OUTPUT"
+
       # ----------------------------------------------------------------
       # Phase 1: build natively + load locally so we can exec the smoke
       # test. Per-(capability, arch) GHA cache scope -- matrix legs run in
@@ -349,6 +372,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           load: true
           tags: ${{ matrix.image_name }}:smoke
+          build-args: |
+            CAPABILITY_MANIFEST_B64=${{ steps.manifest_label.outputs.b64 }}
           cache-from: type=gha,scope=${{ matrix.image_name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image_name }}-${{ matrix.arch }}
 
@@ -429,6 +454,8 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            CAPABILITY_MANIFEST_B64=${{ steps.manifest_label.outputs.b64 }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -459,8 +486,10 @@ jobs:
   # merge — one job per capability: combine that capability's per-arch
   # digests into the final multi-arch manifest under every tag prepare
   # computed (`docker buildx imagetools create` is a registry-side metadata
-  # operation -- no image rebuild), then render that capability's own
-  # capabilities/<name>/manifest.yaml with the resolved digest.
+  # operation -- no image rebuild). There is no manifest-rendering step here
+  # any more: each per-arch image already carries its own manifest as the
+  # com.runwhen.capability.manifest.v1 label (set by the `build` job), and
+  # `imagetools create` preserves each child image's config/labels as-is.
   # ===========================================================================
   merge:
     needs: [prepare, build]
@@ -543,38 +572,6 @@ jobs:
             exit 1
           fi
           echo "digest=${digest}" >> "$GITHUB_OUTPUT"
-
-      # docs/static-checks/CAPABILITY-CONTRACT.md Part 1: "Digest-pinned
-      # image. CI injects it at publish; a tag is not a version." Each
-      # manifest's own header comment documents this same contract. This
-      # does not commit back to the repo -- it publishes the resolved
-      # manifest as a build artifact for whatever picks it up into the
-      # capability catalog next (that step is not yet defined in this repo).
-      - name: Render capability manifest with the resolved digest
-        env:
-          REPO_LC: ${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }}
-          DIGEST: ${{ steps.inspect.outputs.digest }}
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/manifest
-          sed -E "s|^image: .*|image: ${REPO_LC}@${DIGEST}|" \
-            capabilities/${{ matrix.capability }}/manifest.yaml > /tmp/manifest/manifest.yaml
-          python3 -m pip install --quiet pyyaml
-          python3 - <<'PY'
-          import sys
-          import yaml
-          with open("/tmp/manifest/manifest.yaml") as f:
-              m = yaml.safe_load(f)
-          assert "INJECTED_BY_CI" not in m["image"], f"digest was not injected: {m['image']!r}"
-          print(f"rendered manifest image: {m['image']}")
-          PY
-
-      - name: Upload rendered manifest
-        uses: actions/upload-artifact@v4
-        with:
-          name: capability-manifest-${{ matrix.capability }}
-          path: /tmp/manifest/manifest.yaml
-          retention-days: 30
 
       - name: Summary
         env:

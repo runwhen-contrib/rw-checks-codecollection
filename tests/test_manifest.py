@@ -72,13 +72,30 @@ def test_manifest_label_script_fails_on_missing_manifest():
     assert "no such file" in result.stderr
 
 
-def test_manifest_label_script_fails_on_top_level_image_key():
+@pytest.mark.parametrize(
+    "image_line",
+    [
+        "image: ghcr.io/example/fake@sha256:deadbeef\n",
+        "image:\n  repository: ghcr.io/example/fake\n",
+        '"image": ghcr.io/example/fake@sha256:deadbeef\n',
+    ],
+)
+def test_manifest_label_script_fails_on_top_level_image_key(image_line):
+    with tempfile.TemporaryDirectory() as tmp:
+        capability_dir = Path(tmp) / "capabilities" / "fake"
+        capability_dir.mkdir(parents=True)
+        (capability_dir / "manifest.yaml").write_text(f"{image_line}capability: fake\n")
+        result = run_manifest_label(str(capability_dir))
+    assert result.returncode != 0
+    assert "image" in result.stderr
+
+
+def test_manifest_label_script_ignores_nested_image_key():
     with tempfile.TemporaryDirectory() as tmp:
         capability_dir = Path(tmp) / "capabilities" / "fake"
         capability_dir.mkdir(parents=True)
         (capability_dir / "manifest.yaml").write_text(
-            "image: ghcr.io/example/fake@sha256:deadbeef\ncapability: fake\n"
+            "capability: fake\nsetup:\n  image: x\nimages: []\n"
         )
         result = run_manifest_label(str(capability_dir))
-    assert result.returncode != 0
-    assert "image" in result.stderr
+    assert result.returncode == 0, result.stderr

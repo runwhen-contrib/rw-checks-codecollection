@@ -91,12 +91,6 @@ RUN TARGETARCH="${TARGETARCH}" SBOM=/build/sbom/tools.cdx.json \
 # cannot be known from the source tree alone; CI passes them.
 ARG REVISION=unknown
 ARG CREATED=unknown
-# Base64 of capabilities/rw-checks/manifest.yaml, produced at build time by
-# scripts/manifest_label.py -- see Contract 1 (docs/ccv-capability-catalog
-# PLAN.md in runwhen-auto). This is how the catalog discovers this
-# capability's manifest without a platform release: it reads the label off
-# the pushed image, never a repo checkout.
-ARG CAPABILITY_MANIFEST_B64=""
 LABEL org.opencontainers.image.title="rw-checks" \
       org.opencontainers.image.description="Static-check capability image for the RunWhen platform" \
       org.opencontainers.image.source="https://github.com/runwhen-contrib/rw-checks-codecollection" \
@@ -104,8 +98,7 @@ LABEL org.opencontainers.image.title="rw-checks" \
       org.opencontainers.image.revision="${REVISION}" \
       org.opencontainers.image.created="${CREATED}" \
       io.runwhen.capability="rw-checks" \
-      io.runwhen.sbom="/usr/share/rw-checks/tools.cdx.json" \
-      com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
+      io.runwhen.sbom="/usr/share/rw-checks/tools.cdx.json"
 
 # Keep the tool SBOM IN the image, not only in the repo. A scanner handed the
 # image alone (the normal case for a registry scan) otherwise has no way to
@@ -124,6 +117,16 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE /app/
 COPY sdk /app/sdk
 RUN pip install --no-cache-dir /app
+
+# Base64 of capabilities/rw-checks/manifest.yaml, produced at build time by
+# scripts/manifest_label.py -- see Contract 1 (docs/ccv-capability-catalog
+# PLAN.md in runwhen-auto). This is how the catalog discovers this
+# capability's manifest without a platform release: it reads the label off
+# the pushed image, never a repo checkout. Declared after the pip-install
+# layer, not with the labels above: every RUN after an ARG is a cache miss
+# when its value changes, and this one changes on every manifest edit.
+ARG CAPABILITY_MANIFEST_B64=""
+LABEL com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
 
 COPY capabilities/rw-checks /app/capabilities/rw-checks
 

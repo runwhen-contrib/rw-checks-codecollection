@@ -22,8 +22,9 @@ from pathlib import Path
 # Matches a top-level `image:` key only -- not `resources:` or anything
 # indented under `execution:`. A manifest that still has one is a leftover
 # from the pre-label placeholder (see manifest.yaml's own header comment)
-# and must not ship as a label.
-TOP_LEVEL_IMAGE_KEY = re.compile(r"^image:\s")
+# and must not ship as a label. Also matches a bare `image:` line (a block
+# value on the following lines) and a quoted key.
+TOP_LEVEL_IMAGE_KEY = re.compile(r"^(image|\"image\"|'image')\s*:(\s|$)")
 
 
 def main() -> int:

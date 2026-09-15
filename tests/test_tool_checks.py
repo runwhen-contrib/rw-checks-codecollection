@@ -299,3 +299,49 @@ def test_checkov_file_args_and_explicit_config(tmp_path):
     assert argv[argv.index("--config-file") + 1] == ".checkov.yaml"
     assert "-d" not in argv and "." not in argv
     assert ctx.calls[0]["cwd"] == tree / "infra"
+
+
+def test_ast_grep_runs_from_sgconfig_directory(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "svc/sgconfig.yml", "ruleDirs: [rules]\n")
+    write(tree, "svc/src/a.py", "print(1)\n")
+    write(tree, "elsewhere/b.py", "print(2)\n")
+    ctx, result = run(tmp_path, "ast_grep", ["svc/src/a.py", "elsewhere/b.py"], {"ast-grep": "[]"})
+    assert [(c["argv"], c["cwd"]) for c in ctx.calls] == [
+        (["ast-grep", "scan", "--json", "-c", "sgconfig.yml", "src/a.py"], tree / "svc")
+    ]
+    assert result.skipped == "1 of 2 changed source files have no ast-grep config"
+
+
+def test_regal_runs_per_regal_root(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "policy/.regal/config.yaml", "rules: {}\n")
+    write(tree, "policy/authz/p.rego", "package authz\n")
+    ctx, _ = run(tmp_path, "regal", ["policy/authz/p.rego"], {"regal": "{}"})
+    assert ctx.calls[0]["argv"] == [
+        "regal",
+        "lint",
+        "--format",
+        "json",
+        "-c",
+        ".regal/config.yaml",
+        "authz/p.rego",
+    ]
+    assert ctx.calls[0]["cwd"] == tree / "policy"
+
+
+def test_biome_config_gated_one_run_per_root(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "web/biome.json", "{}")
+    write(tree, "admin/biome.jsonc", "{}")
+    write(tree, "web/src/a.ts")
+    write(tree, "admin/b.tsx")
+    write(tree, "legacy/c.js")
+    ctx, result = run(
+        tmp_path, "biome", ["web/src/a.ts", "admin/b.tsx", "legacy/c.js"], {"biome": "{}"}
+    )
+    assert [(c["argv"], c["cwd"]) for c in ctx.calls] == [
+        (["biome", "lint", "--reporter=json", "b.tsx"], tree / "admin"),
+        (["biome", "lint", "--reporter=json", "src/a.ts"], tree / "web"),
+    ]
+    assert result.skipped == "1 of 3 changed JS/TS/JSON/CSS files have no biome config"

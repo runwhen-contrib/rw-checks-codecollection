@@ -14,28 +14,28 @@ from pathlib import Path
 import adapters
 from runwhen_capability import Context
 
-from . import _common
+from . import _common, _plan, _runner
 
 SEVERITY = {"error": "error", "warning": "warning", "info": "note", "hint": "note"}
-FILES = ()
+NAME = "ast-grep"
+KIND = "source"
+FILES = ()  # rules decide languages; every changed file under an sgconfig is eligible
 CONFIG = "required"
+CONFIG_NAMES = (_plan.ConfigName("sgconfig.yml"), _plan.ConfigName("sgconfig.yaml"))
 CI_BINARY = None
 GUARD = None
+LANE = "B"  # cwd-only discovery; ruleDirs are relative to sgconfig (verified)
 EXPECT_EXIT = (0, 1)
 
 
-def detect(tree: Path) -> list[Path]:
-    return [p.parent for p in _common.config_files(tree, "sgconfig.yml", "sgconfig.yaml")]
+def applicable(ctx: Context, tree: Path, changed: list[str] | None) -> _plan.Applicability:
+    return _plan.plan(ctx, tree, changed, sys.modules[__name__])
 
 
-def check(ctx: Context, tree: Path, changed: list[str] | None):
-    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
-    if stop:
-        return findings
-    # No path argument in capture.log either: `ast-grep scan` already scans
-    # the whole project rooted at cwd by default.
-    proc = ctx.run(["ast-grep", "scan", "--json"], cwd=tree)
+def check(ctx: Context, tree: Path, inv: _plan.Invocation):
+    argv = ["ast-grep", "scan", "--json", "-c", _runner.config_arg(inv), *_runner.files_arg(inv)]
+    proc = _runner.run(ctx, argv, cwd=_runner.cwd_path(tree, inv))
     fail = _common.check_exit(ctx, tree, "ast-grep", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    return _common.emit(ctx, adapters.ast_grep(proc.stdout, SEVERITY), tree, changed)
+    return _runner.records_to_findings(ctx, tree, inv, adapters.ast_grep(proc.stdout, SEVERITY))

@@ -46,6 +46,13 @@ MAX_GREP_MATCH_TEXT_LEN = 400
 MAX_LS_ENTRIES = 500
 DEFAULT_LS_DEPTH = 1
 
+# unreadable-path disclosure (grep and ls, both of which walk a subtree):
+# capped so a pathologically large unreadable subtree can't blow the
+# envelope the way an unbounded `matches`/`entries` list could -- the cap
+# itself is disclosed via `unreadableTruncated`, the same shape `truncated`
+# already gives the capped match/entry list.
+MAX_UNREADABLE_PATHS = 100
+
 
 class PathEscapesTreeError(ValueError):
     """A caller-supplied path resolved outside the checked-out tree."""
@@ -89,6 +96,25 @@ def _confined(tree: Path, path: str) -> Path:
 
 def _is_binary(data: bytes) -> bool:
     return b"\x00" in data[:BINARY_SNIFF_LEN]
+
+
+class _UnreadablePaths:
+    """Collects paths *encountered* but not readable during a grep/ls walk
+    (permission denied, a TOCTOU race, etc.), capped at MAX_UNREADABLE_PATHS
+    -- shared by grep_tree/_walk_files/_grep_file and ls_tree/_ls_walk so
+    both surfaces disclose the same shape. `.paths` feeds `unreadable`;
+    `.truncated` feeds `unreadableTruncated` and is set the instant the cap
+    bites, exactly like `truncated` already is for `matches`/`entries`."""
+
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+        self.truncated = False
+
+    def add(self, rel: str) -> None:
+        if len(self.paths) < MAX_UNREADABLE_PATHS:
+            self.paths.append(rel)
+        else:
+            self.truncated = True
 
 
 # --- read --------------------------------------------------------------
@@ -186,7 +212,7 @@ def match_glob(glob: str, rel: str) -> bool:
     return _path_match(g, rel)
 
 
-def _walk_files(tree: Path):
+def _walk_files(tree: Path, unreadable: _UnreadablePaths):
     """Depth-first, lexically sorted per directory (mirrors
     filepath.WalkDir's default order), skipping ".git" entirely and any
     symlink (file or directory) without following it -- ported from
@@ -196,18 +222,20 @@ def _walk_files(tree: Path):
 
     def _on_walk_error(exc: OSError) -> None:
         # os.walk's default (onerror=None) silently skips any directory it
-        # cannot scandir and moves on to its siblings -- fine for a subtree
-        # merely *encountered* while walking (deferred, same as the
-        # per-file case in _grep_file below: disclosing it needs a new
-        # envelope field plus papi/agentfarm changes). But grep has no
+        # cannot scandir and moves on to its siblings. But grep has no
         # sub-path scoping input the way ls_tree has `path` -- `tree`
         # itself is the one thing a grep caller has no way to NOT be
         # asking about -- so an unreadable tree root is the caller's
         # literal, explicit ask, and `matches: []` for it would be the same
         # lie ls_tree's strict=True already closed for its own
-        # caller-supplied path (85b3a8b). Raise only for that one path.
+        # caller-supplied path (85b3a8b). Raise for that one path; a
+        # subtree merely *encountered* while walking is recorded into
+        # `unreadable` instead (see this module's docstring and
+        # `_UnreadablePaths`).
         if exc.filename == root_str:
             raise exc
+        rel = normalize_path(str(Path(exc.filename).relative_to(tree)))
+        unreadable.add(rel)
 
     for root, dirnames, filenames in os.walk(tree, onerror=_on_walk_error, followlinks=False):
         root_path = Path(root)
@@ -234,7 +262,12 @@ def _walk_files(tree: Path):
 
 
 def _grep_file(
-    full: Path, rel: str, pattern: re.Pattern, limit: int, matches: list[GrepMatch]
+    full: Path,
+    rel: str,
+    pattern: re.Pattern,
+    limit: int,
+    matches: list[GrepMatch],
+    unreadable: _UnreadablePaths,
 ) -> bool:
     """Scans one file line by line, appending every match until `limit` is
     reached, returning True the instant that happens so the caller can stop
@@ -243,15 +276,13 @@ def _grep_file(
     try:
         data = full.read_bytes()
     except OSError:
-        # An unreadable file must not fail the whole walk -- but this is
-        # also a silent-absence gap: it renders identically to "the pattern
-        # didn't match here". It is deliberately left this way for now --
-        # `rel` was only *encountered* while walking, not a path the caller
-        # named directly the way ls_tree's `path` or _walk_files' own
-        # `tree` root are (see that function's _on_walk_error). Disclosing
-        # this needs a new envelope field (`skipped`/`unreadable`, not an
-        # overload of `truncated`) plus matching papi and agentfarm
-        # changes -- deferred, not missed.
+        # An unreadable file must not fail the whole walk -- but it must
+        # not render identically to "the pattern didn't match here"
+        # either: `rel` was only *encountered* while walking, not a path
+        # the caller named directly, so it can't raise the way a
+        # caller-supplied path does (see _walk_files' _on_walk_error) --
+        # it is disclosed via `unreadable` instead.
+        unreadable.add(rel)
         return False
     if _is_binary(data):
         return False  # binary -- skip, not an error
@@ -293,15 +324,21 @@ def grep_tree(
     limit = min(limit, HARD_GREP_MAX_MATCHES)
 
     matches: list[GrepMatch] = []
-    for rel, full in _walk_files(tree):
+    unreadable = _UnreadablePaths()
+    for rel, full in _walk_files(tree, unreadable):
         if glob and not match_glob(glob, rel):
             continue
-        if _grep_file(full, rel, compiled, limit, matches):
+        if _grep_file(full, rel, compiled, limit, matches, unreadable):
             break
         if len(matches) >= limit:
             break
 
-    return GrepResult(matches=matches, truncated=len(matches) >= limit)
+    return GrepResult(
+        matches=matches,
+        truncated=len(matches) >= limit,
+        unreadable=unreadable.paths,
+        unreadableTruncated=unreadable.truncated,
+    )
 
 
 # --- ls ------------------------------------------------------------------
@@ -313,6 +350,7 @@ def _ls_walk(
     depth: int,
     max_depth: int,
     entries: list[LsEntry],
+    unreadable: _UnreadablePaths,
     strict: bool = False,
 ) -> None:
     try:
@@ -323,9 +361,12 @@ def _ls_walk(
         # `entries: []` -- an unreadable directory and an empty one must not
         # render identically (this module's docstring; the same rule
         # _check_tree_materialized enforces one level up). A directory
-        # merely *encountered* while recursing is skipped as before.
+        # merely *encountered* while recursing can't raise the same way (it
+        # wasn't the caller's explicit ask) -- it is disclosed via
+        # `unreadable` instead.
         if strict:
             raise
+        unreadable.add(rel_prefix)
         return
 
     for name in names:
@@ -350,7 +391,7 @@ def _ls_walk(
         entries.append(LsEntry(path=rel_path, type=typ, size=size))
 
         if typ == "dir" and depth < max_depth and len(entries) < MAX_LS_ENTRIES:
-            _ls_walk(full, rel_path, depth + 1, max_depth, entries)
+            _ls_walk(full, rel_path, depth + 1, max_depth, entries, unreadable)
 
 
 def ls_tree(tree: Path, path: str | None = None, depth: int | None = None) -> LsResult:
@@ -368,8 +409,14 @@ def ls_tree(tree: Path, path: str | None = None, depth: int | None = None) -> Ls
 
     max_depth = depth if depth and depth > 0 else DEFAULT_LS_DEPTH
     entries: list[LsEntry] = []
-    _ls_walk(root, "", 1, max_depth, entries, strict=True)
-    return LsResult(entries=entries, truncated=len(entries) >= MAX_LS_ENTRIES)
+    unreadable = _UnreadablePaths()
+    _ls_walk(root, "", 1, max_depth, entries, unreadable, strict=True)
+    return LsResult(
+        entries=entries,
+        truncated=len(entries) >= MAX_LS_ENTRIES,
+        unreadable=unreadable.paths,
+        unreadableTruncated=unreadable.truncated,
+    )
 
 
 class RepoFsClient:

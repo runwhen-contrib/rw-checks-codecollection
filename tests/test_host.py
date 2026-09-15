@@ -310,7 +310,14 @@ def test_a_genuine_zero_match_grep_on_a_real_tree_is_still_an_ordinary_ok_result
 
     assert result.setup.status == "ok"
     assert result.tasks[0].status == "ok"
-    assert result.tasks[0].outputs == {"result": {"matches": [], "truncated": False}}
+    assert result.tasks[0].outputs == {
+        "result": {
+            "matches": [],
+            "truncated": False,
+            "unreadable": [],
+            "unreadableTruncated": False,
+        }
+    }
 
 
 def test_stateless_leased_requests_are_unaffected_by_setup_caching(tmp_path):

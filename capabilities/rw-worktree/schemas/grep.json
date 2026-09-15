@@ -37,6 +37,18 @@
       "default": false,
       "title": "Truncated",
       "type": "boolean"
+    },
+    "unreadable": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unreadable",
+      "type": "array"
+    },
+    "unreadableTruncated": {
+      "default": false,
+      "title": "Unreadabletruncated",
+      "type": "boolean"
     }
   },
   "title": "GrepResult",

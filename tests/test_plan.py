@@ -211,6 +211,25 @@ def test_guard_paths_chain_from_root_to_config(tmp_path):
     assert [p.relative_to(tmp_path).as_posix() for p in paths] == [".sqlfluff", "db/q/.sqlfluff"]
 
 
+def test_guard_paths_chain_includes_extra_names_but_nearest_config_ignores_them(tmp_path):
+    _write(tmp_path, ".sqlfluff", "[sqlfluff]\n")
+    _write(tmp_path, "pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    mod = _module(
+        NAME="sqlfluff",
+        CONFIG_NAMES=(ConfigName(".sqlfluff"),),
+        GUARD_CHAIN=True,
+        GUARD_EXTRA_NAMES=(ConfigName("pep8.ini"),),
+    )
+    paths = _plan.guard_paths(tmp_path, Resolved(".sqlfluff", ""), mod)
+    assert [p.relative_to(tmp_path).as_posix() for p in paths] == [".sqlfluff", "pep8.ini"]
+
+    # a pep8.ini-only tree has no sqlfluff config at all -- GUARD_EXTRA_NAMES
+    # must not make nearest_config treat pep8.ini as one.
+    tree = tmp_path / "bare"
+    _write(tree, "pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    assert _plan.nearest_config(tree, "q.sql", mod.CONFIG_NAMES) is None
+
+
 def test_plan_narrow_hook_can_drop_files_with_a_reason(tmp_path):
     _write(tmp_path, ".flake8", "[flake8]\n")
     _write(tmp_path, "x.py")

@@ -280,9 +280,11 @@ class FindingsClient:
         match list. This is a safety valve against a genuine runaway, not
         routine truncation -- any realistic run, even an undiffed one
         against a large repo, should pass through untouched. See
-        MAX_FINDINGS_PER_RESULT for the byte-budget arithmetic. Call this
-        last, after filter_changed/fingerprint, so the cap applies to the
-        exact list the task is about to return.
+        MAX_FINDINGS_PER_RESULT for the byte-budget arithmetic. `cap` is
+        the LAST call on the exact list a task is about to return: rw-checks'
+        runner calls it after its own per-invocation safety filter (dropping
+        findings outside the invocation's own files, `_runner.run_check`),
+        so the cap sees only what the task actually hands back.
 
         The list handed in here is already bounded at MAX_FINDINGS_PER_RESULT
         + 1 by SarifClient.parse (sarif.py) -- that is what stops a genuine

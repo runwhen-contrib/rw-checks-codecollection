@@ -10,10 +10,12 @@ executes arbitrary code in our pod -- verified against the built image. The
 same shape -- a repo-controlled config the tool acts on before or instead of
 scanning code -- exists for checkov (`external-checks-dir`/
 `external-checks-git` import and run a directory or git repo of Python check
-plugins), sqlfluff (a jinja templater `library_path` is a directory sqlfluff
-imports Python modules from) and vale (a non-empty `Packages` fetches and
-installs a style package from a URL). None of these are findings a scan
-should report; the tool must never be invoked at all.
+plugins), flake8 (a non-empty `paths`, `extension` or `report` under
+`[flake8:local-plugins]` adds `paths` to `sys.path` and imports the named
+entry points), sqlfluff (a jinja templater `library_path` is a directory
+sqlfluff imports Python modules from) and vale (a non-empty `Packages`
+fetches and installs a style package from a URL). None of these are
+findings a scan should report; the tool must never be invoked at all.
 
 One guard function per affected tool, called by `_plan.plan` per config group
 BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
@@ -42,11 +44,9 @@ import yaml
 # --- shared plumbing ---------------------------------------------------------
 
 
-def _selected(tree: Path, paths: Sequence[Path], *names: str) -> list[Path]:
+def _selected(paths: Sequence[Path], *names: str) -> list[Path]:
     """Exactly those `paths` whose basename is one of `names` -- the
-    per-config-group guard, DIFF-SCOPED-CHECKS.md §5.5. `tree` keeps the
-    same positional shape as every call site below, which also needs it for
-    `_reason`/`_unparseable`."""
+    per-config-group guard, DIFF-SCOPED-CHECKS.md §5.5."""
     wanted = set(names)
     return sorted(p for p in paths if p.name in wanted and p.is_file())
 
@@ -130,7 +130,7 @@ _PYLINT_WHY = "which executes arbitrary Python"
 
 def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _selected(tree, paths, ".pylintrc", "pylintrc"):
+    for path in _selected(paths, ".pylintrc", "pylintrc"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
@@ -139,7 +139,7 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
             if key in _PYLINT_KEYS and value:
                 return _reason(tree, path, key, _PYLINT_WHY)
 
-    for path in _selected(tree, paths, ".pylintrc.toml", "pylintrc.toml"):
+    for path in _selected(paths, ".pylintrc.toml", "pylintrc.toml"):
         try:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -148,7 +148,7 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
         if found:
             return _reason(tree, path, found, _PYLINT_WHY)
 
-    for path in _selected(tree, paths, "pyproject.toml"):
+    for path in _selected(paths, "pyproject.toml"):
         try:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -158,7 +158,7 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
         if found:
             return _reason(tree, path, found, _PYLINT_WHY)
 
-    for path in _selected(tree, paths, "setup.cfg"):
+    for path in _selected(paths, "setup.cfg"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
@@ -167,6 +167,29 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
             if key in _PYLINT_KEYS and value:
                 return _reason(tree, path, key, _PYLINT_WHY)
 
+    return None
+
+
+# --- flake8 ---------------------------------------------------------------
+# [flake8:local-plugins] paths/extension/report add `paths` to sys.path and
+# import the named `module:attr` entry points -- flake8 executing arbitrary
+# Python from the repo before it lints anything, same shape as pylint's
+# init-hook/load-plugins.
+_FLAKE8_LOCAL_PLUGINS_KEYS = {"paths", "extension", "report"}
+_FLAKE8_WHY = "which imports and runs Python from the repository"
+
+
+def flake8(tree: Path, paths: Sequence[Path]) -> str | None:
+    """Reason to refuse, or None when safe."""
+    for path in _selected(paths, ".flake8", "setup.cfg", "tox.ini"):
+        try:
+            parser = _parse_ini(path.read_text())
+        except (OSError, UnicodeDecodeError, configparser.Error) as e:
+            return _unparseable(tree, path, e)
+        local_plugins = {s for s in parser.sections() if s.lower() == "flake8:local-plugins"}
+        for key, value in _ini_items(parser, sections=local_plugins):
+            if key in _FLAKE8_LOCAL_PLUGINS_KEYS and value:
+                return _reason(tree, path, f"{key} in [flake8:local-plugins]", _FLAKE8_WHY)
     return None
 
 
@@ -185,7 +208,7 @@ _CHECKOV_WHY = "which checkov imports and runs as a Python check plugin"
 
 def checkov(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _selected(tree, paths, ".checkov.yaml", ".checkov.yml"):
+    for path in _selected(paths, ".checkov.yaml", ".checkov.yml"):
         try:
             doc = yaml.safe_load(path.read_text())
         except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
@@ -199,13 +222,15 @@ def checkov(tree: Path, paths: Sequence[Path]) -> str | None:
 # --- sqlfluff -----------------------------------------------------------
 # The jinja templater's library_path is a directory sqlfluff imports Python
 # modules FROM (custom Jinja filters/macros) -- same "attacker-controlled
-# path becomes a module import" shape as pylint's load-plugins.
+# path becomes a module import" shape as pylint's load-plugins. sqlfluff's
+# loader also merges pep8.ini into the same config, so it is searched here
+# even though it configures nothing else sqlfluff cares about.
 _SQLFLUFF_WHY = "which sqlfluff imports Python modules from"
 
 
 def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _selected(tree, paths, ".sqlfluff", "setup.cfg", "tox.ini"):
+    for path in _selected(paths, ".sqlfluff", "setup.cfg", "tox.ini", "pep8.ini"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
@@ -214,7 +239,7 @@ def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
             if key == "library_path" and value:
                 return _reason(tree, path, "library_path", _SQLFLUFF_WHY)
 
-    for path in _selected(tree, paths, "pyproject.toml"):
+    for path in _selected(paths, "pyproject.toml"):
         try:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -235,7 +260,7 @@ _VALE_WHY = "which vale fetches and installs from a URL"
 
 def vale(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _selected(tree, paths, ".vale.ini", "_vale.ini", "vale.ini"):
+    for path in _selected(paths, ".vale.ini", "_vale.ini", "vale.ini"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:

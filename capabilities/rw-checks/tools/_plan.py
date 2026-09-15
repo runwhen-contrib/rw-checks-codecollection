@@ -123,16 +123,23 @@ def nearest_config(
 
 def guard_paths(tree: Path, resolved: Resolved, module: Any) -> list[Path]:
     """Every config file the tool will load for this group. Only sqlfluff merges
-    ancestor configs (GUARD_CHAIN); every other guarded tool loads exactly one."""
+    ancestor configs (GUARD_CHAIN); every other guarded tool loads exactly one.
+
+    `GUARD_EXTRA_NAMES` (default `()`) adds config names to the chain scan
+    that the guard must see but that play no part in eligibility -- sqlfluff
+    merges `pep8.ini` into its config even though nothing here treats a
+    `pep8.ini`-only repo as configured for sqlfluff at all (that stays
+    `module.CONFIG_NAMES`, used by `nearest_config`/`eligible_files`)."""
     if not getattr(module, "GUARD_CHAIN", False):
         return [tree / resolved.path]
+    names = tuple(module.CONFIG_NAMES) + tuple(getattr(module, "GUARD_EXTRA_NAMES", ()))
     chain: list[Path] = []
     base = PurePosixPath(resolved.base) if resolved.base else PurePosixPath(".")
     lineage = [PurePosixPath(".")]
     for part in base.parts:
         lineage.append(lineage[-1] / part)
     for d in lineage:
-        for cfg in module.CONFIG_NAMES:
+        for cfg in names:
             candidate = tree / (d / cfg.name).as_posix()
             if _counts(candidate, cfg):
                 chain.append(candidate)

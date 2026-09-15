@@ -186,6 +186,55 @@ def test_sqlfluff_malformed_config_is_unsafe(tmp_path):
     assert "tox.ini" in reason
 
 
+def test_sqlfluff_pep8_ini_library_path_trips_the_guard(tmp_path):
+    path = write(tmp_path, "pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert reason.startswith("pep8.ini: sets library_path")
+
+
+# --- flake8 ---------------------------------------------------------------
+
+
+def test_flake8_local_plugins_extension_trips_the_guard(tmp_path):
+    path = write(
+        tmp_path,
+        ".flake8",
+        "[flake8:local-plugins]\nextension =\n  XX = evilmod.pwn:Checker\npaths = .\n",
+    )
+    reason = guards.flake8(tmp_path, [path])
+    assert reason is not None
+    assert reason.startswith(".flake8: sets extension in [flake8:local-plugins]")
+
+
+def test_flake8_local_plugins_report_in_setup_cfg_trips_the_guard(tmp_path):
+    path = write(tmp_path, "setup.cfg", "[flake8:local-plugins]\nreport = X = m:R\n")
+    reason = guards.flake8(tmp_path, [path])
+    assert reason is not None
+    assert "report in [flake8:local-plugins]" in reason
+
+
+def test_flake8_clean_config_is_safe(tmp_path):
+    path = write(tmp_path, "tox.ini", "[flake8]\nmax-line-length = 100\n")
+    assert guards.flake8(tmp_path, [path]) is None
+
+
+def test_flake8_malformed_config_is_unsafe(tmp_path):
+    path = write(tmp_path, ".flake8", "[flake8\nbroken")
+    reason = guards.flake8(tmp_path, [path])
+    assert reason is not None
+    assert "could not be parsed" in reason
+
+
+def test_flake8_empty_paths_is_safe(tmp_path):
+    path = write(tmp_path, ".flake8", "[flake8:local-plugins]\npaths =\n")
+    assert guards.flake8(tmp_path, [path]) is None
+
+
+def test_flake8_no_config_is_safe(tmp_path):
+    assert guards.flake8(tmp_path, []) is None
+
+
 # --- vale ---------------------------------------------------------------
 
 

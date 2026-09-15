@@ -56,6 +56,9 @@ CI_BINARY = "sqlfluff"
 # library_path, which sqlfluff imports Python modules from.
 GUARD = guards.sqlfluff
 GUARD_CHAIN = True  # sqlfluff merges every config from the root down to the file's directory
+# sqlfluff's loader also merges pep8.ini, but it configures nothing else
+# sqlfluff cares about here, so it counts for the guard only, never eligibility.
+GUARD_EXTRA_NAMES = (_plan.ConfigName("pep8.ini"),)
 LANE = "A"  # per-file-nearest (verified); sqlfluff has no --config flag
 EXPECT_EXIT = (0, 1)
 

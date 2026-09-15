@@ -3,6 +3,12 @@
 CONFIG required, following CodeRabbit: an opinionated linter run WITHOUT the
 repository's own config reports findings the repo never asked for -- same
 reasoning as pylint.py.
+
+Its own config is also an arbitrary-code-execution vector: a non-empty
+`paths`, `extension` or `report` under `[flake8:local-plugins]` adds `paths`
+to `sys.path` and imports the named entry points -- see guards.py. flake8
+reads only the file passed with `--config`, never merges ancestor configs,
+so no GUARD_CHAIN.
 """
 
 from __future__ import annotations
@@ -12,6 +18,7 @@ import sys
 from pathlib import Path, PurePosixPath
 
 import adapters
+import guards
 from runwhen_capability import Context
 
 import tools.ruff
@@ -37,7 +44,7 @@ CONFIG_NAMES = (
     _plan.ConfigName("tox.ini", ("flake8",)),
 )
 CI_BINARY = "flake8"
-GUARD = None
+GUARD = guards.flake8  # `[flake8:local-plugins]` imports and runs Python from the repo
 LANE = "B"  # cwd-only discovery (verified)
 EXPECT_EXIT = (0, 1)
 _FORMAT = "--format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s"

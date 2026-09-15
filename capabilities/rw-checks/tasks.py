@@ -3,14 +3,14 @@
 One `@task` per tool, each a real named function you can jump to and grep for.
 The body is one line because everything else about a tool -- its argv, severity
 map, config discovery, applicability and diff-filter decision -- lives in its
-own module under `tools/`, beside the `detect()` the discovery task will call.
+own module under `tools/`.
 
 An earlier version generated these in a loop with `importlib.import_module`
 and `globals()[name] = ...`. Shorter, and worse: `tasks.ruff` existed at run
 time but nowhere in the source, so nothing could jump to it and nothing could
 grep it. The duplication the tools/ split removed was the three-line
-run/parse/filter TAIL repeated 22 times -- a list of what this capability
-offers is worth writing out.
+run/parse/filter TAIL repeated across all 19 of these checks -- a list of
+what this capability offers is worth writing out.
 
 No sys.path juggling here: `load_capability` puts the capability directory and
 `tools/` on the path before this file is exec'd, because a tasks.py loaded by

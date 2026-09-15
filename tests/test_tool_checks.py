@@ -209,6 +209,26 @@ def test_sqlfluff_runs_files_from_root(tmp_path):
     assert ctx.calls[0]["cwd"] == tree
 
 
+def test_sqlfluff_pep8_ini_library_path_is_refused(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "db/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    write(tree, "db/q.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/q.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable sqlfluff config is unsafe"
+    assert [f.path for f in result.findings] == ["pep8.ini"]
+
+
+def test_sqlfluff_pep8_ini_only_repo_has_no_applicable_config(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    write(tree, "db/q.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/q.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "no sqlfluff config applies to the changed files"
+
+
 def test_pylint_runs_per_config_from_its_directory(tmp_path):
     tree = tmp_path / "tree"
     write(tree, "a/.pylintrc", "[MAIN]\njobs=1\n")
@@ -299,6 +319,22 @@ def test_checkov_file_args_and_explicit_config(tmp_path):
     assert argv[argv.index("--config-file") + 1] == ".checkov.yaml"
     assert "-d" not in argv and "." not in argv
     assert ctx.calls[0]["cwd"] == tree / "infra"
+
+
+def test_flake8_local_plugins_config_is_refused(tmp_path):
+    tree = tmp_path / "tree"
+    write(
+        tree,
+        "f8/.flake8",
+        "[flake8]\nmax-line-length=100\n"
+        "[flake8:local-plugins]\npaths = .\nextension = XX = evil:C\n",
+    )
+    write(tree, "f8/app.py", "import os\n")
+    ctx, result = run(tmp_path, "flake8", ["f8/app.py"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable flake8 config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+    assert [f.path for f in result.findings] == ["f8/.flake8"]
 
 
 def test_flake8_honours_config_excludes_for_explicit_files(tmp_path):

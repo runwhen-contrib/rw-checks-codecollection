@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -40,6 +41,32 @@ _STDERR_BYTE_BUDGET = 1024 * 1024  # 1 MiB
 # but conventional -- matches the common OS pipe buffer size, so a read
 # rarely blocks waiting for more than one chunk's worth of data.
 _RUN_READ_CHUNK = 65536
+
+# How long a drain thread gets to notice a kill and finish reading whatever
+# was already buffered, once the process itself is confirmed dead (this
+# runs AFTER proc.wait() has already returned) -- not a bound on the tool's
+# own runtime, which `timeout`/DEFAULT_RUN_TIMEOUT already governs. A few
+# seconds is generous for draining bytes a dead process can no longer add
+# to; see `run()`'s docstring for why this is only a belt-and-braces bound,
+# not the primary fix for a grandchild holding a pipe open.
+_DRAIN_JOIN_TIMEOUT = 5
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """SIGKILL the whole process group `proc` leads (see `start_new_session=
+    True` in run(), which makes `proc.pid` a process group id too), not
+    just the direct child `proc.kill()` would reach. A tool that shells out
+    to its own scanner engine (semgrep, checkov, trivy's embedded scanners)
+    can leave a grandchild running after the direct child is killed -- and
+    that grandchild inherits the same stdout/stderr pipe fds, so it alone
+    is enough to keep a drain thread's `.read()` from ever seeing EOF, even
+    once `proc.wait()` has confirmed the direct child is gone.
+    `ProcessLookupError` means the whole group already exited on its own
+    (an ordinary race, not a bug) -- nothing left to kill."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 def _drain(stream, budget: int, chunks: list[str], state: dict, kill) -> None:
@@ -197,6 +224,21 @@ class Context:
         kill, the process is killed and then waited on (never left a
         zombie) before either raising TimeoutExpired or returning control
         to the oversized-output check below.
+
+        The kill reaches the whole process GROUP (`start_new_session=True`
+        below, killed via _kill_process_group's `os.killpg`), not just the
+        direct child `proc.kill()` would reach: a tool that shells out to
+        its own scanner engine (semgrep, checkov, ...) can leave a
+        grandchild running that inherits the same stdout/stderr pipes, and
+        that alone is enough to keep a drain thread's `.read()` from ever
+        seeing EOF -- turning a refusal that is supposed to be fast and
+        1Gi-safe into a hung task instead (the lease then expires and the
+        real cause is lost). The thread joins below are ALSO bounded
+        (_DRAIN_JOIN_TIMEOUT), as a second, independent backstop: a
+        grandchild that further detached into its own session escapes even
+        the process-group kill, and this method still has to return control
+        -- with the right exception -- rather than block on a thread that
+        may now never finish.
         """
         run_cwd = Path(cwd) if cwd is not None else self.workdir
         proc = subprocess.Popen(  # noqa: S603 -- argv is capability-controlled, by design
@@ -206,6 +248,7 @@ class Context:
             stderr=subprocess.PIPE,
             text=True,
             env={**os.environ, **env} if env else None,
+            start_new_session=True,  # so `proc.pid` is also the process group id -- see above
         )
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
@@ -213,7 +256,13 @@ class Context:
         stderr_state: dict = {}
         stdout_thread = threading.Thread(
             target=_drain,
-            args=(proc.stdout, SARIF_BYTE_BUDGET, stdout_chunks, stdout_state, proc.kill),
+            args=(
+                proc.stdout,
+                SARIF_BYTE_BUDGET,
+                stdout_chunks,
+                stdout_state,
+                lambda: _kill_process_group(proc),
+            ),
             daemon=True,
         )
         stderr_thread = threading.Thread(
@@ -226,28 +275,36 @@ class Context:
         try:
             proc.wait(timeout=timeout or DEFAULT_RUN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            _kill_process_group(proc)
             proc.wait()
             raise
         finally:
-            # Joined (and streams closed) on every path, including the
-            # timeout re-raise above -- an oversized-stdout kill and a
-            # timeout kill both end the process, which EOFs both pipes and
-            # lets these threads finish on their own; join() just proves it
-            # before this method either raises or reads `stdout_state`.
-            stdout_thread.join()
-            stderr_thread.join()
-            proc.stdout.close()
-            proc.stderr.close()
+            # Bounded, not an unbounded join() -- see the docstring above.
+            # `daemon=True` on both threads means one abandoned past this
+            # bound does not stop the process (or this method) from moving
+            # on; it is simply left running, reading a pipe nothing else
+            # will ever act on, until it (eventually) sees EOF or this
+            # process exits.
+            stdout_thread.join(timeout=_DRAIN_JOIN_TIMEOUT)
+            stderr_thread.join(timeout=_DRAIN_JOIN_TIMEOUT)
+            # Only close a stream whose reader actually finished: closing
+            # the fd out from under a thread still blocked in `.read()` on
+            # it (the abandoned-thread case) risks that read raising
+            # mid-flight or the fd number being reused by something else in
+            # this process before the abandoned read ever returns.
+            if not stdout_thread.is_alive():
+                proc.stdout.close()
+            if not stderr_thread.is_alive():
+                proc.stderr.close()
 
-        if stdout_state["over"]:
+        if stdout_state.get("over"):
             raise OutputTooLargeError(
                 f"check output too large to process: >{stdout_state['chars']} bytes"
             )
 
         stdout = "".join(stdout_chunks)
         stderr = "".join(stderr_chunks)
-        if stderr_state["over"]:
+        if stderr_state.get("over"):
             stderr += f"\n... stderr truncated at {_STDERR_BYTE_BUDGET} bytes"
 
         if stderr:

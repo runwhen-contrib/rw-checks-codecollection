@@ -12,6 +12,7 @@ import os
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,20 @@ def _ctx(tmp_path: Path) -> Context:
 
 def _prepend_path(monkeypatch: pytest.MonkeyPatch, bin_dir: Path) -> None:
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+def _assert_process_gone(pid: int) -> None:
+    """`os.kill(pid, 0)` sends no signal -- it only probes whether `pid` is
+    still alive, raising ProcessLookupError once it is not. Polled rather
+    than checked once: SIGKILL is asynchronous, so the grandchild is not
+    guaranteed to be reaped the instant os.killpg() returns."""
+    for _ in range(30):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    pytest.fail(f"pid {pid} is still alive 3s after the kill -- a process was left behind")
 
 
 def test_normal_small_output_round_trips_exactly(tmp_path, monkeypatch, caplog):
@@ -153,3 +168,87 @@ def test_timeout_still_raises_timeout_expired(tmp_path, monkeypatch):
     ctx = _ctx(tmp_path)
     with pytest.raises(subprocess.TimeoutExpired):
         ctx.run(["tool"], timeout=0.3)
+
+
+# --- process-group kill: a grandchild must not survive the direct child ----
+# Real static-check tools shell out to their own scanner engine (semgrep,
+# checkov's embedded checks, trivy's DB fetch helper); the grandchild
+# inherits the same stdout/stderr pipe fds the direct child was given.
+# `proc.kill()` alone only reaches the direct child -- the grandchild keeps
+# writing (or just keeps the pipe's write end open), a drain thread's
+# `.read()` never sees EOF, and `stdout_thread.join()` hangs forever: a
+# 1Gi-safe refusal turns into a hung task instead. `_kill_process_group`
+# (os.killpg, backed by `start_new_session=True`) is what closes this.
+
+
+def _fork_holding_stub(tmp_path: Path, pid_file: Path, parent_body: str) -> Path:
+    """A stub that forks once: the grandchild sleeps, holding its inherited
+    copy of the stdout/stderr pipe fds open and doing nothing else; the
+    direct child (the "tool") writes its pid file, runs `parent_body`, and
+    exits. Neither process calls os.setsid() -- the grandchild stays in the
+    same process group the direct child started in, exactly like a real
+    tool's subprocess would, so os.killpg from _kill_process_group reaches
+    it too."""
+    return _stub(
+        tmp_path,
+        "tool",
+        "import os, sys, time\n"
+        "pid = os.fork()\n"
+        "if pid == 0:\n"
+        "    time.sleep(30)\n"
+        "    sys.exit(0)\n"
+        "else:\n"
+        f"    open({str(pid_file)!r}, 'w').write(str(pid))\n"
+        f"{parent_body}",
+    )
+
+
+def test_oversized_stdout_kills_a_surviving_grandchild_too(tmp_path, monkeypatch):
+    """The core gap this fix closes: an over-budget kill must reach a
+    grandchild holding the pipe open, or the refusal never completes.
+    OutputTooLargeError must still be raised promptly (well inside
+    _DRAIN_JOIN_TIMEOUT's few-second bound), and the grandchild must
+    actually be dead afterward -- not just no-longer-blocking this call."""
+    pid_file = tmp_path / "grandchild.pid"
+    over_budget = SARIF_BYTE_BUDGET + (10 * 1024 * 1024)
+    bin_dir = _fork_holding_stub(
+        tmp_path,
+        pid_file,
+        f"    sys.stdout.write('a' * {over_budget})\n    sys.stdout.flush()\n    sys.exit(0)\n",
+    )
+    _prepend_path(monkeypatch, bin_dir)
+
+    ctx = _ctx(tmp_path)
+    started = time.monotonic()
+    with pytest.raises(OutputTooLargeError):
+        ctx.run(["tool"])
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 10, f"ctx.run took {elapsed:.1f}s -- the grandchild likely held a pipe open"
+    _assert_process_gone(int(pid_file.read_text()))
+
+
+def test_timeout_kills_a_surviving_grandchild_too(tmp_path, monkeypatch):
+    """Same gap, on the timeout path: a hung tool that forked a grandchild
+    holding the pipe open must not turn a bounded timeout into an
+    unbounded hang. TimeoutExpired must still be raised promptly, and the
+    grandchild must actually be dead afterward."""
+    pid_file = tmp_path / "grandchild.pid"
+    bin_dir = _fork_holding_stub(
+        tmp_path,
+        pid_file,
+        "    time.sleep(30)\n    sys.exit(0)\n",  # the direct child hangs too
+    )
+    _prepend_path(monkeypatch, bin_dir)
+
+    ctx = _ctx(tmp_path)
+    started = time.monotonic()
+    # A more generous timeout than test_timeout_still_raises_timeout_expired's
+    # 0.3s: this stub forks before it can write its pid file, and needs a
+    # little real headroom for that to reliably land before the kill.
+    with pytest.raises(subprocess.TimeoutExpired):
+        ctx.run(["tool"], timeout=1.5)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 10, f"ctx.run took {elapsed:.1f}s -- the grandchild likely held a pipe open"
+    _assert_process_gone(int(pid_file.read_text()))

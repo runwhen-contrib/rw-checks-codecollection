@@ -251,3 +251,51 @@ def test_flake8_drops_files_ruff_covers(tmp_path):
     assert ctx.calls[0]["argv"][-1] == "tools/b.py"
     assert "--config" in ctx.calls[0]["argv"]
     assert result.skipped == "1 of 2 changed Python files are covered by ruff"
+
+
+def test_yamllint_config_gated_per_directory(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "k8s/.yamllint", "extends: default\n")
+    write(tree, "k8s/app/deploy.yaml")
+    write(tree, "other/x.yml")
+    ctx, result = run(
+        tmp_path, "yamllint", ["k8s/app/deploy.yaml", "other/x.yml"], {"yamllint": ""}
+    )
+    assert [(c["argv"], c["cwd"]) for c in ctx.calls] == [
+        (["yamllint", "-f", "parsable", "-c", ".yamllint", "app/deploy.yaml"], tree / "k8s")
+    ]
+    assert result.skipped == "1 of 2 changed YAML files have no yamllint config"
+
+
+def test_hadolint_always_on_with_optional_config(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "svc/Dockerfile", "FROM alpine\n")
+    write(tree, "api/.hadolint.yaml", "ignored: [DL3007]\n")
+    write(tree, "api/Dockerfile", "FROM alpine\n")
+    ctx, _ = run(tmp_path, "hadolint", ["svc/Dockerfile", "api/Dockerfile"], {"hadolint": "[]"})
+    assert [(c["argv"], c["cwd"]) for c in ctx.calls] == [
+        (["hadolint", "-f", "json", "svc/Dockerfile"], tree),
+        (["hadolint", "-f", "json", "-c", ".hadolint.yaml", "Dockerfile"], tree / "api"),
+    ]
+
+
+def test_vale_runs_with_config_from_its_directory(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "docs/.vale.ini", "MinAlertLevel = suggestion\n[*.md]\nBasedOnStyles = Vale\n")
+    write(tree, "docs/guide/a.md", "# a\n")
+    ctx, _ = run(tmp_path, "vale", ["docs/guide/a.md"], {"vale": "{}"})
+    assert ctx.calls[0]["argv"] == ["vale", "--output=JSON", "--config", ".vale.ini", "guide/a.md"]
+    assert ctx.calls[0]["cwd"] == tree / "docs"
+
+
+def test_checkov_file_args_and_explicit_config(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "infra/.checkov.yaml", "framework: [terraform]\n")
+    write(tree, "infra/main.tf", 'resource "aws_s3_bucket" "b" {}\n')
+    sarif = (FIXTURES / "checkov.sarif").read_text()
+    ctx, _ = run(tmp_path, "checkov", ["infra/main.tf"], {"checkov": sarif})
+    argv = ctx.calls[0]["argv"]
+    assert argv[:3] == ["checkov", "-f", "main.tf"]
+    assert argv[argv.index("--config-file") + 1] == ".checkov.yaml"
+    assert "-d" not in argv and "." not in argv
+    assert ctx.calls[0]["cwd"] == tree / "infra"

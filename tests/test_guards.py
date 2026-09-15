@@ -284,3 +284,33 @@ def test_unguarded_config_runs_the_tool_and_reaches_ctx_run(tmp_path, monkeypatc
     with pytest.raises(SystemExit):
         tasks.pylint(ctx, tree=tmp_path, changed=None)
     assert ran["argv"][0] == "pylint"
+
+
+def test_pylint_guard_with_paths_ignores_other_configs(tmp_path):
+    (tmp_path / "bad").mkdir()
+    (tmp_path / "good").mkdir()
+    (tmp_path / "bad" / ".pylintrc").write_text("[MAIN]\ninit-hook=import os\n")
+    (tmp_path / "good" / ".pylintrc").write_text("[MAIN]\njobs=1\n")
+    assert guards.pylint(tmp_path, [tmp_path / "good" / ".pylintrc"]) is None
+    assert guards.pylint(tmp_path, [tmp_path / "bad" / ".pylintrc"]).startswith(
+        "bad/.pylintrc: sets init-hook"
+    )
+    assert guards.pylint(tmp_path) is not None  # legacy whole-tree behaviour unchanged
+
+
+def test_sqlfluff_guard_with_paths_sees_an_ancestor_in_the_chain(tmp_path):
+    (tmp_path / "db").mkdir()
+    (tmp_path / ".sqlfluff").write_text("[sqlfluff:templater:jinja]\nlibrary_path = ./macros\n")
+    (tmp_path / "db" / ".sqlfluff").write_text("[sqlfluff]\ndialect = postgres\n")
+    assert guards.sqlfluff(tmp_path, [tmp_path / "db" / ".sqlfluff"]) is None
+    reason = guards.sqlfluff(tmp_path, [tmp_path / ".sqlfluff", tmp_path / "db" / ".sqlfluff"])
+    assert reason and reason.startswith(".sqlfluff: sets library_path")
+
+
+def test_vale_and_checkov_guards_accept_paths(tmp_path):
+    (tmp_path / ".vale.ini").write_text("Packages = Google\n")
+    (tmp_path / ".checkov.yaml").write_text("external-checks-dir: [./x]\n")
+    assert guards.vale(tmp_path, [tmp_path / ".vale.ini"])
+    assert guards.checkov(tmp_path, [tmp_path / ".checkov.yaml"])
+    assert guards.vale(tmp_path, []) is None
+    assert guards.checkov(tmp_path, []) is None

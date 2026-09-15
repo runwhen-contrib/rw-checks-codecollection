@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import configparser
 import tomllib
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,16 @@ def _config_files(tree: Path, *names: str) -> list[Path]:
             if p.is_file() and ".git" not in p.relative_to(tree).parts:
                 found.append(p)
     return sorted(found)
+
+
+def _selected(tree: Path, paths: Sequence[Path] | None, *names: str) -> list[Path]:
+    """`paths` given: exactly those files whose basename is one of `names` (the
+    per-config-group guard, DIFF-SCOPED-CHECKS.md §5.5). `paths` None: every
+    matching file in the tree (the legacy whole-repo guard)."""
+    if paths is None:
+        return _config_files(tree, *names)
+    wanted = set(names)
+    return sorted(p for p in paths if p.name in wanted and p.is_file())
 
 
 def _reason(tree: Path, path: Path, key: str, why: str) -> str:
@@ -132,9 +143,9 @@ _PYLINT_KEYS = {"init-hook", "load-plugins", "load_plugins"}
 _PYLINT_WHY = "which executes arbitrary Python"
 
 
-def pylint(tree: Path) -> str | None:
+def pylint(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _config_files(tree, ".pylintrc", "pylintrc"):
+    for path in _selected(tree, paths, ".pylintrc", "pylintrc"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
@@ -143,7 +154,7 @@ def pylint(tree: Path) -> str | None:
             if key in _PYLINT_KEYS and value:
                 return _reason(tree, path, key, _PYLINT_WHY)
 
-    for path in _config_files(tree, ".pylintrc.toml", "pylintrc.toml"):
+    for path in _selected(tree, paths, ".pylintrc.toml", "pylintrc.toml"):
         try:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -152,7 +163,7 @@ def pylint(tree: Path) -> str | None:
         if found:
             return _reason(tree, path, found, _PYLINT_WHY)
 
-    for path in _config_files(tree, "pyproject.toml"):
+    for path in _selected(tree, paths, "pyproject.toml"):
         try:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -162,7 +173,7 @@ def pylint(tree: Path) -> str | None:
         if found:
             return _reason(tree, path, found, _PYLINT_WHY)
 
-    for path in _config_files(tree, "setup.cfg"):
+    for path in _selected(tree, paths, "setup.cfg"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
@@ -187,9 +198,9 @@ _CHECKOV_KEYS = {
 _CHECKOV_WHY = "which checkov imports and runs as a Python check plugin"
 
 
-def checkov(tree: Path) -> str | None:
+def checkov(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _config_files(tree, ".checkov.yaml", ".checkov.yml"):
+    for path in _selected(tree, paths, ".checkov.yaml", ".checkov.yml"):
         try:
             doc = yaml.safe_load(path.read_text())
         except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
@@ -207,9 +218,9 @@ def checkov(tree: Path) -> str | None:
 _SQLFLUFF_WHY = "which sqlfluff imports Python modules from"
 
 
-def sqlfluff(tree: Path) -> str | None:
+def sqlfluff(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _config_files(tree, ".sqlfluff", "setup.cfg", "tox.ini"):
+    for path in _selected(tree, paths, ".sqlfluff", "setup.cfg", "tox.ini"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
@@ -218,7 +229,7 @@ def sqlfluff(tree: Path) -> str | None:
             if key == "library_path" and value:
                 return _reason(tree, path, "library_path", _SQLFLUFF_WHY)
 
-    for path in _config_files(tree, "pyproject.toml"):
+    for path in _selected(tree, paths, "pyproject.toml"):
         try:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
@@ -237,9 +248,9 @@ def sqlfluff(tree: Path) -> str | None:
 _VALE_WHY = "which vale fetches and installs from a URL"
 
 
-def vale(tree: Path) -> str | None:
+def vale(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
     """Reason to refuse, or None when safe."""
-    for path in _config_files(tree, ".vale.ini", "_vale.ini", "vale.ini"):
+    for path in _selected(tree, paths, ".vale.ini", "_vale.ini", "vale.ini"):
         try:
             parser = _parse_ini(path.read_text())
         except (OSError, UnicodeDecodeError, configparser.Error) as e:

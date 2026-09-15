@@ -38,7 +38,7 @@
       "type": "object"
     },
     "GrepResult": {
-      "description": "Output of the `grep` task.",
+      "description": "Output of the `grep` task -- also the result of the query task's\n`defs`/`refs` ops.",
       "properties": {
         "matches": {
           "items": {
@@ -226,7 +226,7 @@
       "type": "object"
     },
     "ReadRangesResult": {
-      "description": "Output of `read_ranges` -- the multi-range counterpart to\nReadResult, backing I3's query task `read` op (`ranges` and `around`\nboth resolve to this shape; RW-1416 cost P2, CAP-1).",
+      "description": "Output of `read_ranges` -- the multi-range counterpart to\nReadResult, backing the query task's `read` op (`ranges` and `around`\nboth resolve to this shape).",
       "properties": {
         "path": {
           "title": "Path",
@@ -257,7 +257,7 @@
       "type": "object"
     }
   },
-  "description": "Output of the `query` task (RW-1416 cost P2, CAP-3; I3): one entry\nper op, in request order. `truncated` is set when the response budget\ncut an op short or turned later ops into RESPONSE_BUDGET errors.",
+  "description": "Output of the `query` task: one entry per op, in request order.\n`truncated` is set when the response budget cut an op short, turned\nlater ops into RESPONSE_BUDGET errors, an op's own result alone\nexceeded the budget, or the time budget turned an op into DEADLINE.",
   "properties": {
     "results": {
       "items": {

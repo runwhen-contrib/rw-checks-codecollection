@@ -12,9 +12,9 @@
 #   - the runwhen_capability SDK and its rwtask task host (sdk/)
 #   - the rw-worktree capability's tasks (capabilities/rw-worktree/)
 #   - git, for ctx.git.checkout() -- and NOTHING else. read/grep/ls
-#     (repo_fs.py) are pure Python; this capability has no lint/secret-scan
-#     tasks, so it does not ship ruff or gitleaks -- see Dockerfile.rw-checks
-#     for those.
+#     (repo_fs.py) and query (repo_query.py, built on repo_fs.py) are pure
+#     Python; this capability has no lint/secret-scan tasks, so it does
+#     not ship ruff or gitleaks -- see Dockerfile.rw-checks for those.
 #
 # There is no Go binary and no self-install init container here -- the
 # runner (see docs/static-checks/EXECUTOR-CONTRACT.md) dials `rwtask serve`

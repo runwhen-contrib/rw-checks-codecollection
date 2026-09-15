@@ -99,8 +99,8 @@ class GrepMatch(BaseModel):
     # before/after: the `context`-line window around this match, in file
     # order -- empty (the default) when the caller didn't ask for context,
     # so an existing caller that never passes `context` sees no shape
-    # change (RW-1416 cost P2, CAP-1: I3's query task `grep`/`defs`/`refs`
-    # ops all carry context).
+    # change (the query task's `grep` and `defs` ops carry context; `refs`
+    # uses 0).
     path: str
     line: int
     text: str
@@ -109,7 +109,8 @@ class GrepMatch(BaseModel):
 
 
 class GrepResult(BaseModel):
-    """Output of the `grep` task."""
+    """Output of the `grep` task -- also the result of the query task's
+    `defs`/`refs` ops."""
 
     matches: list[GrepMatch] = Field(default_factory=list)
     truncated: bool = False
@@ -127,8 +128,8 @@ class ReadRange(BaseModel):
 
 class ReadRangesResult(BaseModel):
     """Output of `read_ranges` -- the multi-range counterpart to
-    ReadResult, backing I3's query task `read` op (`ranges` and `around`
-    both resolve to this shape; RW-1416 cost P2, CAP-1)."""
+    ReadResult, backing the query task's `read` op (`ranges` and `around`
+    both resolve to this shape)."""
 
     path: str
     ranges: list[ReadRange] = Field(default_factory=list)
@@ -174,9 +175,10 @@ class QueryOpResult(BaseModel):
 
 
 class QueryResult(BaseModel):
-    """Output of the `query` task (RW-1416 cost P2, CAP-3; I3): one entry
-    per op, in request order. `truncated` is set when the response budget
-    cut an op short or turned later ops into RESPONSE_BUDGET errors."""
+    """Output of the `query` task: one entry per op, in request order.
+    `truncated` is set when the response budget cut an op short, turned
+    later ops into RESPONSE_BUDGET errors, an op's own result alone
+    exceeded the budget, or the time budget turned an op into DEADLINE."""
 
     results: list[QueryOpResult] = Field(default_factory=list)
     truncated: bool = False

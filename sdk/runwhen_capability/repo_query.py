@@ -1,7 +1,6 @@
-"""The rw-worktree capability's `query` task (RW-1416 cost P2, CAP-3; I3):
-a batch of grep/read/ls/defs/refs ops against one checked-out tree, so a
-review agent answers several questions in one round trip instead of one
-task request per read.
+"""The rw-worktree capability's `query` task: a batch of grep/read/ls/
+defs/refs ops against one checked-out tree, so a review agent answers
+several questions in one round trip instead of one task request per read.
 
 `run_query` is pure -- a tree path and the ops in, a QueryResult out -- and
 built entirely on repo_fs's building blocks, so every path still goes
@@ -68,7 +67,7 @@ from .symbols import definition_pattern, is_definition_line, reference_pattern
 # the result envelope serve.py wraps this task's output in.
 QUERY_BUDGET = READ_BUDGET
 
-# I2's limits, re-checked here so a caller other than papi gets the same
+# Limits re-checked here so a caller other than papi gets the same
 # contract rather than whatever an unbounded op would do.
 MAX_QUERY_OPS = 60
 MAX_GREP_CONTEXT = 20
@@ -90,15 +89,18 @@ _RESPONSE_BUDGET_MESSAGE = (
 DEADLINE = "DEADLINE"
 _DEADLINE_MESSAGE = "query time budget spent; send the remaining ops in a new query"
 
-# Total wall-clock budget for one run_query call's op loop. A batch of up
-# to MAX_QUERY_OPS full-tree ops (grep/defs/refs each walk the whole tree)
-# could otherwise run long enough to blow the capability's
-# requestTimeoutSeconds (manifest.yaml, 300s) -- ending the query cleanly
-# here, well under that, means the caller gets DEADLINE and can retry the
-# rest as a new query, instead of the runner timing out the whole request.
+# papi's sync MCP path defaults to a 30s deadline, and serve.py runs one
+# request per pod at a time, so papi's two concurrent head+base `query`
+# calls for one review may queue behind each other on the same pod. 20s
+# here means both, run back to back, still finish inside papi's 50s
+# per-call deadline for `query` -- and comfortably under the capability's
+# own requestTimeoutSeconds (manifest.yaml, 300s), which bounds a whole
+# request rather than one op loop. The deadline is only checked between
+# ops (see the module docstring above), so one full-tree op already
+# running can still overrun it.
 # A plain module attribute, read fresh on every call (not a bound default
 # parameter), so a test can override it directly.
-QUERY_DEADLINE_SECONDS = 200.0
+QUERY_DEADLINE_SECONDS = 20.0
 
 OpResult = GrepResult | ReadRangesResult | LsResult
 
@@ -399,17 +401,21 @@ def run_query(worktree: Path, ops: list) -> QueryResult:
     An op's `rev` is ignored: papi splits ops by rev and sends each rev's
     ops to the tree checked out at that sha.
 
-    Two exits from the loop besides the response budget, both handled the
-    same way -- the op in progress and every op after it get a per-op
-    error and the top-level `truncated` is set, rather than raising and
-    failing the whole task:
+    Three ways an op's own result can end up replaced and the top-level
+    `truncated` set, rather than raising and failing the whole task:
 
-    - the byte budget (QUERY_BUDGET, as before);
-    - the time budget (QUERY_DEADLINE_SECONDS): a batch of up to
-      MAX_QUERY_OPS full-tree ops can, in the worst case, run long enough
-      to blow the capability's requestTimeoutSeconds; this deadline ends
-      the query cleanly first, telling the caller to send the rest as a
-      new query, instead of the runner timing out the whole request."""
+    - the byte budget (QUERY_BUDGET) crosses inside one op's result: that
+      op keeps the leading matches/entries/whole lines that fit (_fit's
+      trim), and every op after it is RESPONSE_BUDGET without running;
+    - that op's result alone exceeds QUERY_BUDGET before anything earlier
+      has spent any of it (only possible for the very first op run): it
+      gets its own honest RESPONSE_BUDGET error instead of a trim, and the
+      batch is not otherwise exhausted -- later ops still run;
+    - the time budget (QUERY_DEADLINE_SECONDS) has passed: a batch of up
+      to MAX_QUERY_OPS full-tree ops can, in the worst case, run long
+      enough to blow the capability's requestTimeoutSeconds; this deadline
+      ends the query cleanly first, telling the caller to send the rest as
+      a new query, instead of the runner timing out the whole request."""
     if not isinstance(ops, list):
         raise ValueError(f"ops must be a JSON array, got {type(ops).__name__}")
     if len(ops) > MAX_QUERY_OPS:
@@ -460,14 +466,24 @@ def run_query(worktree: Path, ops: list) -> QueryResult:
                 # itself, not starvation by an earlier one, is what doesn't
                 # fit. Its own honest error, and later ops still get their
                 # turn rather than being pre-emptively marked exhausted.
-                entry = _error(
+                #
+                # held[index] (sized off _RESPONSE_BUDGET_MESSAGE) is this
+                # op's per-op reserved room; this message must not run
+                # longer than that one -- and if it somehow still doesn't
+                # fit, fall back to the reserved, guaranteed-to-fit generic
+                # one rather than risk pushing the whole result over
+                # QUERY_BUDGET.
+                own_too_big = _error(
                     index,
                     _op_name(op),
                     RESPONSE_BUDGET,
-                    "this op's result alone exceeds the response budget; "
-                    "narrow it (fewer globs/ranges, smaller context)",
+                    "this op's result alone exceeds the response budget; narrow it and retry",
                 )
-                size = _entry_size(entry)
+                own_too_big_size = _entry_size(own_too_big)
+                if own_too_big_size <= held[index] - separator:
+                    entry, size = own_too_big, own_too_big_size
+                else:
+                    entry, size = budget_errors[index], held[index] - separator
                 truncated = True
             elif fitted is None:
                 exhausted = True

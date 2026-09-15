@@ -1,10 +1,9 @@
-"""Language-aware symbol regex for I3's `defs`/`refs` query ops (RW-1416
-cost P2, CAP-2). No tree-sitter -- per-language regex patterns are the
-whole mechanism.
+"""Language-aware symbol regex for the query task's `defs`/`refs` ops. No
+tree-sitter -- per-language regex patterns are the whole mechanism.
 
 `definition_pattern`/`reference_pattern` return plain regex-syntax strings,
 in the same dialect grep_tree already compiles patterns with (Python's
-`re`, not ripgrep/PCRE -- see repo_fs.py's grep_tree docstring): CAP-3's
+`re`, not ripgrep/PCRE -- see repo_fs.py's grep_tree docstring): the
 `defs` op is `grep_tree(..., pattern=definition_pattern(symbol), context=2)`
 and `refs` is `grep_tree(..., pattern=reference_pattern(symbol))` with
 matches on a definition line dropped via `is_definition_line`.
@@ -41,15 +40,15 @@ def _right_boundary() -> str:
 
 
 def definition_pattern(symbol: str) -> str:
-    """A single alternation matching any of I3's language-specific
+    """A single alternation matching any of the supported language-specific
     definition forms for `symbol`: Python `def`/`class`/`async def`, JS
     `function`/`const`/`let`/`var`, TS `interface`/`type`/`enum`, Go `func`
     (with an optional method receiver) and `type X struct`/`interface`.
 
-    Two controller-approved extensions to I3's literal forms (CAP-3): a
-    TS-typed variable (`export const foo: Foo = ...` -- `:` as well as `=`
-    after the name) and a Go generic func (`func Map[T any](...)` -- `[` as
-    well as `(` after the name)."""
+    Two extensions beyond those literal forms: a TS-typed variable
+    (`export const foo: Foo = ...` -- `:` as well as `=` after the name)
+    and a Go generic func (`func Map[T any](...)` -- `[` as well as `(`
+    after the name)."""
     x = re.escape(symbol)
     right = _right_boundary()
     alternatives = [
@@ -73,5 +72,5 @@ def reference_pattern(symbol: str) -> str:
 
 def is_definition_line(line: str, symbol: str) -> bool:
     """Whether `line` matches `symbol`'s definition_pattern -- backs the
-    `refs` op's exclusion of definition lines from its matches (I3)."""
+    `refs` op's exclusion of definition lines from its matches."""
     return re.search(definition_pattern(symbol), line) is not None

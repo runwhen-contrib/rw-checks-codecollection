@@ -471,8 +471,8 @@ def grep_tree(
     patterns behave identically, but this is not a byte-for-byte port of
     the regex *engine*, only of the walk/glob/cap behaviour around it).
 
-    `glob` (singular, back-compat) and `globs` (a list, RW-1416 cost P2's
-    query task) OR together -- a file is kept if it matches ANY of them,
+    `glob` (singular, back-compat) and `globs` (a list, for the query
+    task) OR together -- a file is kept if it matches ANY of them,
     with match_glob's same any-depth semantics for each -- so an existing
     `glob=` caller sees no change when `globs` is omitted, and a caller
     that only passes `globs` needs no `glob`.
@@ -518,7 +518,7 @@ def find_around(
     expression, same convention as grep_tree) in `path`, in file order, and
     returns a `±context`-line window around each match's line -- clamped
     to [1, totalLines] the same way _merge_ranges clamps read_ranges'
-    input. Backs I3's `read` op's `around` field: the caller then treats
+    input. Backs the query task's `read` op's `around` field: the caller then treats
     the returned windows as `ranges` and hands them to read_ranges, which
     is what actually merges any that overlap."""
     check_tree_materialized(tree)

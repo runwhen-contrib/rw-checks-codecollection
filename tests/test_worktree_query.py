@@ -1,6 +1,6 @@
-"""rw-worktree's `query` task (RW-1416 cost P2, CAP-3; I3): a batch of
-grep/read/ls/defs/refs ops against one checked-out tree, answered in request
-order under one 256 KiB response budget.
+"""rw-worktree's `query` task: a batch of grep/read/ls/defs/refs ops against
+one checked-out tree, answered in request order under one 256 KiB response
+budget.
 
 The task itself is a thin wrapper, so almost everything here exercises the
 pure `run_query(worktree, ops)` in sdk/runwhen_capability/repo_query.py; the
@@ -205,8 +205,8 @@ def test_a_malformed_op_is_a_per_op_invalid_op(tmp_path, op):
     assert out["results"][1]["error"] is None
 
 
-# --- malformed patterns are a per-op error, not a crashed batch (RW-1416
-# cost P2 fix round 1): re.compile can raise OverflowError/RecursionError,
+# --- malformed patterns are a per-op error, not a crashed batch:
+# re.compile can raise OverflowError/RecursionError,
 # not just re.error, on adversarial input -- and a NUL byte in a path used
 # to reach os.path/pathlib as a bare, unmapped ValueError. Either would
 # previously propagate out of _run_op uncaught (error_code returns None for
@@ -419,11 +419,13 @@ def test_an_op_too_big_for_the_budget_on_its_own_gets_its_own_message_and_siblin
     assert out["results"][1]["result"]["entries"] == []
     assert out["truncated"] is True
 
+    assert wire_size(out) <= repo_query.QUERY_BUDGET
+
 
 def test_the_budget_counts_json_escaping_not_only_content_bytes(tmp_path):
     """read_ranges fills content up to its raw-byte budget; every `"` then
     doubles on the wire. The query budget measures the serialised result,
-    so the response still lands under the cap (CAP-1's deferred minor)."""
+    so the response still lands under the cap."""
     line = '"' * 99
     tree = make_tree(tmp_path, {"quotes.txt": "\n".join([line] * 2600)})
 
@@ -462,7 +464,7 @@ def test_a_single_line_larger_than_the_budget_is_clipped_not_dropped(tmp_path):
     assert wire_size(out) <= QUERY_BUDGET
 
 
-# --- the time budget (RW-1416 cost P2 fix round 1) --------------------------------
+# --- the time budget --------------------------------------------------------
 
 
 def test_the_deadline_marks_remaining_ops_as_deadline_and_sets_truncated(tmp_path, monkeypatch):
@@ -476,7 +478,7 @@ def test_the_deadline_marks_remaining_ops_as_deadline_and_sets_truncated(tmp_pat
 
     def fake_now():
         calls["n"] += 1
-        # call 1: the deadline itself (t=0 -> deadline=200). call 2: op 0's
+        # call 1: the deadline itself (t=0 -> deadline=20). call 2: op 0's
         # check (t=0, still under the deadline). Every call after that
         # (op 1 onward) reports the deadline as long past.
         return 0 if calls["n"] <= 2 else 1_000_000
@@ -502,7 +504,7 @@ def test_the_deadline_can_hit_before_the_first_op_too(tmp_path, monkeypatch):
 
     def fake_now():
         calls["n"] += 1
-        # call 1: the deadline itself (t=0 -> deadline=200). Every call
+        # call 1: the deadline itself (t=0 -> deadline=20). Every call
         # after that -- including op 0's own check -- is long past it.
         return 0 if calls["n"] <= 1 else 1_000_000
 

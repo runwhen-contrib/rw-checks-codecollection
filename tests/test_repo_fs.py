@@ -564,7 +564,7 @@ def test_ls_unreadable_subdirectory_encountered_while_recursing_is_disclosed(tmp
         os.chmod(locked, 0o755)
 
 
-# --- grep: multi-glob OR and context lines (RW-1416 cost P2, CAP-1) --------
+# --- grep: multi-glob OR and context lines ---------------------------------
 
 
 def test_grep_globs_list_ors_multiple_patterns(tmp_path):
@@ -634,8 +634,8 @@ def test_grep_context_lines_are_capped_like_text(tmp_path):
     assert got.matches[0].after[0] == long_line[:400]
 
 
-# --- bad patterns must not crash the whole call (RW-1416 cost P2 fix round
-# 1): re.compile can raise more than re.error on adversarial input --
+# --- bad patterns must not crash the whole call: re.compile can raise more
+# than re.error on adversarial input --
 # OverflowError on a huge {n} repetition, RecursionError on deep nesting --
 # and both must become the same InvalidPatternError grep_tree/find_around
 # already raise for an ordinary re.error. -----------------------------------
@@ -655,7 +655,7 @@ def test_grep_rejects_deeply_nested_pattern(tmp_path):
         grep_tree(tree, "(" * 1000)
 
 
-# --- read_ranges: merged, multi-range reads (RW-1416 cost P2, CAP-1) -------
+# --- read_ranges: merged, multi-range reads ---------------------------------
 
 
 def test_read_ranges_merges_overlapping_and_adjacent(tmp_path):
@@ -710,8 +710,7 @@ def test_read_ranges_binary_file_raises(tmp_path):
         read_ranges(tree, "bin", [(1, 1)])
 
 
-# --- find_around: a context window around each match (RW-1416 cost P2,
-# CAP-1) ---------------------------------------------------------------
+# --- find_around: a context window around each match -----------------------
 
 
 def test_find_around_returns_window_around_each_match(tmp_path):

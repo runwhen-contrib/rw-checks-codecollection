@@ -38,7 +38,7 @@
       "type": "object"
     }
   },
-  "description": "Output of the `grep` task.",
+  "description": "Output of the `grep` task -- also the result of the query task's\n`defs`/`refs` ops.",
   "properties": {
     "matches": {
       "items": {

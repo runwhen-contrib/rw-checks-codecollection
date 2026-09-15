@@ -54,9 +54,12 @@ execution:
   idleTtlSeconds: 1800
   # `open` does a shallow clone, bounded by git.py's own GIT_TIMEOUT
   # (300s); read/grep/ls each finish in a small fraction of that. `query`'s
-  # worst case is a batch of up to 60 full-tree ops (grep/defs/refs each
-  # walk the whole tree), bounded by repo_query.py's own 200s in-task
-  # deadline -- comfortably under this 300s request timeout.
+  # in-task deadline is 20s (repo_query.py's QUERY_DEADLINE_SECONDS) so
+  # papi's two serialized calls (head+base) finish within papi's 50s
+  # per-call deadline for `query`. That deadline is only checked between
+  # ops (repo_query.py's module docstring), so one full-tree op already in
+  # flight can still overrun it -- either way this stays comfortably under
+  # this 300s request timeout.
   requestTimeoutSeconds: 300
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------

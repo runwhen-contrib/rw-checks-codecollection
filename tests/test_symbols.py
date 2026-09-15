@@ -1,9 +1,9 @@
-"""Language-aware symbol regex for I3's `defs`/`refs` query ops (RW-1416
-cost P2, CAP-2). All three functions are exercised against Python's `re`
-module directly -- the same dialect grep_tree compiles patterns with (see
-repo_fs.py's grep_tree docstring) -- since CAP-3's `defs`/`refs` ops will
-feed a definition_pattern()/reference_pattern() result straight into
-grep_tree's `pattern` argument.
+"""Language-aware symbol regex for the query task's `defs`/`refs` ops. All
+three functions are exercised against Python's `re` module directly -- the
+same dialect grep_tree compiles patterns with (see repo_fs.py's grep_tree
+docstring) -- since the query task's `defs`/`refs` ops feed a
+definition_pattern()/reference_pattern() result straight into grep_tree's
+`pattern` argument.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from runwhen_capability.symbols import (
     reference_pattern,
 )
 
-# --- definition_pattern: one alternative per I3 language form ---------------
+# --- definition_pattern: one alternative per supported language form -------
 
 
 def test_definition_pattern_matches_python_def():

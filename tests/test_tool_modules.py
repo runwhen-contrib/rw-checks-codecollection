@@ -93,6 +93,8 @@ def test_policy_closes_over_the_declared_severity_map(name):
 @pytest.mark.parametrize("name", tool_modules())
 def test_declares_the_applicability_contract(name):
     mod = load(name)
+    if hasattr(mod, "applicable"):
+        pytest.skip(f"{name} uses the diff-scoped contract (tests/test_tool_checks.py)")
     assert isinstance(getattr(mod, "FILES", None), tuple), f"{name}.FILES must be a tuple"
     assert getattr(mod, "CONFIG", None) in VALID_CONFIG, (
         f"{name}.CONFIG must be one of {VALID_CONFIG}"
@@ -106,6 +108,8 @@ def test_declares_the_applicability_contract(name):
 @pytest.mark.parametrize("name", tool_modules())
 def test_defines_detect_and_check(name):
     mod = load(name)
+    if hasattr(mod, "applicable"):
+        pytest.skip(f"{name} uses the diff-scoped contract (tests/test_tool_checks.py)")
     assert callable(getattr(mod, "detect", None)), f"{name} defines no detect()"
     assert callable(getattr(mod, "check", None)), f"{name} defines no check()"
 
@@ -114,7 +118,10 @@ def test_defines_detect_and_check(name):
 def test_detect_returns_paths_on_an_empty_tree(tmp_path, name):
     """detect() runs during applicability, before any tool is invoked, so it
     must never raise on a repository that does not use the tool."""
-    result = load(name).detect(tmp_path)
+    mod = load(name)
+    if hasattr(mod, "applicable"):
+        pytest.skip(f"{name} uses the diff-scoped contract (tests/test_tool_checks.py)")
+    result = mod.detect(tmp_path)
     assert isinstance(result, list)
     assert all(isinstance(p, Path) for p in result)
 
@@ -127,6 +134,8 @@ def test_config_required_tools_skip_an_unconfigured_repo(tmp_path):
     (tmp_path / "a.py").write_text("import os\n")
     for name in tool_modules():
         mod = load(name)
+        if hasattr(mod, "applicable"):
+            continue
         if getattr(mod, "CONFIG", "optional") != "required":
             continue
         assert _common.gate(tmp_path, mod), f"{name} is CONFIG=required but did not skip"
@@ -200,6 +209,8 @@ def test_every_module_scopes_its_findings_to_the_diff():
 
     offenders = {}
     for name in tool_modules():
+        if hasattr(load(name), "applicable"):
+            continue
         src = (TOOLS / f"{name}.py").read_text()
         body = src[src.index("def check(") :]
         returns = [
@@ -224,7 +235,10 @@ def test_supersession_targets_exist_and_do_not_cycle():
     """
     edges = {}
     for name in tool_modules():
-        target = getattr(load(name), "SUPERSEDED_BY", None)
+        mod = load(name)
+        if hasattr(mod, "applicable"):
+            continue
+        target = getattr(mod, "SUPERSEDED_BY", None)
         if target:
             assert target in tool_modules(), f"{name}.SUPERSEDED_BY names unknown module {target!r}"
             assert target != name, f"{name} supersedes itself"
@@ -244,6 +258,8 @@ def test_superseded_tool_runs_when_its_superseder_does_not_apply():
     import tools._common as _common
 
     flake8, ruff = load("flake8"), load("ruff")
+    if hasattr(flake8, "applicable") or hasattr(ruff, "applicable"):
+        pytest.skip("flake8/ruff use the diff-scoped contract (tests/test_tool_checks.py)")
     assert flake8.SUPERSEDED_BY == "ruff"
 
     # ruff applies (repo has .py): flake8 is superseded.
@@ -258,3 +274,28 @@ def test_superseded_tool_runs_when_its_superseder_does_not_apply():
     with tempfile.TemporaryDirectory() as empty:
         assert _common.gate(Path(empty), ruff) is not None, "ruff should not apply to an empty tree"
         assert _common.supersession_skip(Path(empty), flake8) is None
+
+
+@pytest.mark.parametrize("name", tool_modules())
+def test_diff_scoped_contract(name):
+    mod = load(name)
+    if not hasattr(mod, "applicable"):
+        pytest.skip(f"{name} not converted yet")
+    for attr in (
+        "NAME",
+        "KIND",
+        "FILES",
+        "CONFIG",
+        "CONFIG_NAMES",
+        "CI_BINARY",
+        "LANE",
+        "EXPECT_EXIT",
+        "check",
+    ):
+        assert hasattr(mod, attr), f"{name} lacks {attr}"
+    assert mod.CONFIG in VALID_CONFIG
+    assert mod.LANE in {"A", "B", "C", "D"}
+    assert mod.LANE != "D" or hasattr(mod, "group"), f"{name}: lane D needs group()"
+    import inspect
+
+    assert list(inspect.signature(mod.check).parameters) == ["ctx", "tree", "inv"]

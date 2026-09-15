@@ -37,9 +37,13 @@ import yaml
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-#: Output kind -> the call every task declaring it must wrap its return value in.
+#: Output kind -> the call(s) every task declaring it must wrap its return value in.
 #: A kind absent here is not checked; add it with its wrapper when one is added.
-_REQUIRED_WRAPPER = {"rw.findings.v1": "ctx.findings.cap"}
+#: `_dispatch` (tasks.py's temporary dual-dispatch helper, rw-1416 Task 4) is
+#: accepted alongside `ctx.findings.cap`: it always ends in exactly that call,
+#: either directly or through `tools._runner.run_check`. Removed once every
+#: tool module is converted (Task 11) and `_dispatch` itself goes away.
+_REQUIRED_WRAPPER = {"rw.findings.v1": {"ctx.findings.cap", "_dispatch"}}
 
 
 def _manifest(capability: str) -> dict:
@@ -109,13 +113,13 @@ def test_findings_outputs_return_the_envelope_not_a_bare_list(capability):
     functions = _task_functions(capability)
     checked = 0
     for task_name, output_name, kind in _declared_outputs(capability):
-        wrapper = _REQUIRED_WRAPPER.get(kind)
-        if wrapper is None:
+        wrappers = _REQUIRED_WRAPPER.get(kind)
+        if wrappers is None:
             continue
         actual = _wrapper_call(functions[task_name], output_name)
-        assert actual == wrapper, (
+        assert actual in wrappers, (
             f"{capability}: task '{task_name}' output '{output_name}' is declared {kind}, "
-            f"which is an envelope -- expected it wrapped in {wrapper}(...), got "
+            f"which is an envelope -- expected it wrapped in one of {sorted(wrappers)}(...), got "
             f"{actual or 'a bare value'}. papi validates this shape and rejects a bare array."
         )
         checked += 1

@@ -558,3 +558,54 @@ def test_buf_runs_from_workspace_root_with_path_args(tmp_path):
             tree / "proto",
         )
     ]
+
+
+# --- final-fix-4 guards: tflint, buf, ast-grep, regal -----------------------
+
+
+def test_tflint_unsafe_plugin_config_is_refused(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "mod/.tflint.hcl", 'plugin "aws" {\n  enabled = true\n}\n')
+    write(tree, "mod/main.tf")
+    ctx, result = run(tmp_path, "tflint", ["mod/main.tf"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable tflint config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+    assert [f.path for f in result.findings] == ["mod/.tflint.hcl"]
+
+
+def test_buf_root_plugins_config_is_refused_via_guard_chain(tmp_path):
+    """The module's OWN buf.yaml is benign; the malicious `plugins:` lives
+    in the workspace-root buf.yaml, which only GUARD_CHAIN makes visible."""
+    tree = tmp_path / "tree"
+    write(tree, "buf.yaml", "version: v2\nplugins:\n  - plugin: ./buf-plugin-x\n")
+    write(tree, "proto/buf.yaml", "version: v2\n")
+    write(tree, "proto/a.proto", 'syntax = "proto3";\n')
+    ctx, result = run(tmp_path, "buf", ["proto/a.proto"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable buf config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+    assert [f.path for f in result.findings] == ["buf.yaml"]
+
+
+def test_ast_grep_custom_languages_config_is_refused(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "svc/sgconfig.yml", "customLanguages:\n  mylang:\n    libraryPath: ./pwn.so\n")
+    write(tree, "svc/src/a.py", "print(1)\n")
+    ctx, result = run(tmp_path, "ast_grep", ["svc/src/a.py"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable ast-grep config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+    assert [f.path for f in result.findings] == ["svc/sgconfig.yml"]
+
+
+def test_regal_custom_rules_config_is_refused(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "policy/.regal/config.yaml", "rules: {}\n")
+    write(tree, "policy/.regal/rules/pwn.rego", "package custom.regal.rules.pwn\n")
+    write(tree, "policy/authz/p.rego", "package authz\n")
+    ctx, result = run(tmp_path, "regal", ["policy/authz/p.rego"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable regal config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+    assert [f.path for f in result.findings] == ["policy/.regal/rules/pwn.rego"]

@@ -12,12 +12,21 @@ that subdirectory's own config file, not just the repo root's.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "capabilities" / "rw-checks"))
 
 import guards  # noqa: E402
+
+# An unreadable file is unreadable only for a non-root user; root ignores the
+# mode bits and the test would assert the opposite of reality.
+skip_if_root = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file permissions"
+)
 
 
 def write(tmp_path: Path, name: str, text: str) -> Path:
@@ -421,3 +430,158 @@ def test_vale_and_checkov_guards_accept_paths(tmp_path):
     assert guards.checkov(tmp_path, [tmp_path / ".checkov.yaml"])
     assert guards.vale(tmp_path, []) is None
     assert guards.checkov(tmp_path, []) is None
+
+
+# --- tflint (final-fix-4 G1) ----------------------------------------------
+
+
+def test_tflint_plugin_block_names_a_binary_trips_the_guard(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", 'plugin "aws" {\n  enabled = true\n}\n')
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert ".tflint.hcl" in reason
+    assert 'plugin "aws"' in reason
+
+
+def test_tflint_terraform_plugin_alone_is_safe(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", 'plugin "terraform" {\n  enabled = true\n}\n')
+    assert guards.tflint(tmp_path, [path]) is None
+
+
+def test_tflint_plugin_dir_trips_the_guard(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", 'config {\n  plugin_dir = "./p"\n}\n')
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert ".tflint.hcl" in reason
+    assert "plugin_dir" in reason
+
+
+def test_tflint_terraform_plugin_with_source_and_version_trips_the_guard(tmp_path):
+    path = write(
+        tmp_path,
+        ".tflint.hcl",
+        'plugin "terraform" {\n  version = "0.1"\n  source = "github.com/x/y"\n}\n',
+    )
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert ".tflint.hcl" in reason
+
+
+def test_tflint_hash_comment_strips_unsafe_key(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", '# plugin "aws" { enabled = true }\n')
+    assert guards.tflint(tmp_path, [path]) is None
+
+
+def test_tflint_slash_comment_strips_unsafe_key(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", '// plugin "aws" { enabled = true }\n')
+    assert guards.tflint(tmp_path, [path]) is None
+
+
+def test_tflint_block_comment_strips_unsafe_key(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", '/* plugin "aws" { enabled = true } */\n')
+    assert guards.tflint(tmp_path, [path]) is None
+
+
+def test_tflint_no_config_is_safe(tmp_path):
+    assert guards.tflint(tmp_path, []) is None
+
+
+@skip_if_root
+def test_tflint_unreadable_config_is_unsafe(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", 'plugin "terraform" {}\n')
+    os.chmod(path, 0o000)
+    try:
+        reason = guards.tflint(tmp_path, [path])
+    finally:
+        os.chmod(path, 0o644)
+    assert reason is not None
+    assert "could not be parsed" in reason
+
+
+# --- buf (final-fix-4 G2) --------------------------------------------------
+
+
+def test_buf_plugins_trips_the_guard(tmp_path):
+    path = write(tmp_path, "buf.yaml", "version: v2\nplugins:\n  - plugin: ./buf-plugin-x\n")
+    reason = guards.buf(tmp_path, [path])
+    assert reason is not None
+    assert "buf.yaml" in reason
+    assert "plugins" in reason
+
+
+def test_buf_deps_trips_the_guard(tmp_path):
+    path = write(tmp_path, "buf.yml", "version: v2\ndeps:\n  - buf.build/acme/weather\n")
+    reason = guards.buf(tmp_path, [path])
+    assert reason is not None
+    assert "deps" in reason
+
+
+def test_buf_clean_config_is_safe(tmp_path):
+    path = write(tmp_path, "buf.yaml", "version: v2\nlint:\n  use:\n    - STANDARD\n")
+    assert guards.buf(tmp_path, [path]) is None
+
+
+def test_buf_no_config_is_safe(tmp_path):
+    assert guards.buf(tmp_path, []) is None
+
+
+def test_buf_malformed_config_is_unsafe(tmp_path):
+    path = write(tmp_path, "buf.yaml", "plugins: [unterminated\n")
+    reason = guards.buf(tmp_path, [path])
+    assert reason is not None
+    assert "buf.yaml" in reason
+
+
+# --- ast-grep (final-fix-4 G3) ---------------------------------------------
+
+
+def test_ast_grep_custom_languages_library_path_trips_the_guard(tmp_path):
+    path = write(
+        tmp_path,
+        "sgconfig.yml",
+        "customLanguages:\n  mylang:\n    libraryPath: ./pwn.so\n",
+    )
+    reason = guards.ast_grep(tmp_path, [path])
+    assert reason is not None
+    assert "sgconfig.yml" in reason
+    assert "customlanguages" in reason.lower()
+
+
+def test_ast_grep_clean_config_is_safe(tmp_path):
+    path = write(tmp_path, "sgconfig.yml", "ruleDirs:\n  - rules\n")
+    assert guards.ast_grep(tmp_path, [path]) is None
+
+
+def test_ast_grep_no_config_is_safe(tmp_path):
+    assert guards.ast_grep(tmp_path, []) is None
+
+
+# --- regal (final-fix-4 G4) -------------------------------------------------
+
+
+def test_regal_custom_rule_trips_the_guard(tmp_path):
+    config = write(tmp_path, "pol/.regal/config.yaml", "rules: {}\n")
+    write(tmp_path, "pol/.regal/rules/pwn.rego", "package custom.regal.rules.pwn\n")
+    reason = guards.regal(tmp_path, [config])
+    assert reason is not None
+    assert "pol/.regal/rules/pwn.rego" in reason
+    assert "custom rules" in reason
+
+
+def test_regal_nested_custom_rule_trips_the_guard(tmp_path):
+    config = write(tmp_path, "pol/.regal/config.yaml", "rules: {}\n")
+    write(tmp_path, "pol/.regal/rules/a/b.rego", "package custom.regal.rules.b\n")
+    reason = guards.regal(tmp_path, [config])
+    assert reason is not None
+    assert "pol/.regal/rules/a/b.rego" in reason
+
+
+def test_regal_no_rules_dir_is_safe(tmp_path):
+    config = write(tmp_path, "pol/.regal/config.yaml", "rules: {}\n")
+    assert guards.regal(tmp_path, [config]) is None
+
+
+def test_regal_empty_rules_dir_is_safe(tmp_path):
+    config = write(tmp_path, "pol/.regal/config.yaml", "rules: {}\n")
+    (tmp_path / "pol" / ".regal" / "rules").mkdir()
+    assert guards.regal(tmp_path, [config]) is None

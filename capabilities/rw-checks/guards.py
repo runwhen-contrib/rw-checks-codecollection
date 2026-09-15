@@ -17,6 +17,21 @@ sqlfluff imports Python modules from) and vale (a non-empty `Packages`
 fetches and installs a style package from a URL). None of these are
 findings a scan should report; the tool must never be invoked at all.
 
+A later security probe ran every remaining `GUARD = None` tool's real argv
+inside the built image, under the executor pod's own constraints, and found
+four more: tflint (a `.tflint.hcl` `plugin` block naming anything but
+`terraform`, a `plugin_dir` key, or a plugin's `source`/`version` all make
+tflint install or load a plugin BINARY from the repo's own tree), buf (a v2
+`buf.yaml`'s `plugins` key makes `buf lint` exec a local check-plugin
+binary; its `deps` key fetches modules from the network), ast-grep
+(`sgconfig.yml`'s `customLanguages.<lang>.libraryPath` is a native library
+ast-grep `dlopen`s -- the library's constructor ran before ast-grep's own
+symbol lookup failed) and regal (`.regal/rules/**/*.rego` are auto-loaded
+and evaluated as Rego; a rule calling `http.send` reached an external
+listener, and the response was surfaced in the finding -- an outbound
+network channel and an exfiltration path, even though Rego has no
+file-read builtin and is not itself RCE).
+
 One guard function per affected tool, called by `_plan.plan` per config group
 BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
 or None when it is safe to run the tool. The reason always begins
@@ -38,6 +53,7 @@ the parser's own recursive descent.
 from __future__ import annotations
 
 import configparser
+import re
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
@@ -354,4 +370,198 @@ def vale(tree: Path, paths: Sequence[Path]) -> str | None:
                     return _reason(tree, path, "Packages", _VALE_WHY)
         except (OSError, UnicodeDecodeError, configparser.Error, RecursionError) as e:
             return _unparseable(tree, path, e)
+    return None
+
+
+# --- tflint -----------------------------------------------------------------
+# tflint bundles only the `terraform` ruleset; anything else named by a
+# `plugin "<name>"` block is a plugin BINARY tflint installs and executes.
+# `plugin_dir` (default `./.tflint.d/plugins`, or set explicitly) resolves
+# INSIDE the PR's tree, and a plugin block's own `source`/`version` names a
+# plugin we never installed, which tflint then tries to install/load from
+# that same repo-controlled directory -- confirmed against the built image:
+# both a `plugin "x"` block plus a committed `./.tflint.d/plugins/
+# tflint-ruleset-x` and a `plugin_dir = "./p"` plus `./p/tflint-ruleset-x`
+# ran the repo binary as the pod's own uid. No HCL parser is available, so
+# `.tflint.hcl` is scanned textually, after stripping `#`/`//` line comments
+# and `/* ... */` block comments -- never inside a quoted string, so a `#`
+# or `//` in e.g. a URL value cannot truncate a live line.
+_TFLINT_PLUGIN_WHY = "which tflint loads as a binary from the repository"
+_TFLINT_PLUGIN_ATTR_WHY = (
+    "which names a plugin tflint does not bundle, so tflint installs and loads it "
+    "as a binary from the repository's plugin dir"
+)
+_TFLINT_PLUGIN_DIR_WHY = "which tflint loads plugin binaries from"
+_TFLINT_PLUGIN_BLOCK = re.compile(r'plugin\s+"([^"]*)"\s*\{')
+_TFLINT_PLUGIN_DIR_KEY = re.compile(r"\bplugin_dir\b\s*=")
+_TFLINT_PLUGIN_ATTR_KEY = re.compile(r"\b(?:source|version)\b\s*=")
+
+
+def _strip_hcl_comments(text: str) -> str:
+    """`#`/`//` to end of line and `/* ... */` blocks, never stripped inside
+    a quoted string."""
+    out: list[str] = []
+    in_string = False
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "#" or text[i : i + 2] == "//":
+            j = text.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if text[i : i + 2] == "/*":
+            j = text.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _hcl_block(text: str, open_brace: int) -> str:
+    """The content between the `{` at `open_brace` and its matching `}`,
+    tracking quoted strings so a brace inside a string value is not
+    counted. An unterminated block returns everything to end of text
+    rather than raising, matching guards' "never raise" contract."""
+    depth = 0
+    in_string = False
+    start = open_brace + 1
+    i, n = open_brace, len(text)
+    while i < n:
+        ch = text[i]
+        if in_string:
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i]
+        i += 1
+    return text[start:]
+
+
+def tflint(tree: Path, paths: Sequence[Path]) -> str | None:
+    """Reason to refuse, or None when safe."""
+    for path in _selected(paths, ".tflint.hcl"):
+        try:
+            text = path.read_text()
+        except (OSError, UnicodeDecodeError) as e:
+            return _unparseable(tree, path, e)
+        stripped = _strip_hcl_comments(text)
+        for m in _TFLINT_PLUGIN_BLOCK.finditer(stripped):
+            name = m.group(1)
+            block = _hcl_block(stripped, m.end() - 1)
+            if name != "terraform":
+                return _reason(tree, path, f'plugin "{name}"', _TFLINT_PLUGIN_WHY)
+            if _TFLINT_PLUGIN_ATTR_KEY.search(block):
+                return _reason(tree, path, f'plugin "{name}"', _TFLINT_PLUGIN_ATTR_WHY)
+        if _TFLINT_PLUGIN_DIR_KEY.search(stripped):
+            return _reason(tree, path, "plugin_dir", _TFLINT_PLUGIN_DIR_WHY)
+    return None
+
+
+# --- buf ----------------------------------------------------------------
+# A v2 buf.yaml's top-level `plugins` key makes `buf lint` exec a check
+# plugin -- a local path or a name resolved off PATH -- BEFORE buf reports
+# anything: confirmed against the built image, the plugin binary ran even
+# though the go-plugin handshake then failed. `deps` makes buf fetch
+# modules from the BSR over the network. Both are refused at any nesting
+# depth (`_walk`, same as checkov/pylint's TOML/YAML guards above).
+_BUF_PLUGINS_WHY = "which buf executes as a binary"
+_BUF_DEPS_WHY = "which buf fetches from the network"
+_BUF_KEYS = {"plugins", "deps"}
+_BUF_WHY = {"plugins": _BUF_PLUGINS_WHY, "deps": _BUF_DEPS_WHY}
+
+
+def buf(tree: Path, paths: Sequence[Path]) -> str | None:
+    """Reason to refuse, or None when safe."""
+    for path in _selected(paths, "buf.yaml", "buf.yml"):
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except (OSError, UnicodeDecodeError, yaml.YAMLError, RecursionError) as e:
+            return _unparseable(tree, path, e)
+        found = _walk(doc or {}, _BUF_KEYS)
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
+        if found:
+            return _reason(tree, path, found, _BUF_WHY[found])
+    return None
+
+
+# --- ast-grep -------------------------------------------------------------
+# `sgconfig.yml`'s `customLanguages.<lang>.libraryPath` makes ast-grep
+# `dlopen` a repo-committed shared library -- confirmed against the built
+# image: the library's ELF constructor ran (a marker file was written) as
+# the pod's own uid, before ast-grep's own symbol lookup then failed.
+# Refusing a non-empty `customLanguages` outright is simpler and safer than
+# trying to validate individual libraryPath values.
+_AST_GREP_WHY = "which ast-grep loads as a native library from the repository"
+_AST_GREP_KEYS = {"customlanguages"}
+
+
+def ast_grep(tree: Path, paths: Sequence[Path]) -> str | None:
+    """Reason to refuse, or None when safe."""
+    for path in _selected(paths, "sgconfig.yml", "sgconfig.yaml"):
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except (OSError, UnicodeDecodeError, yaml.YAMLError, RecursionError) as e:
+            return _unparseable(tree, path, e)
+        found = _walk(doc or {}, _AST_GREP_KEYS)
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
+        if found:
+            return _reason(tree, path, found, _AST_GREP_WHY)
+    return None
+
+
+# --- regal ------------------------------------------------------------------
+# regal auto-loads every `.regal/rules/**/*.rego` next to a `.regal/
+# config.yaml` and evaluates it as OPA Rego -- confirmed against the built
+# image: a repo-committed rule calling `http.send` reached an external
+# listener, and the response status was surfaced in the finding regal
+# produced. Rego has no file-read builtin and `opa.runtime().env` is empty
+# in this build, so this is not RCE -- but findings are posted onto the PR,
+# so it is still an outbound network channel AND an exfiltration path (the
+# response body ends up in a finding). Any `*.rego` under the config's own
+# sibling `rules/` directory trips it, at any depth; the config's own
+# content is never even parsed, since regal auto-loads every rule file
+# there regardless of what `config.yaml` says.
+_REGAL_WHY = "which regal executes, and which can make network requests"
+
+
+def regal(tree: Path, paths: Sequence[Path]) -> str | None:
+    """Reason to refuse, or None when safe."""
+    for path in sorted(
+        p for p in paths if p.name == "config.yaml" and p.parent.name == ".regal" and p.is_file()
+    ):
+        try:
+            rule_files = sorted((path.parent / "rules").rglob("*.rego"))
+        except OSError as e:
+            return _unparseable(tree, path, e)
+        if rule_files:
+            return _reason(tree, rule_files[0], "custom rules", _REGAL_WHY)
     return None

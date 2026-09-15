@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import adapters
+import guards
 from runwhen_capability import Context
 
 from . import _common, _plan, _runner
@@ -23,7 +24,9 @@ FILES = ()  # rules decide languages; every changed file under an sgconfig is el
 CONFIG = "required"
 CONFIG_NAMES = (_plan.ConfigName("sgconfig.yml"), _plan.ConfigName("sgconfig.yaml"))
 CI_BINARY = None
-GUARD = None
+# sgconfig.yml's customLanguages.<lang>.libraryPath makes ast-grep dlopen a
+# repo-committed native library -- see guards.py.
+GUARD = guards.ast_grep
 LANE = "B"  # cwd-only discovery; ruleDirs are relative to sgconfig (verified)
 EXPECT_EXIT = (0, 1)
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path, PurePosixPath
 
+import guards
 import severity
 from runwhen_capability import Context
 
@@ -34,7 +35,9 @@ FILES = ("*.tf",)
 CONFIG = "required"
 CONFIG_NAMES = (_plan.ConfigName(".tflint.hcl"),)
 CI_BINARY = "tflint"
-GUARD = None
+# `.tflint.hcl` may name a plugin tflint installs and loads as a binary, or
+# set plugin_dir -- see guards.py.
+GUARD = guards.tflint
 LANE = "D"  # a module is tflint's unit: run in the changed file's module, keep that file's findings
 # tflint exits 2 when it reports findings (capture.log: exit 2, 2384B of
 # valid SARIF) -- not a tool failure.
@@ -69,7 +72,14 @@ def check(ctx: Context, tree: Path, inv: _plan.Invocation):
         "--filter",
         rel.name,
     ]
-    proc = _runner.run(ctx, argv, cwd=tree)
+    # Defence in depth, not the primary guard: tflint's DEFAULT plugin dir
+    # (./.tflint.d/plugins) resolves inside the PR's tree, so force it to an
+    # empty directory under our own workdir -- this closes that default-dir
+    # vector. It does NOT close a config `plugin_dir`, which overrides this
+    # env var; guards.tflint above (GUARD) is what actually stops that case.
+    plugin_dir = Path(ctx.workdir) / ".tool-home" / "tflint-plugins"
+    plugin_dir.mkdir(parents=True, exist_ok=True)
+    proc = _runner.run(ctx, argv, cwd=tree, env={"TFLINT_PLUGIN_DIR": str(plugin_dir)})
     fail = _common.check_exit(ctx, tree, "tflint", proc, sys.modules[__name__])
     if fail is not None:
         return fail

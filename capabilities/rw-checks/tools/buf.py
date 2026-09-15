@@ -13,6 +13,7 @@ import sys
 from pathlib import Path, PurePosixPath
 
 import adapters
+import guards
 from runwhen_capability import Context
 
 from . import _common, _plan, _runner
@@ -26,7 +27,13 @@ FILES = ("*.proto",)
 CONFIG = "required"
 CONFIG_NAMES = (_plan.ConfigName("buf.yaml"), _plan.ConfigName("buf.yml"))
 CI_BINARY = "buf"
-GUARD = None
+# buf.yaml's `plugins` runs a check-plugin binary; `deps` fetches from the
+# network -- see guards.py.
+GUARD = guards.buf
+# buf also reads the workspace-root buf.yaml (via buf.work.yaml), not only
+# the module's own -- the chain (root down to each file's directory,
+# section-agnostic since 0c1c67e) is what makes the root file visible here.
+GUARD_CHAIN = True
 LANE = "D"
 # tests/fixtures/tools/capture.log: buf lint findings exit 100 -- buf's own
 # convention -- not a tool failure.

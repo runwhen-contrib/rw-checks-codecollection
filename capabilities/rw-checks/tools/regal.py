@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import adapters
+import guards
 from runwhen_capability import Context
 
 from . import _common, _plan, _runner
@@ -21,7 +22,9 @@ FILES = ("*.rego",)
 CONFIG = "required"
 CONFIG_NAMES = (_plan.ConfigName(".regal/config.yaml"),)
 CI_BINARY = "regal"
-GUARD = None
+# regal auto-loads every .regal/rules/**/*.rego next to its config, and a
+# custom rule can call http.send -- see guards.py.
+GUARD = guards.regal
 LANE = "B"  # one config per run: files under different .regal roots must not share a run (verified)
 # tests/fixtures/tools/capture.log: exit 3 with findings present -- not a
 # tool failure.

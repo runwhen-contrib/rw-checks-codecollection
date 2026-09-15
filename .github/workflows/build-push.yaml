@@ -65,6 +65,9 @@ name: Build And Push
 # Build triggers:
 #   - push to ANY branch  -> produces a CodeCollectionVersion image for that branch
 #   - pull_request to ANY base branch -> produces a "pr-<n>" preview image
+#   - push of a semver tag (v*) -> produces the canonical release image for
+#                                  that tag: no "latest", no branch alias
+#                                  (Contract 2's "the tag itself for semver")
 #   - workflow_dispatch  -> manual build
 #
 # We build off non-main branches on purpose: each branch is a candidate CCV
@@ -74,7 +77,10 @@ name: Build And Push
 on:
   push:
     branches:
-      - '**'            # all branches; tag pushes (refs/tags/*) are excluded
+      - '**'            # all branches (refs/heads/*)
+    tags:
+      - 'v*'            # semver release tags (refs/tags/v*) -- see "Semver
+                         # releases" in the `prepare` job below
     paths-ignore:
       - '**/*.md'
       - '**/*.html'
@@ -207,37 +213,51 @@ jobs:
           owner_lc="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
 
           # --- canonical immutable tag the catalog uses for discovery ---
-          canonical_tag="${sanitized_ref}-${cc_sha7}"
+          # Semver releases: the tag itself IS the canonical, immutable
+          # identifier (Contract 2's "image_tag ... the tag itself for
+          # semver") -- no "-<sha7>" suffix, unlike a branch build, where
+          # the sha suffix is what makes the tag immutable.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            canonical_tag="${sanitized_ref}"
+          else
+            canonical_tag="${sanitized_ref}-${cc_sha7}"
+          fi
 
           # --- moving-pointer alias suffixes (these get re-pointed on every
           #     build; prefixed with each capability's own repo in
           #     build/merge, same list for both capabilities) ---
-          extra=( "${sanitized_ref}" )
-          case "${{ github.event_name }}" in
-            push|workflow_dispatch)
-              # Move "latest" whenever the destination branch is main.
-              if [ "${{ github.ref_name }}" = "main" ]; then
-                extra+=( "latest" )
-              fi
-              ;;
-            pull_request)
-              extra=( "pr-${{ github.event.pull_request.number }}" )
-              ;;
-          esac
+          # Semver releases get NO alias -- no "latest", no branch pointer,
+          # only the canonical tag above.
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            extra=()
+          else
+            extra=( "${sanitized_ref}" )
+            case "${{ github.event_name }}" in
+              push|workflow_dispatch)
+                # Move "latest" whenever the destination branch is main.
+                if [ "${{ github.ref_name }}" = "main" ]; then
+                  extra+=( "latest" )
+                fi
+                ;;
+              pull_request)
+                extra=( "pr-${{ github.event.pull_request.number }}" )
+                ;;
+            esac
+          fi
 
           {
             echo "cc_sha=${cc_sha}"
             echo "sanitized_ref=${sanitized_ref}"
             echo "owner_lc=${owner_lc}"
             echo "canonical_tag=${canonical_tag}"
-            printf 'extra_tags=%s\n' "$(IFS=,; echo "${extra[*]}")"
+            printf 'extra_tags=%s\n' "$(IFS=,; echo "${extra[*]:-}")"
           } >> "$GITHUB_OUTPUT"
 
           {
             echo "## Will publish"
             echo
             echo "- Canonical tag suffix: \`${canonical_tag}\`"
-            echo "- Alias tag suffixes:   $(IFS=,; echo "${extra[*]}")"
+            echo "- Alias tag suffixes:   $(IFS=,; echo "${extra[*]:-}")"
             echo
             echo "- Codecollection sha: \`${cc_sha}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -535,10 +555,15 @@ jobs:
         run: |
           set -euo pipefail
           # Build the -t <tag> argv from the canonical tag + this
-          # capability's own repo-prefixed alias tags.
+          # capability's own repo-prefixed alias tags. A semver release has
+          # NO alias tags (see `prepare`'s "Compute tag suffixes"), so
+          # EXTRA_TAGS is empty -- guard the read/loop rather than iterate a
+          # zero-element array under `set -u`.
           tags=( "${REPO_LC}:${CANONICAL_TAG}" )
-          IFS=',' read -ra EXTRA <<< "${EXTRA_TAGS}"
-          for suffix in "${EXTRA[@]}"; do tags+=( "${REPO_LC}:${suffix}" ); done
+          if [ -n "${EXTRA_TAGS}" ]; then
+            IFS=',' read -ra EXTRA <<< "${EXTRA_TAGS}"
+            for suffix in "${EXTRA[@]}"; do tags+=( "${REPO_LC}:${suffix}" ); done
+          fi
 
           tag_args=()
           for t in "${tags[@]}"; do tag_args+=(-t "$t"); done

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +24,21 @@ TOOLS = sorted(
     m.name for m in pkgutil.iter_modules([str(CAPABILITY / "tools")]) if not m.name.startswith("_")
 )
 CONFIG_FLAGS = {"--rcfile", "--config", "-c", "--config-file", "-config-file"}
+
+# Literal non-path values a few tools pass as format/subcommand arguments -- they
+# contain a "." or "/" (or, for `{{json .}}`, look like they might) but never name a
+# file. Kept tight and explicit: growing it should mean a real tool argument was
+# found, not a shortcut to silence a failure.
+NON_PATH_VALUES = {"sarif", "json", "json1", "parsable", "{{json .}}"}
+_NUMBER_RE = re.compile(r"-?\d+(\.\d+)?$")
+
+
+def _looks_like_a_file(arg: str) -> bool:
+    """True for an argv value the test must be able to resolve to a real path."""
+    if arg in NON_PATH_VALUES or _NUMBER_RE.match(arg):
+        return False
+    return "." in arg or "/" in arg
+
 
 # For each tool: files to create (path -> content), and which of them are in the diff.
 TREES = {
@@ -83,15 +99,58 @@ def test_argv_targets_only_changed_files(tmp_path, monkeypatch, name):
         assert "." not in [a for i, a in enumerate(argv) if i == 0 or argv[i - 1] != "--chdir"], (
             argv
         )
+        # Values passed to a config flag (e.g. gitleaks' `-c <path under the
+        # view>`) are allowed to name an unchanged file, including one that
+        # also shows up inside a scratch view walked below.
+        config_paths = set()
+        for j in range(1, len(argv)):
+            if argv[j - 1] in CONFIG_FLAGS:
+                v = argv[j]
+                p = Path(v) if Path(v).is_absolute() else (cwd / v)
+                config_paths.add(p.resolve())
+        chdir_base: Path | None = None
         for i, arg in enumerate(argv[1:], start=1):
-            candidate = (cwd / arg) if not Path(arg).is_absolute() else Path(arg)
+            is_abs = Path(arg).is_absolute()
+            candidate = Path(arg) if is_abs else (cwd / arg)
+            # tflint's `--filter <basename>` is relative to the *module*
+            # directory named by the preceding `--chdir`, not to `cwd` --
+            # fall back to resolving it there before giving up.
+            if not is_abs and not candidate.exists() and chdir_base is not None:
+                candidate = chdir_base / arg
+            if not is_abs and argv[i - 1] == "--chdir":
+                chdir_base = cwd / arg
             if not candidate.exists():
+                # A relative argument that still looks like a file after both
+                # resolution attempts is a bug in the module or the test's
+                # TREES/lane modelling, not something to shrug off silently.
+                assert is_abs or not _looks_like_a_file(arg), (
+                    name,
+                    "unresolved argv value",
+                    arg,
+                    "cwd",
+                    cwd,
+                    "chdir_base",
+                    chdir_base,
+                    argv,
+                )
                 continue
             if candidate.is_dir():
                 assert argv[i - 1] == "--chdir" or candidate.is_relative_to(ctx.workdir), (
                     name,
                     argv,
                 )
+                # A scratch view (gitleaks' `dir <view>`) must hold only
+                # changed files plus, optionally, a config passed via a
+                # config flag elsewhere in argv -- walk it and prove no
+                # unchanged file leaked in. (`--chdir` module directories
+                # such as tflint's are the one sanctioned exception, DIFF-
+                # SCOPED-CHECKS.md G1, and live under `tree`, not workdir.)
+                if candidate.is_relative_to(ctx.workdir):
+                    for sub in candidate.rglob("*"):
+                        if sub.is_dir() or sub.resolve() in config_paths:
+                            continue
+                        subrel = sub.relative_to(candidate).as_posix()
+                        assert subrel not in unchanged, (name, subrel, argv)
                 continue
             try:
                 rel = candidate.resolve().relative_to(tree.resolve()).as_posix()

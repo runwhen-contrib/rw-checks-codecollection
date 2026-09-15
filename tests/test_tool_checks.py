@@ -345,3 +345,59 @@ def test_biome_config_gated_one_run_per_root(tmp_path):
         (["biome", "lint", "--reporter=json", "src/a.ts"], tree / "web"),
     ]
     assert result.skipped == "1 of 3 changed JS/TS/JSON/CSS files have no biome config"
+
+
+def test_gitleaks_scans_a_view_of_only_changed_files(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "a/secret.py", "token='x'\n")
+    write(tree, "untouched.py", "token='y'\n")
+    write(tree, ".gitleaks.toml", "")
+    sarif = (FIXTURES / "gitleaks.sarif").read_text()
+    ctx, result = run(tmp_path, "gitleaks", ["a/secret.py"], {"gitleaks": sarif})
+    argv = ctx.calls[0]["argv"]
+    view = Path(argv[2])
+    assert argv[:2] == ["gitleaks", "dir"] and view.is_relative_to(ctx.workdir)
+    assert sorted(p.relative_to(view).as_posix() for p in view.rglob("*") if p.is_file()) == [
+        ".gitleaks.toml",
+        "a/secret.py",
+    ]
+    assert argv[argv.index("-c") + 1] == str(view / ".gitleaks.toml")
+    assert result.files_checked == 1
+
+
+def test_tflint_runs_per_changed_file_in_its_module(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "mod/.tflint.hcl", "")
+    write(tree, "mod/main.tf")
+    write(tree, "mod/variables.tf")
+    ctx, result = run(tmp_path, "tflint", ["mod/main.tf"], {"tflint": ""})
+    assert [c["argv"] for c in ctx.calls] == [
+        [
+            "tflint",
+            "--format",
+            "sarif",
+            "--chdir",
+            "mod",
+            "-c",
+            str(tree / "mod/.tflint.hcl"),
+            "--filter",
+            "main.tf",
+        ]
+    ]
+    assert result.files_checked == 1
+
+
+def test_buf_runs_from_workspace_root_with_path_args(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "proto/buf.work.yaml", "version: v1\ndirectories: [a, b]\n")
+    write(tree, "proto/a/buf.yaml", "version: v1\n")
+    write(tree, "proto/a/x.proto", 'syntax = "proto3";\n')
+    write(tree, "proto/b/buf.yaml", "version: v1\n")
+    write(tree, "proto/b/y.proto", 'syntax = "proto3";\n')
+    ctx, _ = run(tmp_path, "buf", ["proto/a/x.proto", "proto/b/y.proto"], {"buf": ""})
+    assert [(c["argv"], c["cwd"]) for c in ctx.calls] == [
+        (
+            ["buf", "lint", "--error-format=json", "--path", "a/x.proto", "--path", "b/y.proto"],
+            tree / "proto",
+        )
+    ]

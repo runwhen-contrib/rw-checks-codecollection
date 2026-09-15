@@ -121,3 +121,28 @@ def test_findings_outputs_return_the_envelope_not_a_bare_list(capability):
         checked += 1
     if capability == "rw-checks":
         assert checked == 22, f"expected all 22 rw-checks tasks to be checked, checked {checked}"
+
+
+def test_findings_result_carries_skipped_and_files_checked():
+    from runwhen_capability.models import FindingsResult
+
+    result = FindingsResult(findings=[], skipped="no changed Python files", files_checked=0)
+    dumped = result.model_dump()
+    assert dumped["skipped"] == "no changed Python files"
+    assert dumped["files_checked"] == 0
+
+
+def test_findings_result_defaults_keep_the_old_shape_valid():
+    from runwhen_capability.models import FindingsResult
+
+    old = FindingsResult.model_validate({"findings": [], "truncated": False})
+    assert old.skipped is None
+    assert old.files_checked == 0
+
+
+def test_cap_passes_skipped_and_files_checked_through(tmp_path):
+    from runwhen_capability import Context
+
+    ctx = Context(capability="rw-checks", operation="ruff", workdir=tmp_path)
+    result = ctx.findings.cap([], skipped="partial", files_checked=3)
+    assert (result.skipped, result.files_checked, result.truncated) == ("partial", 3, False)

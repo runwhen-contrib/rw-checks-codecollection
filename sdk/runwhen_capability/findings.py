@@ -268,7 +268,13 @@ class FindingsClient:
             )
         return out
 
-    def cap(self, findings: list[Finding]) -> FindingsResult:
+    def cap(
+        self,
+        findings: list[Finding],
+        *,
+        skipped: str | None = None,
+        files_checked: int = 0,
+    ) -> FindingsResult:
         """Caps `findings` at MAX_FINDINGS_PER_RESULT and reports whether it
         did -- the same honesty ctx.repo_fs.grep already gives a capped
         match list. This is a safety valve against a genuine runaway, not
@@ -284,6 +290,14 @@ class FindingsClient:
         first place. This is still where `truncated` gets decided and the
         list gets sliced to the exact ceiling: parse() deliberately leaves
         the "+1" in so this comparison (`len(findings) > MAX...`) still
-        fires correctly."""
+        fires correctly.
+
+        `skipped`/`files_checked` pass straight through to FindingsResult --
+        see models.FindingsResult for what each means."""
         truncated = len(findings) > MAX_FINDINGS_PER_RESULT
-        return FindingsResult(findings=findings[:MAX_FINDINGS_PER_RESULT], truncated=truncated)
+        return FindingsResult(
+            findings=findings[:MAX_FINDINGS_PER_RESULT],
+            truncated=truncated,
+            skipped=skipped,
+            files_checked=files_checked,
+        )

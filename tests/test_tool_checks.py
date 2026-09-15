@@ -280,6 +280,38 @@ def test_sqlfluff_guard_chain_per_group_isolation(tmp_path):
     assert [f.path for f in result.findings] == ["b/q/pep8.ini"]
 
 
+def test_sqlfluff_inline_directive_in_changed_sql_is_refused(tmp_path):
+    """B1: the linted .sql file itself carries the dangerous key via an
+    inline `-- sqlfluff:` directive -- no unsafe config file needed."""
+    tree = tmp_path / "tree"
+    write(tree, ".sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "db/new.sql", "-- sqlfluff:library_path:lib\nselect 2 from t\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/new.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable sqlfluff config is unsafe"
+    assert [f.path for f in result.findings] == ["db/new.sql"]
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+
+
+def test_sqlfluff_inline_directive_per_group_isolation(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "a/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "a/x.sql", "select 1\n")
+    write(tree, "b/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "b/y.sql", "-- sqlfluff:library_path:lib\nselect 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["a/x.sql", "b/y.sql"], {"sqlfluff": "[]"})
+    assert [c["argv"] for c in ctx.calls] == [["sqlfluff", "lint", "--format", "json", "a/x.sql"]]
+    assert [f.path for f in result.findings] == ["b/y.sql"]
+
+
+def test_sqlfluff_ordinary_inline_directive_still_runs(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, ".sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "db/x.sql", "-- sqlfluff:dialect:postgres\nselect 1\n")
+    ctx, _ = run(tmp_path, "sqlfluff", ["db/x.sql"], {"sqlfluff": "[]"})
+    assert ctx.calls[0]["argv"] == ["sqlfluff", "lint", "--format", "json", "db/x.sql"]
+
+
 def test_pylint_runs_per_config_from_its_directory(tmp_path):
     tree = tmp_path / "tree"
     write(tree, "a/.pylintrc", "[MAIN]\njobs=1\n")

@@ -290,6 +290,50 @@ def test_nearest_config_ignores_jinja_only_tox_ini(tmp_path):
     assert _plan.nearest_config(tmp_path, "db/x.sql", names) is None
 
 
+def test_plan_guard_files_appends_the_groups_own_files_to_guard_paths(tmp_path):
+    """GUARD_FILES=True (sqlfluff): the linted file can itself carry inline
+    config, so the guard must see the group's own files, not just its
+    config files."""
+    _write(tmp_path, ".sqlfluff", "[sqlfluff]\n")
+    _write(tmp_path, "db/x.sql")
+    _write(tmp_path, "db/y.sql")
+
+    seen: list[list[str]] = []
+
+    def guard(tree, paths):
+        seen.append([p.relative_to(tree).as_posix() for p in paths])
+        return None
+
+    mod = _module(
+        NAME="sqlfluff",
+        KIND="SQL",
+        FILES=("*.sql",),
+        CONFIG_NAMES=(ConfigName(".sqlfluff"),),
+        GUARD=guard,
+        GUARD_FILES=True,
+    )
+    a = _plan.plan(_ctx(tmp_path), tmp_path, ["db/x.sql", "db/y.sql"], mod)
+    assert seen == [[".sqlfluff", "db/x.sql", "db/y.sql"]]
+    assert a.invocations != ()
+
+
+def test_plan_guard_files_default_false_leaves_guard_paths_unchanged(tmp_path):
+    """A module that never sets GUARD_FILES (the existing fake-module style)
+    is unaffected -- the guard only sees its config file."""
+    _write(tmp_path, ".pylintrc", "[MAIN]\n")
+    _write(tmp_path, "x.py")
+
+    seen: list[list[str]] = []
+
+    def guard(tree, paths):
+        seen.append([p.relative_to(tree).as_posix() for p in paths])
+        return None
+
+    a = _plan.plan(_ctx(tmp_path), tmp_path, ["x.py"], _module(GUARD=guard))
+    assert seen == [[".pylintrc"]]
+    assert a.invocations != ()
+
+
 def test_plan_narrow_hook_can_drop_files_with_a_reason(tmp_path):
     _write(tmp_path, ".flake8", "[flake8]\n")
     _write(tmp_path, "x.py")

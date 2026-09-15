@@ -24,6 +24,9 @@ templater's `library_path` -- see guards.py. GUARD_CHAIN below reflects that
 sqlfluff MERGES every ancestor config into one, so a root config's
 library_path is in effect even for a file linted under its own nested
 `.sqlfluff` -- the guard must see the whole chain, not just the nearest file.
+GUARD_FILES reflects a second config source: sqlfluff also scans the LINTED
+SQL FILE ITSELF for inline `-- sqlfluff:`/`--sqlfluff:` directives, so the
+guard must see the changed .sql files too, not only its config files.
 """
 
 from __future__ import annotations
@@ -53,12 +56,13 @@ CONFIG_NAMES = (
 )
 CI_BINARY = "sqlfluff"
 # `.sqlfluff`/pyproject.toml/setup.cfg/tox.ini may set the jinja templater's
-# library_path, which sqlfluff imports Python modules from.
+# library_path/loader_search_path/load_macros_from_path/exclude_macros_from_path.
 GUARD = guards.sqlfluff
 GUARD_CHAIN = True  # sqlfluff merges every config from the root down to the file's directory
 # sqlfluff's loader also merges pep8.ini, but it configures nothing else
 # sqlfluff cares about here, so it counts for the guard only, never eligibility.
 GUARD_EXTRA_NAMES = (_plan.ConfigName("pep8.ini"),)
+GUARD_FILES = True  # inline `-- sqlfluff:` directives in the linted .sql file are config too
 LANE = "A"  # per-file-nearest (verified); sqlfluff has no --config flag
 EXPECT_EXIT = (0, 1)
 

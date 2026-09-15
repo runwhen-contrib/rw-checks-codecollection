@@ -228,6 +228,70 @@ def test_sqlfluff_tox_ini_jinja_only_section_trips_the_guard(tmp_path):
     assert reason.startswith("tox.ini: sets library_path")
 
 
+# --- sqlfluff: B1, inline `-- sqlfluff:`/`--sqlfluff:` directives in the
+# linted .sql file itself (the file, not a config file, is the attacker's
+# only necessary input) --------------------------------------------------
+
+
+def test_sqlfluff_sql_inline_library_path_trips_the_guard(tmp_path):
+    path = write(tmp_path, "db/new.sql", "-- sqlfluff:library_path:lib\nselect 1\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+    assert "library_path" in reason
+
+
+def test_sqlfluff_sql_inline_no_space_variant_trips_the_guard(tmp_path):
+    path = write(tmp_path, "db/new.sql", "--sqlfluff:templater:jinja:library_path:lib\nselect 1\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+    assert "library_path" in reason
+
+
+def test_sqlfluff_sql_inline_ordinary_directive_is_safe(tmp_path):
+    path = write(tmp_path, "db/new.sql", "-- sqlfluff:dialect:postgres\nselect 1\n")
+    assert guards.sqlfluff(tmp_path, [path]) is None
+
+
+# --- sqlfluff: B2, the jinja loader's other file-disclosure keys --------
+
+
+def test_sqlfluff_loader_search_path_trips_the_guard(tmp_path):
+    path = write(tmp_path, ".sqlfluff", "[sqlfluff:templater:jinja]\nloader_search_path = /etc\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "loader_search_path" in reason
+
+
+def test_sqlfluff_load_macros_from_path_trips_the_guard(tmp_path):
+    path = write(
+        tmp_path, ".sqlfluff", "[sqlfluff:templater:jinja]\nload_macros_from_path = /etc\n"
+    )
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "load_macros_from_path" in reason
+
+
+# --- sqlfluff: B3, unbounded `_walk` recursion ---------------------------
+
+
+def test_sqlfluff_pyproject_deeply_nested_config_is_refused_not_raised(tmp_path):
+    """A pyproject.toml with [tool.sqlfluff] nested 5000 levels deep used to
+    blow `_walk`'s recursion; it must come back as a refusal string."""
+    header = "tool.sqlfluff" + "".join(f".n{i}" for i in range(5000))
+    path = write(tmp_path, "pyproject.toml", f"[{header}]\nx = 1\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "pyproject.toml" in reason
+
+
+def test_sqlfluff_pyproject_shallow_nested_config_is_safe(tmp_path):
+    header = "tool.sqlfluff" + "".join(f".n{i}" for i in range(40))
+    path = write(tmp_path, "pyproject.toml", f"[{header}]\ndialect = 'ansi'\n")
+    assert guards.sqlfluff(tmp_path, [path]) is None
+
+
 # --- flake8 ---------------------------------------------------------------
 
 

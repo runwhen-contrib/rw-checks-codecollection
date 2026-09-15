@@ -28,7 +28,11 @@ A config file matching one of the searched names that fails to parse is
 treated as UNSAFE, not benign: we cannot rule out that it sets one of these
 keys, and "we couldn't tell" is not the same as "it's clean". Guards never
 raise -- an unreadable or malformed file yields a refusal reason, not an
-exception, so one bad config file cannot crash the whole task.
+exception, so one bad config file cannot crash the whole task. That
+includes a config nested deeper than `_WALK_MAX_DEPTH`: `_walk` bails out
+with a distinct refusal rather than recursing further, and every guard that
+parses TOML/YAML also catches `RecursionError` as belt and braces against
+the parser's own recursive descent.
 """
 
 from __future__ import annotations
@@ -90,27 +94,44 @@ def _ini_items(parser: configparser.ConfigParser, sections: set[str] | None = No
             yield key, parser.get(section, key, fallback="")
 
 
-def _walk(obj: Any, keys: set[str]) -> str | None:
+_WALK_MAX_DEPTH = 64
+#: `_walk`'s signal that recursion passed `_WALK_MAX_DEPTH` -- an identity
+#: sentinel, not a string, so it can never collide with a real (lowercased)
+#: key name the way a string marker like "too-deep" could.
+_TOO_DEEP = object()
+
+
+def _walk(obj: Any, keys: set[str], depth: int = 0) -> Any:
     """Recursively search a parsed TOML/YAML document for any of `keys` as
     a dict key with a truthy value, at ANY nesting depth. Whoever writes a
     malicious config controls which section it lives under, not just the
     key name -- a guard that only checks one fixed path is trivially
     dodged by nesting the same key one level differently. Returns the
-    matched key (lowercased) or None."""
+    matched key (lowercased), `_TOO_DEEP` once `depth` passes
+    `_WALK_MAX_DEPTH` -- a config nested that deep is hiding something, and
+    the caller must treat "we gave up looking" as unsafe, not as None -- or
+    None when nothing was found within the bound."""
+    if depth > _WALK_MAX_DEPTH:
+        return _TOO_DEEP
     if isinstance(obj, dict):
         for k, v in obj.items():
             key = str(k).lower()
             if key in keys and v:
                 return key
-            found = _walk(v, keys)
+            found = _walk(v, keys, depth + 1)
             if found:
                 return found
     elif isinstance(obj, list):
         for item in obj:
-            found = _walk(item, keys)
+            found = _walk(item, keys, depth + 1)
             if found:
                 return found
     return None
+
+
+def _too_deep(tree: Path, path: Path) -> str:
+    rel = path.relative_to(tree).as_posix()
+    return f"{rel}: nested more than {_WALK_MAX_DEPTH} levels deep; treating as unsafe"
 
 
 def _toml_table(doc: Any, *path: str) -> Any:
@@ -142,25 +163,29 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
             for key, value in _ini_items(parser):
                 if key in _PYLINT_KEYS and value:
                     return _reason(tree, path, key, _PYLINT_WHY)
-        except (OSError, UnicodeDecodeError, configparser.Error) as e:
+        except (OSError, UnicodeDecodeError, configparser.Error, RecursionError) as e:
             return _unparseable(tree, path, e)
 
     for path in _selected(paths, ".pylintrc.toml", "pylintrc.toml"):
         try:
             doc = tomllib.loads(path.read_text())
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as e:
             return _unparseable(tree, path, e)
         found = _walk(doc, _PYLINT_KEYS)
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
         if found:
             return _reason(tree, path, found, _PYLINT_WHY)
 
     for path in _selected(paths, "pyproject.toml"):
         try:
             doc = tomllib.loads(path.read_text())
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as e:
             return _unparseable(tree, path, e)
         section = _toml_table(doc, "tool", "pylint")
         found = _walk(section, _PYLINT_KEYS) if section is not None else None
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
         if found:
             return _reason(tree, path, found, _PYLINT_WHY)
 
@@ -170,7 +195,7 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
             for key, value in _ini_items(parser, sections={"pylint"}):
                 if key in _PYLINT_KEYS and value:
                     return _reason(tree, path, key, _PYLINT_WHY)
-        except (OSError, UnicodeDecodeError, configparser.Error) as e:
+        except (OSError, UnicodeDecodeError, configparser.Error, RecursionError) as e:
             return _unparseable(tree, path, e)
 
     return None
@@ -194,7 +219,7 @@ def flake8(tree: Path, paths: Sequence[Path]) -> str | None:
             for key, value in _ini_items(parser, sections=local_plugins):
                 if key in _FLAKE8_LOCAL_PLUGINS_KEYS and value:
                     return _reason(tree, path, f"{key} in [flake8:local-plugins]", _FLAKE8_WHY)
-        except (OSError, UnicodeDecodeError, configparser.Error) as e:
+        except (OSError, UnicodeDecodeError, configparser.Error, RecursionError) as e:
             return _unparseable(tree, path, e)
     return None
 
@@ -217,9 +242,11 @@ def checkov(tree: Path, paths: Sequence[Path]) -> str | None:
     for path in _selected(paths, ".checkov.yaml", ".checkov.yml"):
         try:
             doc = yaml.safe_load(path.read_text())
-        except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
+        except (OSError, UnicodeDecodeError, yaml.YAMLError, RecursionError) as e:
             return _unparseable(tree, path, e)
         found = _walk(doc or {}, _CHECKOV_KEYS)
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
         if found:
             return _reason(tree, path, found, _CHECKOV_WHY)
     return None
@@ -228,14 +255,33 @@ def checkov(tree: Path, paths: Sequence[Path]) -> str | None:
 # --- sqlfluff -----------------------------------------------------------
 # The jinja templater's library_path is a directory sqlfluff imports Python
 # modules FROM (custom Jinja filters/macros) -- same "attacker-controlled
-# path becomes a module import" shape as pylint's load-plugins. sqlfluff's
-# loader also merges pep8.ini into the same config, so it is searched here
-# even though it configures nothing else sqlfluff cares about. sqlfluff
-# merges every section whose name starts with `sqlfluff` (not only the exact
-# `sqlfluff:templater:jinja`), so any section prefixed that way with a
-# library_path counts -- strictly more refusals than an exact match, which is
-# the point of a guard.
+# path becomes a module import" shape as pylint's load-plugins.
+# loader_search_path/load_macros_from_path/exclude_macros_from_path are the
+# same templater's other file-reading knobs: not a Python import (jinja runs
+# sandboxed), but `{% include %}` renders an arbitrary host file into the SQL
+# we then read as tool output -- file disclosure, not RCE, same family.
+# sqlfluff's loader also merges pep8.ini into the same config, so it is
+# searched here even though it configures nothing else sqlfluff cares about.
+# sqlfluff merges every section whose name starts with `sqlfluff` (not only
+# the exact `sqlfluff:templater:jinja`), so any section prefixed that way
+# with one of these keys counts -- strictly more refusals than an exact
+# match, which is the point of a guard.
+_SQLFLUFF_KEYS = {
+    "library_path",
+    "loader_search_path",
+    "load_macros_from_path",
+    "exclude_macros_from_path",
+}
 _SQLFLUFF_WHY = "which sqlfluff imports Python modules from"
+_SQLFLUFF_LOADER_WHY = "which sqlfluff reads files from"
+
+
+def _sqlfluff_why(key: str) -> str:
+    return _SQLFLUFF_WHY if key == "library_path" else _SQLFLUFF_LOADER_WHY
+
+
+def _sql_files(paths: Sequence[Path]) -> list[Path]:
+    return sorted(p for p in paths if p.suffix == ".sql" and p.is_file())
 
 
 def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
@@ -245,20 +291,48 @@ def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
             parser = _parse_ini(path.read_text())
             sections = {s for s in parser.sections() if s.lower().startswith("sqlfluff")}
             for key, value in _ini_items(parser, sections=sections):
-                if key == "library_path" and value:
-                    return _reason(tree, path, "library_path", _SQLFLUFF_WHY)
-        except (OSError, UnicodeDecodeError, configparser.Error) as e:
+                if key in _SQLFLUFF_KEYS and value:
+                    return _reason(tree, path, key, _sqlfluff_why(key))
+        except (OSError, UnicodeDecodeError, configparser.Error, RecursionError) as e:
             return _unparseable(tree, path, e)
 
     for path in _selected(paths, "pyproject.toml"):
         try:
             doc = tomllib.loads(path.read_text())
-        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as e:
             return _unparseable(tree, path, e)
         section = _toml_table(doc, "tool", "sqlfluff")
-        found = _walk(section, {"library_path"}) if section is not None else None
+        found = _walk(section, _SQLFLUFF_KEYS) if section is not None else None
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
         if found:
-            return _reason(tree, path, found, _SQLFLUFF_WHY)
+            return _reason(tree, path, found, _sqlfluff_why(found))
+
+    # B1: sqlfluff's own loader scans the LINTED FILE for inline
+    # `-- sqlfluff:<key>:...:<value>` / `--sqlfluff:...` directives
+    # (FluffConfig.process_raw_file_for_config) and treats them as config --
+    # so a changed .sql file is a config source in its own right, not just
+    # the files above. `GUARD_FILES` on the sqlfluff module is what puts
+    # .sql files into `paths` at all; every other guard here never sees the
+    # files it is guarding, only their config.
+    for path in _sql_files(paths):
+        try:
+            text = path.read_text(errors="replace")
+        except (OSError, RecursionError) as e:
+            return _unparseable(tree, path, e)
+        for line in text.splitlines():
+            stripped = line.lstrip()
+            if stripped.startswith("-- sqlfluff"):
+                marker = "-- sqlfluff"
+            elif stripped.startswith("--sqlfluff"):
+                marker = "--sqlfluff"
+            else:
+                continue
+            key_path = stripped[len(marker) :].split(":")[:-1]
+            for segment in key_path:
+                key = segment.strip().lower()
+                if key in _SQLFLUFF_KEYS:
+                    return _reason(tree, path, f"{key} inline", _sqlfluff_why(key))
 
     return None
 
@@ -278,6 +352,6 @@ def vale(tree: Path, paths: Sequence[Path]) -> str | None:
             for key, value in _ini_items(parser):
                 if key == "packages" and value:
                     return _reason(tree, path, "Packages", _VALE_WHY)
-        except (OSError, UnicodeDecodeError, configparser.Error) as e:
+        except (OSError, UnicodeDecodeError, configparser.Error, RecursionError) as e:
             return _unparseable(tree, path, e)
     return None

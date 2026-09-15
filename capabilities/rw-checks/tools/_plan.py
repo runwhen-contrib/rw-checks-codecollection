@@ -219,8 +219,18 @@ def plan(ctx: Any, tree: Path, changed: list[str] | None, module: Any) -> Applic
     refusals: list[Any] = []
     guard: Callable[[Path, Sequence[Path]], str | None] | None = getattr(module, "GUARD", None)
     if guard is not None:
+        # GUARD_FILES: bool = False (default) -- for a tool whose OWN linted
+        # file can set its config (sqlfluff scans a changed .sql file for
+        # inline `-- sqlfluff:` directives, see guards.sqlfluff), the guard
+        # must see the group's own files too, not only its config files.
+        # This is the one place a module opts a tool's changed files into
+        # the guard's input; every other guarded tool never sees them.
+        guard_files = getattr(module, "GUARD_FILES", False)
         for resolved in sorted((r for r in groups if r is not None), key=lambda r: r.path):
-            reason = guard(tree, guard_paths(tree, resolved, module, groups[resolved]))
+            paths = guard_paths(tree, resolved, module, groups[resolved])
+            if guard_files:
+                paths = paths + [tree / f for f in groups[resolved]]
+            reason = guard(tree, paths)
             if reason:
                 refusals.extend(_common.unsafe_config_finding(ctx, tree, reason))
                 count = len(groups.pop(resolved))

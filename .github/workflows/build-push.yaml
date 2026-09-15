@@ -79,7 +79,7 @@ on:
     branches:
       - '**'            # all branches (refs/heads/*)
     tags:
-      - 'v*'            # semver release tags (refs/tags/v*) -- see "Semver
+      - 'v[0-9]+.[0-9]+.[0-9]+*'  # semver release tags only -- see "Semver
                          # releases" in the `prepare` job below
     paths-ignore:
       - '**/*.md'

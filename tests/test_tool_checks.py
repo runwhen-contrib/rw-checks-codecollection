@@ -229,6 +229,57 @@ def test_sqlfluff_pep8_ini_only_repo_has_no_applicable_config(tmp_path):
     assert result.skipped == "no sqlfluff config applies to the changed files"
 
 
+def test_sqlfluff_guard_chain_reaches_pep8_ini_below_the_resolved_config(tmp_path):
+    """F1 exploit: db/.sqlfluff resolves the group, but db/q/pep8.ini -- below
+    the resolved config, in the linted file's own directory -- is what
+    sqlfluff actually merges in. The chain must reach it."""
+    tree = tmp_path / "tree"
+    write(tree, "db/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "db/q/pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    write(tree, "db/q/x.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/q/x.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable sqlfluff config is unsafe"
+    assert [f.path for f in result.findings] == ["db/q/pep8.ini"]
+
+
+def test_sqlfluff_guard_chain_reaches_root_tox_ini_jinja_only_section(tmp_path):
+    """F2 exploit: a root tox.ini with only a [sqlfluff:templater:jinja]
+    section is not "configured" for eligibility (no [sqlfluff] section), but
+    sqlfluff still merges it, so the guard must still see it."""
+    tree = tmp_path / "tree"
+    write(tree, "db/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "tox.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    write(tree, "db/x.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/x.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable sqlfluff config is unsafe"
+    assert [f.path for f in result.findings] == ["tox.ini"]
+
+
+def test_sqlfluff_guard_chain_reaches_nested_jinja_only_tox_ini(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "db/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "db/q/tox.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    write(tree, "db/q/x.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/q/x.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable sqlfluff config is unsafe"
+    assert [f.path for f in result.findings] == ["db/q/tox.ini"]
+
+
+def test_sqlfluff_guard_chain_per_group_isolation(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "a/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "a/x.sql", "select 1\n")
+    write(tree, "b/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    write(tree, "b/q/pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    write(tree, "b/q/y.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["a/x.sql", "b/q/y.sql"], {"sqlfluff": "[]"})
+    assert [c["argv"] for c in ctx.calls] == [["sqlfluff", "lint", "--format", "json", "a/x.sql"]]
+    assert [f.path for f in result.findings] == ["b/q/pep8.ini"]
+
+
 def test_pylint_runs_per_config_from_its_directory(tmp_path):
     tree = tmp_path / "tree"
     write(tree, "a/.pylintrc", "[MAIN]\njobs=1\n")

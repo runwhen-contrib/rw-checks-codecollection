@@ -121,27 +121,44 @@ def nearest_config(
     return None
 
 
-def guard_paths(tree: Path, resolved: Resolved, module: Any) -> list[Path]:
+def guard_paths(tree: Path, resolved: Resolved, module: Any, files: Sequence[str]) -> list[Path]:
     """Every config file the tool will load for this group. Only sqlfluff merges
     ancestor configs (GUARD_CHAIN); every other guarded tool loads exactly one.
 
-    `GUARD_EXTRA_NAMES` (default `()`) adds config names to the chain scan
+    sqlfluff loads config from its cwd (the tree root -- sqlfluff is lane A)
+    down to EACH LINTED FILE'S OWN DIRECTORY, so in chain mode the lineage is
+    the union, root-first, of every directory from the root down to and
+    including each `f` in `files`'s parent directory -- not just the
+    resolved config's own directory (which is always one of those ancestors,
+    so the union already covers it).
+
+    Every name in `CONFIG_NAMES` plus `GUARD_EXTRA_NAMES` (default `()`) is a
+    candidate in each of those directories; any that exists as a file is
+    included, ignoring `ConfigName.section` -- sqlfluff merges any
+    `sqlfluff:*` section, not only the ones `_counts`/`nearest_config` treat
+    as "configured" for eligibility. `GUARD_EXTRA_NAMES` adds config names
     that the guard must see but that play no part in eligibility -- sqlfluff
     merges `pep8.ini` into its config even though nothing here treats a
     `pep8.ini`-only repo as configured for sqlfluff at all (that stays
-    `module.CONFIG_NAMES`, used by `nearest_config`/`eligible_files`)."""
+    `module.CONFIG_NAMES`, used by `nearest_config`/`eligible_files`). The
+    guard itself decides what inside a candidate file matters."""
     if not getattr(module, "GUARD_CHAIN", False):
         return [tree / resolved.path]
     names = tuple(module.CONFIG_NAMES) + tuple(getattr(module, "GUARD_EXTRA_NAMES", ()))
+    dirs: set[PurePosixPath] = set()
+    for f in files:
+        current = PurePosixPath(f).parent
+        while True:
+            dirs.add(current)
+            if current == PurePosixPath("."):
+                break
+            current = current.parent
+    ordered = sorted(dirs, key=lambda d: (len(d.parts), d.as_posix()))
     chain: list[Path] = []
-    base = PurePosixPath(resolved.base) if resolved.base else PurePosixPath(".")
-    lineage = [PurePosixPath(".")]
-    for part in base.parts:
-        lineage.append(lineage[-1] / part)
-    for d in lineage:
+    for d in ordered:
         for cfg in names:
             candidate = tree / (d / cfg.name).as_posix()
-            if _counts(candidate, cfg):
+            if candidate.is_file():
                 chain.append(candidate)
     return chain
 
@@ -203,7 +220,7 @@ def plan(ctx: Any, tree: Path, changed: list[str] | None, module: Any) -> Applic
     guard: Callable[[Path, Sequence[Path]], str | None] | None = getattr(module, "GUARD", None)
     if guard is not None:
         for resolved in sorted((r for r in groups if r is not None), key=lambda r: r.path):
-            reason = guard(tree, guard_paths(tree, resolved, module))
+            reason = guard(tree, guard_paths(tree, resolved, module, groups[resolved]))
             if reason:
                 refusals.extend(_common.unsafe_config_finding(ctx, tree, reason))
                 count = len(groups.pop(resolved))

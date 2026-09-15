@@ -200,15 +200,19 @@ def test_plan_every_group_refused(tmp_path):
 
 def test_guard_paths_chain_from_root_to_config(tmp_path):
     _write(tmp_path, ".sqlfluff", "[sqlfluff]\n")
-    _write(tmp_path, "db/setup.cfg", "[metadata]\n")  # no [sqlfluff] section -> not in chain
+    _write(tmp_path, "db/setup.cfg", "[metadata]\n")  # no sqlfluff section, still in the chain (F2)
     _write(tmp_path, "db/q/.sqlfluff", "[sqlfluff]\n")
     mod = _module(
         NAME="sqlfluff",
         CONFIG_NAMES=(ConfigName(".sqlfluff"), ConfigName("setup.cfg", ("sqlfluff",))),
         GUARD_CHAIN=True,
     )
-    paths = _plan.guard_paths(tmp_path, Resolved("db/q/.sqlfluff", "db/q"), mod)
-    assert [p.relative_to(tmp_path).as_posix() for p in paths] == [".sqlfluff", "db/q/.sqlfluff"]
+    paths = _plan.guard_paths(tmp_path, Resolved("db/q/.sqlfluff", "db/q"), mod, ["db/q/x.sql"])
+    assert [p.relative_to(tmp_path).as_posix() for p in paths] == [
+        ".sqlfluff",
+        "db/setup.cfg",
+        "db/q/.sqlfluff",
+    ]
 
 
 def test_guard_paths_chain_includes_extra_names_but_nearest_config_ignores_them(tmp_path):
@@ -220,7 +224,7 @@ def test_guard_paths_chain_includes_extra_names_but_nearest_config_ignores_them(
         GUARD_CHAIN=True,
         GUARD_EXTRA_NAMES=(ConfigName("pep8.ini"),),
     )
-    paths = _plan.guard_paths(tmp_path, Resolved(".sqlfluff", ""), mod)
+    paths = _plan.guard_paths(tmp_path, Resolved(".sqlfluff", ""), mod, ["q.sql"])
     assert [p.relative_to(tmp_path).as_posix() for p in paths] == [".sqlfluff", "pep8.ini"]
 
     # a pep8.ini-only tree has no sqlfluff config at all -- GUARD_EXTRA_NAMES
@@ -228,6 +232,62 @@ def test_guard_paths_chain_includes_extra_names_but_nearest_config_ignores_them(
     tree = tmp_path / "bare"
     _write(tree, "pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
     assert _plan.nearest_config(tree, "q.sql", mod.CONFIG_NAMES) is None
+
+
+def test_guard_paths_chain_is_the_union_of_every_files_directory(tmp_path):
+    """F1: the chain must reach EACH linted file's own directory, not just the
+    resolved config's directory -- sqlfluff merges cwd (root) down to the file."""
+    _write(tmp_path, "tox.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    _write(tmp_path, "db/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    _write(tmp_path, "db/q/pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    _write(tmp_path, "db/q/setup.cfg", "[metadata]\n")  # no sqlfluff section at all (F2)
+    mod = _module(
+        NAME="sqlfluff",
+        CONFIG_NAMES=(
+            ConfigName(".sqlfluff"),
+            ConfigName("pyproject.toml", ("tool", "sqlfluff")),
+            ConfigName("setup.cfg", ("sqlfluff",)),
+            ConfigName("tox.ini", ("sqlfluff",)),
+        ),
+        GUARD_CHAIN=True,
+        GUARD_EXTRA_NAMES=(ConfigName("pep8.ini"),),
+    )
+    paths = _plan.guard_paths(tmp_path, Resolved("db/.sqlfluff", "db"), mod, ["db/q/x.sql"])
+    assert [p.relative_to(tmp_path).as_posix() for p in paths] == [
+        "tox.ini",
+        "db/.sqlfluff",
+        "db/q/setup.cfg",
+        "db/q/pep8.ini",
+    ]
+
+
+def test_guard_paths_chain_unions_multiple_files_directories(tmp_path):
+    _write(tmp_path, "db/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    _write(tmp_path, "db/a/pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    _write(tmp_path, "db/b/pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    mod = _module(
+        NAME="sqlfluff",
+        CONFIG_NAMES=(ConfigName(".sqlfluff"),),
+        GUARD_CHAIN=True,
+        GUARD_EXTRA_NAMES=(ConfigName("pep8.ini"),),
+    )
+    paths = _plan.guard_paths(
+        tmp_path, Resolved("db/.sqlfluff", "db"), mod, ["db/a/x.sql", "db/b/y.sql"]
+    )
+    assert [p.relative_to(tmp_path).as_posix() for p in paths] == [
+        "db/.sqlfluff",
+        "db/a/pep8.ini",
+        "db/b/pep8.ini",
+    ]
+
+
+def test_nearest_config_ignores_jinja_only_tox_ini(tmp_path):
+    """Eligibility is unchanged by F2: `nearest_config` still requires the
+    section CONFIG_NAMES declares, so a jinja-only tox.ini does not count."""
+    _write(tmp_path, "tox.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    _write(tmp_path, "db/x.sql")
+    names = (ConfigName(".sqlfluff"), ConfigName("tox.ini", ("sqlfluff",)))
+    assert _plan.nearest_config(tmp_path, "db/x.sql", names) is None
 
 
 def test_plan_narrow_hook_can_drop_files_with_a_reason(tmp_path):

@@ -67,8 +67,14 @@ def _parse_ini(text: str) -> configparser.ConfigParser:
     options are never nested in a section at all). configparser otherwise
     rejects that with MissingSectionHeaderError -- parking the preamble in
     a synthetic section keeps those keys visible to the search instead of
-    turning a perfectly ordinary vale.ini into a parse failure."""
-    parser = configparser.ConfigParser(strict=False)
+    turning a perfectly ordinary vale.ini into a parse failure.
+
+    `interpolation=None` -- matches `_common.parse_ini`, flake8's own
+    RawConfigParser and sqlfluff's own parser. Without it, the default
+    BasicInterpolation raises InterpolationSyntaxError on a bare `%` in any
+    value (e.g. `extension = X100% = evil:C`), which would otherwise crash
+    the guard on a value we do not even care about."""
+    parser = configparser.ConfigParser(strict=False, interpolation=None)
     parser.read_string("[__preamble__]\n" + text)
     return parser
 
@@ -133,11 +139,11 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
     for path in _selected(paths, ".pylintrc", "pylintrc"):
         try:
             parser = _parse_ini(path.read_text())
+            for key, value in _ini_items(parser):
+                if key in _PYLINT_KEYS and value:
+                    return _reason(tree, path, key, _PYLINT_WHY)
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
             return _unparseable(tree, path, e)
-        for key, value in _ini_items(parser):
-            if key in _PYLINT_KEYS and value:
-                return _reason(tree, path, key, _PYLINT_WHY)
 
     for path in _selected(paths, ".pylintrc.toml", "pylintrc.toml"):
         try:
@@ -161,11 +167,11 @@ def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
     for path in _selected(paths, "setup.cfg"):
         try:
             parser = _parse_ini(path.read_text())
+            for key, value in _ini_items(parser, sections={"pylint"}):
+                if key in _PYLINT_KEYS and value:
+                    return _reason(tree, path, key, _PYLINT_WHY)
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
             return _unparseable(tree, path, e)
-        for key, value in _ini_items(parser, sections={"pylint"}):
-            if key in _PYLINT_KEYS and value:
-                return _reason(tree, path, key, _PYLINT_WHY)
 
     return None
 
@@ -184,12 +190,12 @@ def flake8(tree: Path, paths: Sequence[Path]) -> str | None:
     for path in _selected(paths, ".flake8", "setup.cfg", "tox.ini"):
         try:
             parser = _parse_ini(path.read_text())
+            local_plugins = {s for s in parser.sections() if s.lower() == "flake8:local-plugins"}
+            for key, value in _ini_items(parser, sections=local_plugins):
+                if key in _FLAKE8_LOCAL_PLUGINS_KEYS and value:
+                    return _reason(tree, path, f"{key} in [flake8:local-plugins]", _FLAKE8_WHY)
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
             return _unparseable(tree, path, e)
-        local_plugins = {s for s in parser.sections() if s.lower() == "flake8:local-plugins"}
-        for key, value in _ini_items(parser, sections=local_plugins):
-            if key in _FLAKE8_LOCAL_PLUGINS_KEYS and value:
-                return _reason(tree, path, f"{key} in [flake8:local-plugins]", _FLAKE8_WHY)
     return None
 
 
@@ -224,7 +230,11 @@ def checkov(tree: Path, paths: Sequence[Path]) -> str | None:
 # modules FROM (custom Jinja filters/macros) -- same "attacker-controlled
 # path becomes a module import" shape as pylint's load-plugins. sqlfluff's
 # loader also merges pep8.ini into the same config, so it is searched here
-# even though it configures nothing else sqlfluff cares about.
+# even though it configures nothing else sqlfluff cares about. sqlfluff
+# merges every section whose name starts with `sqlfluff` (not only the exact
+# `sqlfluff:templater:jinja`), so any section prefixed that way with a
+# library_path counts -- strictly more refusals than an exact match, which is
+# the point of a guard.
 _SQLFLUFF_WHY = "which sqlfluff imports Python modules from"
 
 
@@ -233,20 +243,22 @@ def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
     for path in _selected(paths, ".sqlfluff", "setup.cfg", "tox.ini", "pep8.ini"):
         try:
             parser = _parse_ini(path.read_text())
+            sections = {s for s in parser.sections() if s.lower().startswith("sqlfluff")}
+            for key, value in _ini_items(parser, sections=sections):
+                if key == "library_path" and value:
+                    return _reason(tree, path, "library_path", _SQLFLUFF_WHY)
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
             return _unparseable(tree, path, e)
-        for key, value in _ini_items(parser, sections={"sqlfluff:templater:jinja"}):
-            if key == "library_path" and value:
-                return _reason(tree, path, "library_path", _SQLFLUFF_WHY)
 
     for path in _selected(paths, "pyproject.toml"):
         try:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as e:
             return _unparseable(tree, path, e)
-        section = _toml_table(doc, "tool", "sqlfluff", "templater", "jinja")
-        if isinstance(section, dict) and section.get("library_path"):
-            return _reason(tree, path, "library_path", _SQLFLUFF_WHY)
+        section = _toml_table(doc, "tool", "sqlfluff")
+        found = _walk(section, {"library_path"}) if section is not None else None
+        if found:
+            return _reason(tree, path, found, _SQLFLUFF_WHY)
 
     return None
 
@@ -263,9 +275,9 @@ def vale(tree: Path, paths: Sequence[Path]) -> str | None:
     for path in _selected(paths, ".vale.ini", "_vale.ini", "vale.ini"):
         try:
             parser = _parse_ini(path.read_text())
+            for key, value in _ini_items(parser):
+                if key == "packages" and value:
+                    return _reason(tree, path, "Packages", _VALE_WHY)
         except (OSError, UnicodeDecodeError, configparser.Error) as e:
             return _unparseable(tree, path, e)
-        for key, value in _ini_items(parser):
-            if key == "packages" and value:
-                return _reason(tree, path, "Packages", _VALE_WHY)
     return None

@@ -100,6 +100,16 @@ def test_pylint_malformed_config_is_unsafe(tmp_path):
     assert "unsafe" in reason.lower() or "could not be parsed" in reason.lower()
 
 
+def test_pylint_percent_value_in_unrelated_key_is_safe(tmp_path):
+    """F3: a `%` in an unrelated value must not raise InterpolationSyntaxError."""
+    path = write(
+        tmp_path,
+        ".pylintrc",
+        "[MESSAGES CONTROL]\ndisable = C0114\n[FORMAT]\nlogging-format-style = 100%\n",
+    )
+    assert guards.pylint(tmp_path, [path]) is None
+
+
 # --- checkov ------------------------------------------------------------
 
 
@@ -186,11 +196,36 @@ def test_sqlfluff_malformed_config_is_unsafe(tmp_path):
     assert "tox.ini" in reason
 
 
+def test_sqlfluff_percent_value_in_library_path_does_not_raise(tmp_path):
+    """F3: a `%` in library_path itself must not raise InterpolationSyntaxError."""
+    path = write(tmp_path, ".sqlfluff", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib%\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert reason.startswith(".sqlfluff: sets library_path")
+
+
 def test_sqlfluff_pep8_ini_library_path_trips_the_guard(tmp_path):
     path = write(tmp_path, "pep8.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
     reason = guards.sqlfluff(tmp_path, [path])
     assert reason is not None
     assert reason.startswith("pep8.ini: sets library_path")
+
+
+def test_sqlfluff_section_name_case_insensitive_trips_the_guard(tmp_path):
+    path = write(tmp_path, ".sqlfluff", "[SQLFluff:Templater:Jinja]\nlibrary_path = ./lib\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert reason.startswith(".sqlfluff: sets library_path")
+
+
+def test_sqlfluff_tox_ini_jinja_only_section_trips_the_guard(tmp_path):
+    """F2: a section with only [sqlfluff:templater:jinja] counts, even though
+    it has no bare [sqlfluff] section -- CONFIG_NAMES' section requirement is
+    for eligibility, not for what the guard treats as unsafe."""
+    path = write(tmp_path, "tox.ini", "[sqlfluff:templater:jinja]\nlibrary_path = ./lib\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert reason.startswith("tox.ini: sets library_path")
 
 
 # --- flake8 ---------------------------------------------------------------
@@ -224,6 +259,15 @@ def test_flake8_malformed_config_is_unsafe(tmp_path):
     reason = guards.flake8(tmp_path, [path])
     assert reason is not None
     assert "could not be parsed" in reason
+
+
+def test_flake8_percent_value_in_extension_does_not_raise(tmp_path):
+    """F3: the confirmed crash -- a `%` in [flake8:local-plugins] extension
+    used to raise InterpolationSyntaxError out of the guard entirely."""
+    path = write(tmp_path, ".flake8", "[flake8:local-plugins]\nextension = X100% = evil:C\n")
+    reason = guards.flake8(tmp_path, [path])
+    assert reason is not None
+    assert reason.startswith(".flake8: sets extension in [flake8:local-plugins]")
 
 
 def test_flake8_empty_paths_is_safe(tmp_path):
@@ -271,6 +315,16 @@ def test_vale_malformed_config_is_unsafe(tmp_path):
     reason = guards.vale(tmp_path, [path])
     assert reason is not None
     assert "_vale.ini" in reason
+
+
+def test_vale_percent_value_is_safe(tmp_path):
+    """F3: a `%` in an unrelated value must not raise InterpolationSyntaxError."""
+    path = write(
+        tmp_path,
+        ".vale.ini",
+        "StylesPath = styles\nMinAlertLevel = suggestion\n[*.md]\nTokenIgnores = 100%\n",
+    )
+    assert guards.vale(tmp_path, [path]) is None
 
 
 # --- explicit `paths`, the per-config-group form -------------------------

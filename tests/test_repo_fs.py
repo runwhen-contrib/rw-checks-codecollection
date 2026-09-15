@@ -17,9 +17,11 @@ from runwhen_capability.repo_fs import (
     BinaryFileError,
     PathEscapesTreeError,
     TreeNotMaterializedError,
+    find_around,
     grep_tree,
     ls_tree,
     read_lines,
+    read_ranges,
 )
 
 # An unreadable directory is unreadable only for a non-root user; root
@@ -548,3 +550,138 @@ def test_ls_unreadable_subdirectory_encountered_while_recursing_is_disclosed(tmp
         assert got.unreadableTruncated is False
     finally:
         os.chmod(locked, 0o755)
+
+
+# --- grep: multi-glob OR and context lines (RW-1416 cost P2, CAP-1) --------
+
+
+def test_grep_globs_list_ors_multiple_patterns(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "needle\n", "b.md": "needle\n", "c.txt": "needle\n"})
+
+    got = grep_tree(tree, "needle", globs=["*.py", "*.md"])
+
+    assert {m.path for m in got.matches} == {"a.py", "b.md"}
+
+
+def test_grep_glob_and_globs_combine_with_or(tmp_path):
+    """`glob` (singular, back-compat) and `globs` (new, plural) OR together
+    rather than one overriding the other."""
+    tree = make_tree(tmp_path, {"a.py": "needle\n", "b.md": "needle\n", "c.txt": "needle\n"})
+
+    got = grep_tree(tree, "needle", glob="*.py", globs=["*.md"])
+
+    assert {m.path for m in got.matches} == {"a.py", "b.md"}
+
+
+def test_grep_context_lines_before_and_after(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "one\ntwo\nneedle\nfour\nfive"})
+
+    got = grep_tree(tree, "needle", context=1)
+
+    assert got.matches[0].before == ["two"]
+    assert got.matches[0].after == ["four"]
+
+
+def test_grep_context_clipped_at_file_start_and_end(tmp_path):
+    """A context wider than the file must clip at both edges rather than
+    error or wrap -- the same honesty read_lines' byte-budget clipping
+    already gives a single range."""
+    tree = make_tree(tmp_path, {"a.py": "one\nneedle"})
+
+    got = grep_tree(tree, "needle", context=5)
+
+    assert got.matches[0].before == ["one"]  # clipped: only 1 line precedes it
+    assert got.matches[0].after == []  # clipped: nothing follows it
+
+
+def test_grep_context_defaults_to_no_context(tmp_path):
+    """Existing callers (context=0, the default) must see no before/after
+    fields materialize -- unchanged shape."""
+    tree = make_tree(tmp_path, {"a.py": "one\nneedle\nthree"})
+
+    got = grep_tree(tree, "needle")
+
+    assert got.matches[0].before == []
+    assert got.matches[0].after == []
+
+
+# --- read_ranges: merged, multi-range reads (RW-1416 cost P2, CAP-1) -------
+
+
+def test_read_ranges_merges_overlapping_and_adjacent(tmp_path):
+    body = "\n".join(f"line{i}" for i in range(1, 21))  # line1..line20
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    got = read_ranges(tree, "a.py", [(1, 5), (4, 8), (9, 10), (15, 16)])
+
+    assert got.path == "a.py"
+    assert got.totalLines == 20
+    assert [(r.start, r.end) for r in got.ranges] == [(1, 10), (15, 16)]
+    assert got.ranges[0].content == "\n".join(f"line{i}" for i in range(1, 11))
+    assert got.ranges[1].content == "line15\nline16"
+    assert got.truncated is False
+
+
+def test_read_ranges_missing_tree_raises_typed_error(tmp_path):
+    tree = tmp_path / "never-checked-out"
+
+    with pytest.raises(TreeNotMaterializedError):
+        read_ranges(tree, "a.py", [(1, 1)])
+
+
+def test_read_ranges_rejects_path_escaping_the_tree(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(PathEscapesTreeError):
+        read_ranges(tree, "../outside.py", [(1, 1)])
+
+
+def test_read_ranges_binary_file_raises(tmp_path):
+    tree = make_tree(tmp_path, {"bin": b"\x00\x01\x02binary"})
+
+    with pytest.raises(BinaryFileError):
+        read_ranges(tree, "bin", [(1, 1)])
+
+
+# --- find_around: a context window around each match (RW-1416 cost P2,
+# CAP-1) ---------------------------------------------------------------
+
+
+def test_find_around_returns_window_around_each_match(tmp_path):
+    body = "\n".join(f"line{i}" for i in range(1, 21))
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    windows = find_around(tree, "a.py", "line10", context=2)
+
+    assert windows == [(8, 12)]
+
+
+def test_find_around_clips_at_file_start_and_end(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "one\nneedle\nthree"})
+
+    windows = find_around(tree, "a.py", "needle", context=5)
+
+    assert windows == [(1, 3)]
+
+
+def test_find_around_caps_at_max_windows(tmp_path):
+    body = "\n".join("needle" for _ in range(10))
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    windows = find_around(tree, "a.py", "needle", context=0, max_windows=3)
+
+    assert windows == [(1, 1), (2, 2), (3, 3)]
+
+
+def test_find_around_rejects_path_escaping_the_tree(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(PathEscapesTreeError):
+        find_around(tree, "../outside.py", "x", context=1)
+
+
+def test_find_around_missing_tree_raises_typed_error(tmp_path):
+    tree = tmp_path / "never-checked-out"
+
+    with pytest.raises(TreeNotMaterializedError):
+        find_around(tree, "a.py", "x", context=1)

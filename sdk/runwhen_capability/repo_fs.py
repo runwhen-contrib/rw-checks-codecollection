@@ -24,7 +24,15 @@ import re
 from pathlib import Path
 
 from .findings import normalize_path
-from .models import GrepMatch, GrepResult, LsEntry, LsResult, ReadResult
+from .models import (
+    GrepMatch,
+    GrepResult,
+    LsEntry,
+    LsResult,
+    ReadRange,
+    ReadRangesResult,
+    ReadResult,
+)
 from .pathsafe import safe_path
 
 # read: CONTRACT.md's caps -- binary detection = NUL byte in the first
@@ -143,7 +151,7 @@ def read_lines(
     start = start_line if start_line and start_line >= 1 else 1
     end = end_line if end_line and 0 < end_line <= total_lines else total_lines
 
-    content, truncated, actual_end = _select_lines(lines, start, end)
+    content, truncated, actual_end, _ = _select_lines(lines, start, end)
     return ReadResult(
         path=normalize_path(path),
         content=content,
@@ -154,10 +162,17 @@ def read_lines(
     )
 
 
-def _select_lines(lines: list[str], start: int, end: int) -> tuple[str, bool, int]:
+def _select_lines(
+    lines: list[str], start: int, end: int, budget: int = READ_BUDGET
+) -> tuple[str, bool, int, int]:
+    """Returns (content, truncated, actual_end, bytes_used) -- `budget`
+    defaults to the whole READ_BUDGET for a single-range `read_lines` call,
+    but `read_ranges` passes the REMAINING budget so several ranges share
+    one MAX_READ_RESPONSE_BYTES-wide envelope rather than each getting its
+    own full budget."""
     if start > end or start > len(lines):
         actual_end = min(start - 1, len(lines))
-        return "", False, actual_end
+        return "", False, actual_end, 0
 
     parts: list[str] = []
     size = 0
@@ -166,7 +181,7 @@ def _select_lines(lines: list[str], start: int, end: int) -> tuple[str, bool, in
     for i in range(start, min(end, len(lines)) + 1):
         line = lines[i - 1]
         add = len(line.encode("utf-8")) + (1 if parts else 0)  # +1: the joining newline
-        if size + add > READ_BUDGET:
+        if size + add > budget:
             if parts:
                 truncated = True
                 break
@@ -176,12 +191,82 @@ def _select_lines(lines: list[str], start: int, end: int) -> tuple[str, bool, in
             # truncated: false. Byte-sliced then decoded with
             # errors="ignore" -- a split multi-byte rune is dropped, not
             # mojibake'd -- exactly like grep's MAX_GREP_MATCH_TEXT_LEN.
-            clipped = line.encode("utf-8")[:READ_BUDGET].decode("utf-8", errors="ignore")
-            return clipped, True, i
+            clipped = line.encode("utf-8")[:budget].decode("utf-8", errors="ignore")
+            return clipped, True, i, len(clipped.encode("utf-8"))
         parts.append(line)
         size += add
         actual_end = i
-    return "\n".join(parts), truncated, actual_end
+    return "\n".join(parts), truncated, actual_end, size
+
+
+def _merge_ranges(ranges: list[tuple[int, int]], total_lines: int) -> list[tuple[int, int]]:
+    """Clamps each (start, end) into [1, total_lines] -- same defaulting as
+    read_lines' start/end (an out-of-range end falls back to the last line;
+    a range entirely past the end of the file is dropped) -- then merges
+    overlapping or ADJACENT ranges (end + 1 == next start) after sorting by
+    start, so [1,5] and [6,10] collapse into one [1,10] range rather than
+    two that back onto each other."""
+    clamped: list[tuple[int, int]] = []
+    for start, end in ranges:
+        s = start if start and start >= 1 else 1
+        e = end if end and end <= total_lines else total_lines
+        if s > total_lines or s > e:
+            continue
+        clamped.append((s, e))
+
+    clamped.sort()
+    merged: list[tuple[int, int]] = []
+    for s, e in clamped:
+        if merged and s <= merged[-1][1] + 1:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def read_ranges(tree: Path, path: str, ranges: list[tuple[int, int]]) -> ReadRangesResult:
+    """The multi-range counterpart to read_lines: merges `ranges` (see
+    _merge_ranges) and fills each merged range's content against a single
+    byte budget shared across the WHOLE call, so N ranges together still
+    land under MAX_READ_RESPONSE_BYTES instead of each getting its own
+    full READ_BUDGET. Once the shared budget is spent, remaining ranges are
+    dropped entirely and `truncated` is set -- the same honesty a
+    within-range clip already gives read_lines."""
+    _check_tree_materialized(tree)
+    full = _confined(tree, path)
+    if not full.is_file():
+        raise FileNotFoundError(f"file not found: {path!r}")
+
+    data = full.read_bytes()
+    if _is_binary(data):
+        raise BinaryFileError(f"binary file: {path!r}")
+
+    lines = data.decode("utf-8", errors="replace").split("\n")
+    total_lines = len(lines)
+
+    merged = _merge_ranges(ranges, total_lines)
+
+    out: list[ReadRange] = []
+    truncated = False
+    remaining_budget = READ_BUDGET
+    for start, end in merged:
+        if remaining_budget <= 0:
+            truncated = True
+            break
+        content, range_truncated, actual_end, used = _select_lines(
+            lines, start, end, budget=remaining_budget
+        )
+        out.append(ReadRange(start=start, end=actual_end, content=content))
+        remaining_budget -= used
+        if range_truncated:
+            truncated = True
+
+    return ReadRangesResult(
+        path=normalize_path(path),
+        ranges=out,
+        totalLines=total_lines,
+        truncated=truncated,
+    )
 
 
 # --- grep --------------------------------------------------------------
@@ -268,11 +353,17 @@ def _grep_file(
     limit: int,
     matches: list[GrepMatch],
     unreadable: _UnreadablePaths,
+    context: int = 0,
 ) -> bool:
     """Scans one file line by line, appending every match until `limit` is
     reached, returning True the instant that happens so the caller can stop
     walking rather than scan the rest of the tree for matches nobody will
-    see. Ported from grepFile in internal/rwcheck/serve/grep.go."""
+    see. Ported from grepFile in internal/rwcheck/serve/grep.go.
+
+    `context` (0 by default -- unchanged shape for existing callers) slices
+    each match's `before`/`after` window straight out of the file's own
+    line list, so it's clipped at the file's start/end by ordinary list
+    slicing rather than any extra bounds check."""
     try:
         data = full.read_bytes()
     except OSError:
@@ -288,8 +379,9 @@ def _grep_file(
         return False  # binary -- skip, not an error
 
     text = data.decode("utf-8", errors="replace")
-    for line_no, raw_line in enumerate(text.split("\n"), start=1):
-        line = raw_line.rstrip("\r")  # mirrors bufio.ScanLines' CRLF handling
+    # mirrors bufio.ScanLines' CRLF handling
+    lines = [raw_line.rstrip("\r") for raw_line in text.split("\n")]
+    for line_no, line in enumerate(lines, start=1):
         if not pattern.search(line):
             continue
         line_bytes = line.encode("utf-8")
@@ -297,7 +389,9 @@ def _grep_file(
             snippet = line_bytes[:MAX_GREP_MATCH_TEXT_LEN].decode("utf-8", errors="ignore")
         else:
             snippet = line
-        matches.append(GrepMatch(path=rel, line=line_no, text=snippet))
+        before = lines[max(0, line_no - 1 - context) : line_no - 1] if context else []
+        after = lines[line_no : line_no + context] if context else []
+        matches.append(GrepMatch(path=rel, line=line_no, text=snippet, before=before, after=after))
         if len(matches) >= limit:
             return True
     return False
@@ -307,13 +401,21 @@ def grep_tree(
     tree: Path,
     pattern: str,
     glob: str | None = None,
+    globs: list[str] | None = None,
     max_matches: int | None = None,
     ignore_case: bool = False,
+    context: int = 0,
 ) -> GrepResult:
     """Ported from handleGrep/grepWorktree in internal/rwcheck/serve/grep.go.
     `pattern` is a regular expression (Python's `re`, not Go's RE2 -- most
     patterns behave identically, but this is not a byte-for-byte port of
-    the regex *engine*, only of the walk/glob/cap behaviour around it)."""
+    the regex *engine*, only of the walk/glob/cap behaviour around it).
+
+    `glob` (singular, back-compat) and `globs` (a list, RW-1416 cost P2's
+    query task) OR together -- a file is kept if it matches ANY of them,
+    with match_glob's same any-depth semantics for each -- so an existing
+    `glob=` caller sees no change when `globs` is omitted, and a caller
+    that only passes `globs` needs no `glob`."""
     _check_tree_materialized(Path(tree))
     try:
         compiled = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
@@ -323,12 +425,16 @@ def grep_tree(
     limit = max_matches if max_matches and max_matches > 0 else DEFAULT_GREP_MAX_MATCHES
     limit = min(limit, HARD_GREP_MAX_MATCHES)
 
+    all_globs = list(globs) if globs else []
+    if glob:
+        all_globs.append(glob)
+
     matches: list[GrepMatch] = []
     unreadable = _UnreadablePaths()
     for rel, full in _walk_files(tree, unreadable):
-        if glob and not match_glob(glob, rel):
+        if all_globs and not any(match_glob(g, rel) for g in all_globs):
             continue
-        if _grep_file(full, rel, compiled, limit, matches, unreadable):
+        if _grep_file(full, rel, compiled, limit, matches, unreadable, context=context):
             break
         if len(matches) >= limit:
             break
@@ -339,6 +445,44 @@ def grep_tree(
         unreadable=unreadable.paths,
         unreadableTruncated=unreadable.truncated,
     )
+
+
+def find_around(
+    tree: Path, path: str, pattern: str, context: int, max_windows: int = 5
+) -> list[tuple[int, int]]:
+    """Finds up to `max_windows` matches of `pattern` (a regular
+    expression, same convention as grep_tree) in `path`, in file order, and
+    returns a `±context`-line window around each match's line -- clamped
+    to [1, totalLines] the same way _merge_ranges clamps read_ranges'
+    input. Backs I3's `read` op's `around` field: the caller then treats
+    the returned windows as `ranges` and hands them to read_ranges, which
+    is what actually merges any that overlap."""
+    _check_tree_materialized(tree)
+    full = _confined(tree, path)
+    if not full.is_file():
+        raise FileNotFoundError(f"file not found: {path!r}")
+
+    data = full.read_bytes()
+    if _is_binary(data):
+        raise BinaryFileError(f"binary file: {path!r}")
+
+    try:
+        compiled = re.compile(pattern)
+    except re.error as exc:
+        raise ValueError(f"invalid pattern: {exc}") from exc
+
+    lines = data.decode("utf-8", errors="replace").split("\n")
+    total_lines = len(lines)
+
+    windows: list[tuple[int, int]] = []
+    for line_no, raw_line in enumerate(lines, start=1):
+        if len(windows) >= max_windows:
+            break
+        line = raw_line.rstrip("\r")
+        if not compiled.search(line):
+            continue
+        windows.append((max(1, line_no - context), min(total_lines, line_no + context)))
+    return windows
 
 
 # --- ls ------------------------------------------------------------------

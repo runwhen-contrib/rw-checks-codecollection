@@ -96,9 +96,16 @@ class ReadResult(BaseModel):
 
 
 class GrepMatch(BaseModel):
+    # before/after: the `context`-line window around this match, in file
+    # order -- empty (the default) when the caller didn't ask for context,
+    # so an existing caller that never passes `context` sees no shape
+    # change (RW-1416 cost P2, CAP-1: I3's query task `grep`/`defs`/`refs`
+    # ops all carry context).
     path: str
     line: int
     text: str
+    before: list[str] = Field(default_factory=list)
+    after: list[str] = Field(default_factory=list)
 
 
 class GrepResult(BaseModel):
@@ -108,6 +115,25 @@ class GrepResult(BaseModel):
     truncated: bool = False
     unreadable: list[str] = Field(default_factory=list)
     unreadableTruncated: bool = False
+
+
+class ReadRange(BaseModel):
+    """One merged range in a `read_ranges` result."""
+
+    start: int
+    end: int
+    content: str
+
+
+class ReadRangesResult(BaseModel):
+    """Output of `read_ranges` -- the multi-range counterpart to
+    ReadResult, backing I3's query task `read` op (`ranges` and `around`
+    both resolve to this shape; RW-1416 cost P2, CAP-1)."""
+
+    path: str
+    ranges: list[ReadRange] = Field(default_factory=list)
+    totalLines: int
+    truncated: bool = False
 
 
 class LsEntry(BaseModel):

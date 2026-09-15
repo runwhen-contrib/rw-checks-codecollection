@@ -155,8 +155,9 @@ class QueryError(BaseModel):
     """A per-op failure in a `query` result. `code` is one of repo_fs's
     error codes (repo_fs.error_code: PATH_ESCAPES_TREE, NOT_FOUND,
     NOT_A_DIRECTORY, BINARY_FILE, INVALID_PATTERN, UNREADABLE) or one of
-    the query task's own (INVALID_OP, RESPONSE_BUDGET) -- a plain string
-    rather than an enum so a new code is not a schema break for a caller."""
+    the query task's own (INVALID_OP, RESPONSE_BUDGET, DEADLINE) -- a
+    plain string rather than an enum so a new code is not a schema break
+    for a caller."""
 
     code: str
     message: str

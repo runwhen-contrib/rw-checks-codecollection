@@ -249,7 +249,7 @@ def test_grep_unreadable_tree_root_raises_instead_of_reporting_matches_empty(tmp
     tree itself is the one thing a caller has no way to not be asking
     about, so an unreadable root must raise, not render as `matches: []`
     (indistinguishable from "nothing matched"). In practice
-    _check_tree_materialized's own tree.iterdir() call already raises for
+    check_tree_materialized's own tree.iterdir() call already raises for
     this exact case before _walk_files ever runs; _walk_files' own
     _on_walk_error guard exists for defense in depth (e.g. a permissions
     change between that check and the walk itself) rather than being the
@@ -617,6 +617,44 @@ def test_grep_context_defaults_to_no_context(tmp_path):
     assert got.matches[0].after == []
 
 
+def test_grep_context_lines_are_capped_like_text(tmp_path):
+    """GrepMatch.text is cut at MAX_GREP_MATCH_TEXT_LEN, but a `before`/
+    `after` context line was never put through the same cut -- one long
+    line pulled in only as context (never itself matched by `pattern`)
+    could blow the same per-match budget `text` is already capped
+    against. Every context line must get the identical cut."""
+    long_line = "y" * 1000
+    tree = make_tree(tmp_path, {"a.py": f"{long_line}\nneedle\n{long_line}\n"})
+
+    got = grep_tree(tree, "needle", context=1)
+
+    assert len(got.matches[0].before[0]) == 400
+    assert len(got.matches[0].after[0]) == 400
+    assert got.matches[0].before[0] == long_line[:400]
+    assert got.matches[0].after[0] == long_line[:400]
+
+
+# --- bad patterns must not crash the whole call (RW-1416 cost P2 fix round
+# 1): re.compile can raise more than re.error on adversarial input --
+# OverflowError on a huge {n} repetition, RecursionError on deep nesting --
+# and both must become the same InvalidPatternError grep_tree/find_around
+# already raise for an ordinary re.error. -----------------------------------
+
+
+def test_grep_rejects_pattern_with_overflow_repetition(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        grep_tree(tree, "a{4294967296}")
+
+
+def test_grep_rejects_deeply_nested_pattern(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        grep_tree(tree, "(" * 1000)
+
+
 # --- read_ranges: merged, multi-range reads (RW-1416 cost P2, CAP-1) -------
 
 
@@ -724,3 +762,17 @@ def test_find_around_rejects_invalid_pattern_even_for_a_missing_file(tmp_path):
 
     with pytest.raises(ValueError, match="invalid pattern"):
         find_around(tree, "nope.py", "(unclosed", context=1)
+
+
+def test_find_around_rejects_pattern_with_overflow_repetition(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        find_around(tree, "a.py", "a{4294967296}", context=1)
+
+
+def test_find_around_rejects_deeply_nested_pattern(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        find_around(tree, "a.py", "(" * 1000, context=1)

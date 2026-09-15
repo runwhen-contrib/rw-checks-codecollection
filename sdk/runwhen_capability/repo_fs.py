@@ -116,7 +116,7 @@ def error_code(exc: BaseException) -> str | None:
     return None
 
 
-def _check_tree_materialized(tree: Path) -> None:
+def check_tree_materialized(tree: Path) -> None:
     if not tree.exists():
         raise TreeNotMaterializedError(f"tree not materialized: {tree} does not exist")
     if not tree.is_dir():
@@ -140,6 +140,18 @@ def _confined(tree: Path, path: str) -> Path:
 
 def _is_binary(data: bytes) -> bool:
     return b"\x00" in data[:BINARY_SNIFF_LEN]
+
+
+def _clip_grep_line(line: str) -> str:
+    """The same MAX_GREP_MATCH_TEXT_LEN cut GrepMatch.text already gets --
+    applied identically to every `before`/`after` context line, so one long
+    line pulled in only as context (never itself matching `pattern`) can't
+    blow the same budget `text` is already capped against. Byte-sliced then
+    decoded with errors="ignore", exactly like `text`'s own cut."""
+    line_bytes = line.encode("utf-8")
+    if len(line_bytes) <= MAX_GREP_MATCH_TEXT_LEN:
+        return line
+    return line_bytes[:MAX_GREP_MATCH_TEXT_LEN].decode("utf-8", errors="ignore")
 
 
 class _UnreadablePaths:
@@ -172,7 +184,7 @@ def read_lines(
     out-of-range value defaults to the whole file) from `path`, stopping
     early -- and reporting `truncated` -- the instant the joined content
     would push the response past READ_BUDGET."""
-    _check_tree_materialized(tree)
+    check_tree_materialized(tree)
     full = _confined(tree, path)
     if not full.is_file():
         raise FileNotFoundError(f"file not found: {path!r}")
@@ -271,7 +283,7 @@ def read_ranges(tree: Path, path: str, ranges: list[tuple[int, int]]) -> ReadRan
     full READ_BUDGET. Once the shared budget is spent, remaining ranges are
     dropped entirely and `truncated` is set -- the same honesty a
     within-range clip already gives read_lines."""
-    _check_tree_materialized(tree)
+    check_tree_materialized(tree)
     full = _confined(tree, path)
     if not full.is_file():
         raise FileNotFoundError(f"file not found: {path!r}")
@@ -431,13 +443,13 @@ def _grep_file(
             continue
         if exclude is not None and exclude(line):
             continue
-        line_bytes = line.encode("utf-8")
-        if len(line_bytes) > MAX_GREP_MATCH_TEXT_LEN:
-            snippet = line_bytes[:MAX_GREP_MATCH_TEXT_LEN].decode("utf-8", errors="ignore")
-        else:
-            snippet = line
-        before = lines[max(0, line_no - 1 - context) : line_no - 1] if context else []
-        after = lines[line_no : line_no + context] if context else []
+        snippet = _clip_grep_line(line)
+        before = (
+            [_clip_grep_line(x) for x in lines[max(0, line_no - 1 - context) : line_no - 1]]
+            if context
+            else []
+        )
+        after = [_clip_grep_line(x) for x in lines[line_no : line_no + context]] if context else []
         matches.append(GrepMatch(path=rel, line=line_no, text=snippet, before=before, after=after))
         if len(matches) >= limit:
             return True
@@ -466,10 +478,10 @@ def grep_tree(
     that only passes `globs` needs no `glob`.
 
     `exclude` is passed straight to _grep_file (see its docstring)."""
-    _check_tree_materialized(Path(tree))
+    check_tree_materialized(Path(tree))
     try:
         compiled = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
-    except re.error as exc:
+    except (re.error, OverflowError, RecursionError) as exc:
         raise InvalidPatternError(f"invalid pattern: {exc}") from exc
 
     limit = max_matches if max_matches and max_matches > 0 else DEFAULT_GREP_MAX_MATCHES
@@ -509,10 +521,10 @@ def find_around(
     input. Backs I3's `read` op's `around` field: the caller then treats
     the returned windows as `ranges` and hands them to read_ranges, which
     is what actually merges any that overlap."""
-    _check_tree_materialized(tree)
+    check_tree_materialized(tree)
     try:
         compiled = re.compile(pattern)
-    except re.error as exc:
+    except (re.error, OverflowError, RecursionError) as exc:
         raise InvalidPatternError(f"invalid pattern: {exc}") from exc
 
     full = _confined(tree, path)
@@ -556,7 +568,7 @@ def _ls_walk(
         # for: failing to read THAT one must surface as an error, never as
         # `entries: []` -- an unreadable directory and an empty one must not
         # render identically (this module's docstring; the same rule
-        # _check_tree_materialized enforces one level up). A directory
+        # check_tree_materialized enforces one level up). A directory
         # merely *encountered* while recursing can't raise the same way (it
         # wasn't the caller's explicit ask) -- it is disclosed via
         # `unreadable` instead.
@@ -598,7 +610,7 @@ def ls_tree(tree: Path, path: str | None = None, depth: int | None = None) -> Ls
     is set the instant the cap bites, the same honesty grep's `truncated`
     already gives a capped match list (previously ls silently reported a
     capped listing as if it were complete)."""
-    _check_tree_materialized(Path(tree))
+    check_tree_materialized(Path(tree))
     root = _confined(tree, path or "")
     if not root.is_dir():
         raise NotADirectoryError(f"not a directory: {path!r}")

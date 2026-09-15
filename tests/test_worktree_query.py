@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from runwhen_capability import repo_query
 from runwhen_capability.host import run_request
 from runwhen_capability.loader import load_capability
 from runwhen_capability.models import QueryResult, RequestEnvelope
@@ -190,6 +191,8 @@ def test_a_per_op_error_does_not_fail_the_other_ops(tmp_path):
         {"op": "defs", "symbol": ""},
         {"op": "refs", "symbol": "x", "globs": "*.py"},
         {"pattern": "x"},  # no op at all
+        {"op": "read", "path": "a.py\x00", "ranges": [[1, 2]]},  # NUL byte in path
+        {"op": "ls", "path": "a.py\x00"},
     ],
 )
 def test_a_malformed_op_is_a_per_op_invalid_op(tmp_path, op):
@@ -200,6 +203,37 @@ def test_a_malformed_op_is_a_per_op_invalid_op(tmp_path, op):
     assert out["results"][0]["result"] is None
     assert out["results"][0]["error"]["code"] == "INVALID_OP"
     assert out["results"][1]["error"] is None
+
+
+# --- malformed patterns are a per-op error, not a crashed batch (RW-1416
+# cost P2 fix round 1): re.compile can raise OverflowError/RecursionError,
+# not just re.error, on adversarial input -- and a NUL byte in a path used
+# to reach os.path/pathlib as a bare, unmapped ValueError. Either would
+# previously propagate out of _run_op uncaught (error_code returns None for
+# them) and fail the WHOLE query, not just the one op. -----------------------
+
+
+@pytest.mark.parametrize(
+    "bad_pattern",
+    ["a{4294967296}", "(" * 1000],
+)
+def test_a_pattern_that_crashes_re_compile_is_a_per_op_error_not_a_dead_batch(
+    tmp_path, bad_pattern
+):
+    tree = make_tree(tmp_path, {"a.py": "def foo():\n    return 1\n"})
+
+    out = query(
+        tree,
+        [
+            {"op": "grep", "pattern": bad_pattern},
+            {"op": "read", "path": "a.py", "around": bad_pattern, "context": 1},
+            {"op": "read", "path": "a.py", "ranges": [[1, 1]]},
+        ],
+    )
+
+    codes = [r["error"]["code"] if r["error"] else None for r in out["results"]]
+    assert codes == ["INVALID_PATTERN", "INVALID_PATTERN", None]
+    assert out["results"][2]["result"]["ranges"][0]["content"] == "def foo():"
 
 
 @pytest.mark.skipif(
@@ -357,6 +391,35 @@ def test_the_budget_truncates_later_ops_with_response_budget(tmp_path):
     assert wire_size(out) <= QUERY_BUDGET
 
 
+def test_an_op_too_big_for_the_budget_on_its_own_gets_its_own_message_and_siblings_still_run(
+    tmp_path, monkeypatch
+):
+    """When nothing earlier has used any of the budget beyond its
+    reservation -- this is the very first op run -- a result that doesn't
+    fit isn't starvation by an earlier op's consumption: it's the op's own
+    content that is too big. That op gets its own honest RESPONSE_BUDGET
+    message (distinct from the generic exhausted-budget one), and later
+    ops are NOT pre-emptively marked exhausted -- they still run, and can
+    still succeed."""
+    tree = make_tree(tmp_path, {"big.txt": "z" * (300 * 1024)})
+    (tree / "sub").mkdir()
+    monkeypatch.setattr(repo_query, "QUERY_BUDGET", 365)
+
+    out = query(
+        tree,
+        [{"op": "read", "path": "big.txt", "ranges": [[1, 1]]}, {"op": "ls", "path": "sub"}],
+    )
+
+    own_error = out["results"][0]["error"]
+    assert own_error["code"] == "RESPONSE_BUDGET"
+    assert own_error["message"] != repo_query._RESPONSE_BUDGET_MESSAGE
+    assert "alone" in own_error["message"]
+
+    assert out["results"][1]["error"] is None
+    assert out["results"][1]["result"]["entries"] == []
+    assert out["truncated"] is True
+
+
 def test_the_budget_counts_json_escaping_not_only_content_bytes(tmp_path):
     """read_ranges fills content up to its raw-byte budget; every `"` then
     doubles on the wire. The query budget measures the serialised result,
@@ -397,6 +460,58 @@ def test_a_single_line_larger_than_the_budget_is_clipped_not_dropped(tmp_path):
     assert result["ranges"][0]["end"] == 1
     assert len(result["ranges"][0]["content"]) > 200 * 1024
     assert wire_size(out) <= QUERY_BUDGET
+
+
+# --- the time budget (RW-1416 cost P2 fix round 1) --------------------------------
+
+
+def test_the_deadline_marks_remaining_ops_as_deadline_and_sets_truncated(tmp_path, monkeypatch):
+    """Before starting each op, if QUERY_DEADLINE_SECONDS has passed since
+    the query began, that op and every op after it become DEADLINE instead
+    of running -- the same exhausted-flag mechanism the byte budget already
+    uses, just a different reason and message. An op already answered
+    before the deadline hit keeps its real result."""
+    tree = make_tree(tmp_path, {"a.py": "hello\n"})
+    calls = {"n": 0}
+
+    def fake_now():
+        calls["n"] += 1
+        # call 1: the deadline itself (t=0 -> deadline=200). call 2: op 0's
+        # check (t=0, still under the deadline). Every call after that
+        # (op 1 onward) reports the deadline as long past.
+        return 0 if calls["n"] <= 2 else 1_000_000
+
+    monkeypatch.setattr(repo_query, "_now", fake_now)
+
+    out = query(tree, [{"op": "grep", "pattern": "hello"}, {"op": "ls"}, {"op": "ls"}])
+
+    assert out["results"][0]["error"] is None
+    assert [m["path"] for m in out["results"][0]["result"]["matches"]] == ["a.py"]
+
+    for later in out["results"][1:]:
+        assert later["result"] is None
+        assert later["error"]["code"] == "DEADLINE"
+        assert "new query" in later["error"]["message"]
+    assert [r["op"] for r in out["results"][1:]] == ["ls", "ls"]
+    assert out["truncated"] is True
+
+
+def test_the_deadline_can_hit_before_the_first_op_too(tmp_path, monkeypatch):
+    tree = make_tree(tmp_path, {"a.py": "hello\n"})
+    calls = {"n": 0}
+
+    def fake_now():
+        calls["n"] += 1
+        # call 1: the deadline itself (t=0 -> deadline=200). Every call
+        # after that -- including op 0's own check -- is long past it.
+        return 0 if calls["n"] <= 1 else 1_000_000
+
+    monkeypatch.setattr(repo_query, "_now", fake_now)
+
+    out = query(tree, [{"op": "grep", "pattern": "hello"}])
+
+    assert out["results"][0]["error"]["code"] == "DEADLINE"
+    assert out["truncated"] is True
 
 
 # --- schema and manifest ---------------------------------------------------------

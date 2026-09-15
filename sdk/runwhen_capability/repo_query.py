@@ -22,12 +22,22 @@ per-range structure and string escaping all count. Room for a
 RESPONSE_BUDGET entry is reserved up front for every op, so the ops past
 the cap can always still be answered with one. The op that straddles the
 cap keeps the leading matches/entries/whole lines that fit (and says
-`truncated`); every op after it is RESPONSE_BUDGET.
+`truncated`); every op after it is RESPONSE_BUDGET -- unless the very
+first op is what didn't fit, in which case nothing earlier consumed any
+of the budget, so that one op gets its own honest RESPONSE_BUDGET message
+instead and later ops still run.
+
+Time budget: QUERY_DEADLINE_SECONDS bounds the whole op loop the same way
+QUERY_BUDGET bounds its bytes. Checked before each op starts; once it has
+passed, that op and every op after it become DEADLINE instead of running,
+and `truncated` is set -- the same exhausted-flag mechanism the byte
+budget already uses, just a different reason and message.
 """
 
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -44,7 +54,7 @@ from .models import (
 from .repo_fs import (
     HARD_GREP_MAX_MATCHES,
     READ_BUDGET,
-    _check_tree_materialized,
+    check_tree_materialized,
     error_code,
     find_around,
     grep_tree,
@@ -77,7 +87,24 @@ _RESPONSE_BUDGET_MESSAGE = (
     "response budget spent by earlier ops in this query; send this op again in a new query"
 )
 
+DEADLINE = "DEADLINE"
+_DEADLINE_MESSAGE = "query time budget spent; send the remaining ops in a new query"
+
+# Total wall-clock budget for one run_query call's op loop. A batch of up
+# to MAX_QUERY_OPS full-tree ops (grep/defs/refs each walk the whole tree)
+# could otherwise run long enough to blow the capability's
+# requestTimeoutSeconds (manifest.yaml, 300s) -- ending the query cleanly
+# here, well under that, means the caller gets DEADLINE and can retry the
+# rest as a new query, instead of the runner timing out the whole request.
+# A plain module attribute, read fresh on every call (not a bound default
+# parameter), so a test can override it directly.
+QUERY_DEADLINE_SECONDS = 200.0
+
 OpResult = GrepResult | ReadRangesResult | LsResult
+
+
+def _now() -> float:
+    return time.monotonic()
 
 
 class _InvalidOp(ValueError):
@@ -117,6 +144,18 @@ def _globs(op: dict) -> list[str] | None:
         return isinstance(v, list) and all(isinstance(g, str) for g in v)
 
     return _field(op, "globs", check, "an array of strings")
+
+
+def _path_field(op: dict, required: bool = False) -> str | None:
+    """`op['path']`, rejecting an embedded NUL byte before it ever reaches
+    _confined/safe_path: os.path/pathlib raise a bare ValueError on one
+    ("embedded null character in path"), which is not one of
+    repo_fs.error_code's mapped exceptions and would otherwise fail the
+    whole task instead of just this op."""
+    path = _field(op, "path", lambda v: isinstance(v, str), "a string", required=required)
+    if path is not None and "\x00" in path:
+        raise _InvalidOp("'path' must not contain a NUL byte")
+    return path
 
 
 def _symbol(op: dict) -> str:
@@ -163,7 +202,7 @@ def _grep(tree: Path, op: dict) -> GrepResult:
 
 
 def _read(tree: Path, op: dict) -> ReadRangesResult:
-    path = _field(op, "path", lambda v: isinstance(v, str), "a string", required=True)
+    path = _path_field(op, required=True)
     if (op.get("ranges") is None) == (op.get("around") is None):
         raise _InvalidOp("read takes exactly one of 'ranges' or 'around'")
     if op.get("ranges") is not None:
@@ -177,7 +216,7 @@ def _read(tree: Path, op: dict) -> ReadRangesResult:
 
 
 def _ls(tree: Path, op: dict) -> LsResult:
-    path = _field(op, "path", lambda v: isinstance(v, str), "a string")
+    path = _path_field(op)
     depth = _int_field(op, "depth", 1)
     return ls_tree(tree, path=path, depth=depth)
 
@@ -358,7 +397,19 @@ def _fit(entry: QueryOpResult, available: int) -> tuple[QueryOpResult | None, in
 def run_query(worktree: Path, ops: list) -> QueryResult:
     """Runs `ops` against `worktree` in order (see the module docstring).
     An op's `rev` is ignored: papi splits ops by rev and sends each rev's
-    ops to the tree checked out at that sha."""
+    ops to the tree checked out at that sha.
+
+    Two exits from the loop besides the response budget, both handled the
+    same way -- the op in progress and every op after it get a per-op
+    error and the top-level `truncated` is set, rather than raising and
+    failing the whole task:
+
+    - the byte budget (QUERY_BUDGET, as before);
+    - the time budget (QUERY_DEADLINE_SECONDS): a batch of up to
+      MAX_QUERY_OPS full-tree ops can, in the worst case, run long enough
+      to blow the capability's requestTimeoutSeconds; this deadline ends
+      the query cleanly first, telling the caller to send the rest as a
+      new query, instead of the runner timing out the whole request."""
     if not isinstance(ops, list):
         raise ValueError(f"ops must be a JSON array, got {type(ops).__name__}")
     if len(ops) > MAX_QUERY_OPS:
@@ -367,33 +418,69 @@ def run_query(worktree: Path, ops: list) -> QueryResult:
     tree = Path(worktree)
     # Up front, not left to the first op that touches disk: a batch of
     # malformed ops against an evicted tree must still read as a miss.
-    _check_tree_materialized(tree)
+    check_tree_materialized(tree)
 
     budget_errors = [
         _error(index, _op_name(op), RESPONSE_BUDGET, _RESPONSE_BUDGET_MESSAGE)
         for index, op in enumerate(ops)
+    ]
+    # DEADLINE's message is shorter than RESPONSE_BUDGET's, so each entry
+    # here is never bigger than its budget_errors counterpart -- `held`
+    # (sized off budget_errors) is a safe reservation for either fallback.
+    deadline_errors = [
+        _error(index, _op_name(op), DEADLINE, _DEADLINE_MESSAGE) for index, op in enumerate(ops)
     ]
     # Each op's held-back room: its RESPONSE_BUDGET entry plus the ", "
     # before it. Released as that op is answered.
     held = [_entry_size(e) + (2 if index else 0) for index, e in enumerate(budget_errors)]
     reserved = sum(held)
     used = _size(QueryResult().model_dump(mode="json"))  # {"results": [], "truncated": false}
+    baseline_used = used
 
+    deadline = _now() + QUERY_DEADLINE_SECONDS
     results: list[QueryOpResult] = []
     exhausted = False
+    truncated = False
+    timed_out = False
     for index, op in enumerate(ops):
         reserved -= held[index]
         separator = 2 if index else 0
         entry: QueryOpResult | None = None
         size = 0
+        if not exhausted and _now() > deadline:
+            exhausted = True
+            truncated = True
+            timed_out = True
         if not exhausted:
             available = QUERY_BUDGET - used - reserved - separator
-            entry, size, trimmed = _fit(_run_op(tree, index, op), available)
-            exhausted = entry is None or trimmed
+            fitted, fit_size, trimmed = _fit(_run_op(tree, index, op), available)
+            if fitted is None and used == baseline_used:
+                # Nothing earlier has used any of the budget beyond its
+                # reservation (this is the very first op run) -- so the op
+                # itself, not starvation by an earlier one, is what doesn't
+                # fit. Its own honest error, and later ops still get their
+                # turn rather than being pre-emptively marked exhausted.
+                entry = _error(
+                    index,
+                    _op_name(op),
+                    RESPONSE_BUDGET,
+                    "this op's result alone exceeds the response budget; "
+                    "narrow it (fewer globs/ranges, smaller context)",
+                )
+                size = _entry_size(entry)
+                truncated = True
+            elif fitted is None:
+                exhausted = True
+                truncated = True
+            else:
+                entry, size = fitted, fit_size
+                if trimmed:
+                    exhausted = True
+                    truncated = True
         if entry is None:
-            entry = budget_errors[index]
+            entry = deadline_errors[index] if timed_out else budget_errors[index]
             size = held[index] - separator
         results.append(entry)
         used += separator + size
 
-    return QueryResult(results=results, truncated=exhausted)
+    return QueryResult(results=results, truncated=truncated)

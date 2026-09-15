@@ -128,7 +128,7 @@
       "type": "object"
     },
     "QueryError": {
-      "description": "A per-op failure in a `query` result. `code` is one of repo_fs's\nerror codes (repo_fs.error_code: PATH_ESCAPES_TREE, NOT_FOUND,\nNOT_A_DIRECTORY, BINARY_FILE, INVALID_PATTERN, UNREADABLE) or one of\nthe query task's own (INVALID_OP, RESPONSE_BUDGET) -- a plain string\nrather than an enum so a new code is not a schema break for a caller.",
+      "description": "A per-op failure in a `query` result. `code` is one of repo_fs's\nerror codes (repo_fs.error_code: PATH_ESCAPES_TREE, NOT_FOUND,\nNOT_A_DIRECTORY, BINARY_FILE, INVALID_PATTERN, UNREADABLE) or one of\nthe query task's own (INVALID_OP, RESPONSE_BUDGET, DEADLINE) -- a\nplain string rather than an enum so a new code is not a schema break\nfor a caller.",
       "properties": {
         "code": {
           "title": "Code",

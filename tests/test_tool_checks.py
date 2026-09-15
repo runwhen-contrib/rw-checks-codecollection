@@ -207,3 +207,47 @@ def test_sqlfluff_runs_files_from_root(tmp_path):
     ctx, _ = run(tmp_path, "sqlfluff", ["db/q.sql"], {"sqlfluff": "[]"})
     assert ctx.calls[0]["argv"] == ["sqlfluff", "lint", "--format", "json", "db/q.sql"]
     assert ctx.calls[0]["cwd"] == tree
+
+
+def test_pylint_runs_per_config_from_its_directory(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "a/.pylintrc", "[MAIN]\njobs=1\n")
+    write(tree, "b/pyproject.toml", "[tool.pylint.main]\njobs=1\n")
+    write(tree, "a/pkg/x.py")
+    write(tree, "b/y.py")
+    ctx, result = run(tmp_path, "pylint", ["a/pkg/x.py", "b/y.py"], {"pylint": "[]"})
+    assert [(c["argv"], c["cwd"]) for c in ctx.calls] == [
+        (
+            ["pylint", "--output-format=json", "--exit-zero", "--rcfile", ".pylintrc", "pkg/x.py"],
+            tree / "a",
+        ),
+        (
+            ["pylint", "--output-format=json", "--exit-zero", "--rcfile", "pyproject.toml", "y.py"],
+            tree / "b",
+        ),
+    ]
+    assert result.files_checked == 2
+
+
+def test_pylint_unsafe_group_refused_other_group_runs(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "legacy/.pylintrc", "[MAIN]\ninit-hook=import sys\n")
+    write(tree, "v2/.pylintrc", "[MAIN]\njobs=1\n")
+    write(tree, "legacy/x.py")
+    write(tree, "v2/y.py")
+    ctx, result = run(tmp_path, "pylint", ["legacy/x.py", "v2/y.py"], {"pylint": "[]"})
+    assert [c["cwd"] for c in ctx.calls] == [tree / "v2"]
+    assert [f.path for f in result.findings] == ["legacy/.pylintrc"]
+
+
+def test_flake8_drops_files_ruff_covers(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, ".flake8", "[flake8]\nmax-line-length = 120\n")
+    write(tree, "svc/ruff.toml", "")
+    write(tree, "svc/a.py")
+    write(tree, "tools/b.py")
+    ctx, result = run(tmp_path, "flake8", ["svc/a.py", "tools/b.py"], {"flake8": ""})
+    assert len(ctx.calls) == 1
+    assert ctx.calls[0]["argv"][-1] == "tools/b.py"
+    assert "--config" in ctx.calls[0]["argv"]
+    assert result.skipped == "1 of 2 changed Python files are covered by ruff"

@@ -13,7 +13,7 @@ import adapters
 import guards
 from runwhen_capability import Context
 
-from . import _common
+from . import _common, _plan, _runner
 
 SEVERITY = {
     "fatal": "error",
@@ -23,58 +23,44 @@ SEVERITY = {
     "refactor": "note",
     "info": "note",
 }
+NAME = "pylint"
+KIND = "Python"
 FILES = ("*.py",)
 # CONFIG required, following CodeRabbit: an opinionated linter run WITHOUT the
 # repository's own config reports findings the repo never asked for. ruff is
 # `optional` for the opposite reason -- its defaults are broadly agreeable.
 CONFIG = "required"
+CONFIG_NAMES = (
+    _plan.ConfigName(".pylintrc"),
+    _plan.ConfigName("pylintrc"),
+    _plan.ConfigName(".pylintrc.toml"),
+    _plan.ConfigName("pylintrc.toml"),
+    _plan.ConfigName("pyproject.toml", ("tool", "pylint")),
+    _plan.ConfigName("setup.cfg", ("pylint",)),
+)
 CI_BINARY = "pylint"
-# `.pylintrc` may set init-hook, which executes arbitrary Python in our pod.
-GUARD = guards.pylint
+GUARD = guards.pylint  # `.pylintrc` init-hook / load-plugins execute code in our pod
+LANE = "B"  # cwd-only discovery (verified): run from the config's directory with --rcfile
 # --exit-zero (below) forces exit 0 regardless of findings -- anything else
 # is a genuine failure to run.
 EXPECT_EXIT = (0,)
 
 
-def detect(tree: Path) -> list[Path]:
-    """Every directory where pylint is configured.
-
-    Returns a LIST because a monorepo genuinely wants pylint run once per
-    package, from each configured root, with each config. That is ordinary
-    Python and an awkward schema -- the reason these are modules, not data.
-    """
-    roots: set[Path] = set()
-    for p in _common.config_files(tree, ".pylintrc", "pylintrc", ".pylintrc.toml", "pylintrc.toml"):
-        roots.add(p.parent)
-    for p in _common.config_files(tree, "pyproject.toml"):
-        if _common.toml_table(p, "tool", "pylint") is not None:
-            roots.add(p.parent)
-    for p in _common.config_files(tree, "setup.cfg"):
-        if _common.ini_section(p, "pylint") is not None:
-            roots.add(p.parent)
-    return sorted(roots)
+def applicable(ctx: Context, tree: Path, changed: list[str] | None) -> _plan.Applicability:
+    return _plan.plan(ctx, tree, changed, sys.modules[__name__])
 
 
-def check(ctx: Context, tree: Path, changed: list[str] | None):
-    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
-    if stop:
-        return findings
-
-    records = []
-    for root in detect(tree):
-        # --recursive=y is required for a bare "." to walk subdirectories that
-        # are not packages (no __init__.py). --exit-zero because pylint exits
-        # non-zero on findings, which is not a task failure.
-        proc = ctx.run(
-            ["pylint", "--output-format=json", "--exit-zero", "--recursive=y", "."],
-            cwd=root,
-        )
-        fail = _common.check_exit(ctx, tree, "pylint", proc, sys.modules[__name__])
-        if fail is not None:
-            return fail
-        rel = root.relative_to(tree)
-        for rec in adapters.pylint(proc.stdout, SEVERITY):
-            # Paths come back relative to the root pylint ran in, not the repo.
-            rec["path"] = (rel / rec["path"]).as_posix() if rel.parts else rec["path"]
-            records.append(rec)
-    return _common.emit(ctx, records, tree, changed)
+def check(ctx: Context, tree: Path, inv: _plan.Invocation):
+    argv = [
+        "pylint",
+        "--output-format=json",
+        "--exit-zero",
+        "--rcfile",
+        _runner.config_arg(inv),
+        *_runner.files_arg(inv),
+    ]
+    proc = _runner.run(ctx, argv, cwd=_runner.cwd_path(tree, inv))
+    fail = _common.check_exit(ctx, tree, "pylint", proc, sys.modules[__name__])
+    if fail is not None:
+        return fail
+    return _runner.records_to_findings(ctx, tree, inv, adapters.pylint(proc.stdout, SEVERITY))

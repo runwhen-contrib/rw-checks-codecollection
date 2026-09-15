@@ -37,19 +37,6 @@ EXPECT_EXIT = (0, 1)
 _POLICY = severity.by_rule_prefix(SEVERITY)
 
 
-# legacy: used only by flake8's supersession gate until Task 7 converts flake8; delete then
-def detect(tree: Path) -> list[Path]:
-    """Every directory where ruff is configured: a root/nested ruff.toml,
-    .ruff.toml, or a pyproject.toml with a [tool.ruff] table."""
-    roots: set[Path] = set()
-    for p in _common.config_files(tree, "ruff.toml", ".ruff.toml"):
-        roots.add(p.parent)
-    for p in _common.config_files(tree, "pyproject.toml"):
-        if _common.toml_table(p, "tool", "ruff") is not None:
-            roots.add(p.parent)
-    return sorted(roots)
-
-
 def applicable(ctx: Context, tree: Path, changed: list[str] | None) -> _plan.Applicability:
     return _plan.plan(ctx, tree, changed, sys.modules[__name__])
 

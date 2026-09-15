@@ -270,7 +270,10 @@ def test_unguarded_config_runs_the_tool_and_reaches_ctx_run(tmp_path, monkeypatc
     NOT stop the task from invoking the tool."""
     import importlib
 
-    monkeypatch.setattr(importlib.import_module("tools.pylint"), "GUARD", lambda tree: None)
+    mod = importlib.import_module("tools.pylint")
+    if hasattr(mod, "applicable"):
+        pytest.skip("pylint uses the diff-scoped contract (tests/test_tool_checks.py)")
+    monkeypatch.setattr(mod, "GUARD", lambda tree: None)
     # pylint is CONFIG=required: without the repository's own config it is
     # skipped before the tool is ever invoked, so a bare tmp_path would prove
     # nothing here. Give it a config AND a Python file to satisfy the file

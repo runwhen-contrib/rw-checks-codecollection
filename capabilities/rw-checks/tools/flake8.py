@@ -13,7 +13,9 @@ from pathlib import Path
 import adapters
 from runwhen_capability import Context
 
-from . import _common
+import tools.ruff
+
+from . import _common, _plan, _runner
 
 # F (pyflakes) real defects, E/W (pycodestyle) style, C (mccabe)/N
 # (pep8-naming) nits.
@@ -24,34 +26,43 @@ SEVERITY = {
     "C": "note",
     "N": "note",
 }
+NAME = "flake8"
+KIND = "Python"
 FILES = ("*.py",)
 CONFIG = "required"
+CONFIG_NAMES = (
+    _plan.ConfigName(".flake8"),
+    _plan.ConfigName("setup.cfg", ("flake8",)),
+    _plan.ConfigName("tox.ini", ("flake8",)),
+)
 CI_BINARY = "flake8"
 GUARD = None
-# ruff reimplements pyflakes/pycodestyle and emits flake8's OWN rule ids --
-# measured on tests/fixtures: F401/F841 reported at identical lines by both.
-SUPERSEDED_BY = "ruff"
+LANE = "B"  # cwd-only discovery (verified)
 EXPECT_EXIT = (0, 1)
+_FORMAT = "--format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s"
 
 
-def detect(tree: Path) -> list[Path]:
-    roots: set[Path] = set()
-    for p in _common.config_files(tree, ".flake8"):
-        roots.add(p.parent)
-    for p in _common.config_files(tree, "setup.cfg", "tox.ini"):
-        if _common.ini_section(p, "flake8") is not None:
-            roots.add(p.parent)
-    return sorted(roots)
+def narrow(ctx, tree, changed, groups):
+    """ruff reimplements flake8 and emits its rule IDs: drop files ruff checks."""
+    ruff_files = {
+        f for inv in tools.ruff.applicable(ctx, tree, changed).invocations for f in inv.files
+    }
+    kept = {r: [f for f in fs if f not in ruff_files] for r, fs in groups.items()}
+    kept = {r: fs for r, fs in kept.items() if fs}
+    dropped = sum(len(fs) for fs in groups.values()) - sum(len(fs) for fs in kept.values())
+    total = sum(len(fs) for fs in groups.values())
+    note = f"{dropped} of {total} changed Python files are covered by ruff" if dropped else None
+    return kept, note
 
 
-def check(ctx: Context, tree: Path, changed: list[str] | None):
-    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
-    if stop:
-        return findings
-    # "." replaces capture.log's fixture-specific "src" dir; unlike pylint,
-    # flake8 walks directories on its own without an extra flag.
-    proc = ctx.run(["flake8", "--format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s", "."], cwd=tree)
+def applicable(ctx: Context, tree: Path, changed: list[str] | None) -> _plan.Applicability:
+    return _plan.plan(ctx, tree, changed, sys.modules[__name__])
+
+
+def check(ctx: Context, tree: Path, inv: _plan.Invocation):
+    argv = ["flake8", "--config", _runner.config_arg(inv), _FORMAT, *_runner.files_arg(inv)]
+    proc = _runner.run(ctx, argv, cwd=_runner.cwd_path(tree, inv))
     fail = _common.check_exit(ctx, tree, "flake8", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    return _common.emit(ctx, adapters.flake8(proc.stdout, SEVERITY), tree, changed)
+    return _runner.records_to_findings(ctx, tree, inv, adapters.flake8(proc.stdout, SEVERITY))

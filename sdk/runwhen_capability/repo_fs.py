@@ -201,17 +201,20 @@ def _select_lines(
 
 def _merge_ranges(ranges: list[tuple[int, int]], total_lines: int) -> list[tuple[int, int]]:
     """Clamps each (start, end) into [1, total_lines] -- same defaulting as
-    read_lines' start/end (an out-of-range end falls back to the last line;
-    a range entirely past the end of the file is dropped) -- then merges
-    overlapping or ADJACENT ranges (end + 1 == next start) after sorting by
-    start, so [1,5] and [6,10] collapse into one [1,10] range rather than
-    two that back onto each other."""
+    read_lines' start/end (an out-of-range end falls back to the last
+    line) -- then merges overlapping or ADJACENT ranges (end + 1 == next
+    start) after sorting by start, so [1,5] and [6,10] collapse into one
+    [1,10] range rather than two that back onto each other.
+
+    A range starting past EOF (`s > total_lines`, so `s > e` after
+    clamping) is NOT dropped here: read_ranges still emits a ReadRange for
+    it, with empty content -- the same honesty read_lines already gives a
+    single out-of-range request, rather than silently vanishing it from
+    the result."""
     clamped: list[tuple[int, int]] = []
     for start, end in ranges:
         s = start if start and start >= 1 else 1
         e = end if end and end <= total_lines else total_lines
-        if s > total_lines or s > e:
-            continue
         clamped.append((s, e))
 
     clamped.sort()
@@ -458,6 +461,11 @@ def find_around(
     the returned windows as `ranges` and hands them to read_ranges, which
     is what actually merges any that overlap."""
     _check_tree_materialized(tree)
+    try:
+        compiled = re.compile(pattern)
+    except re.error as exc:
+        raise ValueError(f"invalid pattern: {exc}") from exc
+
     full = _confined(tree, path)
     if not full.is_file():
         raise FileNotFoundError(f"file not found: {path!r}")
@@ -465,11 +473,6 @@ def find_around(
     data = full.read_bytes()
     if _is_binary(data):
         raise BinaryFileError(f"binary file: {path!r}")
-
-    try:
-        compiled = re.compile(pattern)
-    except re.error as exc:
-        raise ValueError(f"invalid pattern: {exc}") from exc
 
     lines = data.decode("utf-8", errors="replace").split("\n")
     total_lines = len(lines)

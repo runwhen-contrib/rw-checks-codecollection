@@ -13,6 +13,20 @@
         "text": {
           "title": "Text",
           "type": "string"
+        },
+        "before": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Before",
+          "type": "array"
+        },
+        "after": {
+          "items": {
+            "type": "string"
+          },
+          "title": "After",
+          "type": "array"
         }
       },
       "required": [

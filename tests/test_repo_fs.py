@@ -622,6 +622,23 @@ def test_read_ranges_merges_overlapping_and_adjacent(tmp_path):
     assert got.truncated is False
 
 
+def test_read_ranges_keeps_an_empty_entry_for_a_range_starting_past_eof(tmp_path):
+    """A range entirely past EOF must not be silently dropped -- it gets a
+    ReadRange with empty content, the same honesty read_lines already gives
+    a single out-of-range request (empty content, not an error, not a
+    vanished result)."""
+    body = "\n".join(f"line{i}" for i in range(1, 11))  # line1..line10, no trailing newline
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    got = read_ranges(tree, "a.py", [(1, 3), (50, 60)])
+
+    assert got.totalLines == 10
+    assert [(r.start, r.end, r.content) for r in got.ranges] == [
+        (1, 3, "line1\nline2\nline3"),
+        (50, 10, ""),
+    ]
+
+
 def test_read_ranges_missing_tree_raises_typed_error(tmp_path):
     tree = tmp_path / "never-checked-out"
 
@@ -685,3 +702,13 @@ def test_find_around_missing_tree_raises_typed_error(tmp_path):
 
     with pytest.raises(TreeNotMaterializedError):
         find_around(tree, "a.py", "x", context=1)
+
+
+def test_find_around_rejects_invalid_pattern_even_for_a_missing_file(tmp_path):
+    """The pattern is validated before the file itself is looked at -- same
+    order as grep_tree -- so an invalid pattern always surfaces as its own
+    ValueError, never masked by an unrelated FileNotFoundError."""
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError, match="invalid pattern"):
+        find_around(tree, "nope.py", "(unclosed", context=1)

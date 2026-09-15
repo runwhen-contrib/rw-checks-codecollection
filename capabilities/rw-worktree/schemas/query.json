@@ -1,0 +1,277 @@
+{
+  "$defs": {
+    "GrepMatch": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "line": {
+          "title": "Line",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "before": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Before",
+          "type": "array"
+        },
+        "after": {
+          "items": {
+            "type": "string"
+          },
+          "title": "After",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "line",
+        "text"
+      ],
+      "title": "GrepMatch",
+      "type": "object"
+    },
+    "GrepResult": {
+      "description": "Output of the `grep` task.",
+      "properties": {
+        "matches": {
+          "items": {
+            "$ref": "#/$defs/GrepMatch"
+          },
+          "title": "Matches",
+          "type": "array"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "unreadable": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unreadable",
+          "type": "array"
+        },
+        "unreadableTruncated": {
+          "default": false,
+          "title": "Unreadabletruncated",
+          "type": "boolean"
+        }
+      },
+      "title": "GrepResult",
+      "type": "object"
+    },
+    "LsEntry": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "file",
+            "dir",
+            "other"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "size": {
+          "default": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "type"
+      ],
+      "title": "LsEntry",
+      "type": "object"
+    },
+    "LsResult": {
+      "description": "Output of the `ls` task.",
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/LsEntry"
+          },
+          "title": "Entries",
+          "type": "array"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "unreadable": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Unreadable",
+          "type": "array"
+        },
+        "unreadableTruncated": {
+          "default": false,
+          "title": "Unreadabletruncated",
+          "type": "boolean"
+        }
+      },
+      "title": "LsResult",
+      "type": "object"
+    },
+    "QueryError": {
+      "description": "A per-op failure in a `query` result. `code` is one of repo_fs's\nerror codes (repo_fs.error_code: PATH_ESCAPES_TREE, NOT_FOUND,\nNOT_A_DIRECTORY, BINARY_FILE, INVALID_PATTERN, UNREADABLE) or one of\nthe query task's own (INVALID_OP, RESPONSE_BUDGET) -- a plain string\nrather than an enum so a new code is not a schema break for a caller.",
+      "properties": {
+        "code": {
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "QueryError",
+      "type": "object"
+    },
+    "QueryOpResult": {
+      "description": "One op's entry in a `query` result, at its request `index`. Exactly\none of `result`/`error` is non-null; both are always present.",
+      "properties": {
+        "index": {
+          "title": "Index",
+          "type": "integer"
+        },
+        "op": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Op"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GrepResult"
+            },
+            {
+              "$ref": "#/$defs/ReadRangesResult"
+            },
+            {
+              "$ref": "#/$defs/LsResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QueryError"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "index"
+      ],
+      "title": "QueryOpResult",
+      "type": "object"
+    },
+    "ReadRange": {
+      "description": "One merged range in a `read_ranges` result.",
+      "properties": {
+        "start": {
+          "title": "Start",
+          "type": "integer"
+        },
+        "end": {
+          "title": "End",
+          "type": "integer"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "content"
+      ],
+      "title": "ReadRange",
+      "type": "object"
+    },
+    "ReadRangesResult": {
+      "description": "Output of `read_ranges` -- the multi-range counterpart to\nReadResult, backing I3's query task `read` op (`ranges` and `around`\nboth resolve to this shape; RW-1416 cost P2, CAP-1).",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "ranges": {
+          "items": {
+            "$ref": "#/$defs/ReadRange"
+          },
+          "title": "Ranges",
+          "type": "array"
+        },
+        "totalLines": {
+          "title": "Totallines",
+          "type": "integer"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path",
+        "totalLines"
+      ],
+      "title": "ReadRangesResult",
+      "type": "object"
+    }
+  },
+  "description": "Output of the `query` task (RW-1416 cost P2, CAP-3; I3): one entry\nper op, in request order. `truncated` is set when the response budget\ncut an op short or turned later ops into RESPONSE_BUDGET errors.",
+  "properties": {
+    "results": {
+      "items": {
+        "$ref": "#/$defs/QueryOpResult"
+      },
+      "title": "Results",
+      "type": "array"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    }
+  },
+  "title": "QueryResult",
+  "type": "object"
+}

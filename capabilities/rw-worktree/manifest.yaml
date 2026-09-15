@@ -74,7 +74,7 @@ needs:
   # generation is built, it must derive destinations from the resolved
   # installation, never from a literal in this file.
 
-# --- runs once per (repoUrn, sha) cache key, before read/grep/ls ----------------------
+# --- runs once per (repoUrn, sha) cache key, before read/grep/ls/query ----------------
 setup:
   task: open
   inputs:
@@ -120,6 +120,16 @@ tasks:
       result:
         kind: rw.repo_ls.v1
         schema: ./schemas/ls.json
+
+  - name: query
+    description: Run a batch of grep/read/ls/defs/refs operations against the checked-out tree
+    inputs:
+      tree: { from: "${setup.tree}" }
+      ops:  { from: request }              # JSON array of ops, answered in order
+    outputs:
+      result:
+        kind: rw.repo_query.v1
+        schema: ./schemas/query.json
 
 retention:
   pod: on_failure                        # all | on_failure | none

@@ -21,6 +21,7 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 from .findings import normalize_path
@@ -70,6 +71,11 @@ class BinaryFileError(ValueError):
     """`read` was asked to read a file that sniffs as binary."""
 
 
+class InvalidPatternError(ValueError):
+    """A caller-supplied regular expression (grep's `pattern`, read's
+    `around`) does not compile."""
+
+
 class TreeNotMaterializedError(RuntimeError):
     """`tree` is not a usable checkout -- it does not exist, is not a
     directory, or has no checked-out content (empty, or containing only
@@ -78,6 +84,36 @@ class TreeNotMaterializedError(RuntimeError):
     fetched objects but was never checked out) can never be silently
     reported as a genuine zero-match/zero-entry result -- see the module
     docstring for why that distinction matters."""
+
+
+def error_code(exc: BaseException) -> str | None:
+    """The stable, machine-readable code for a caller-input failure raised
+    by read/grep/ls/find_around -- what the `query` task reports per op
+    instead of failing the whole batch -- or None for anything else.
+
+    TreeNotMaterializedError deliberately has no code here: it is not a
+    per-op condition but an infrastructure miss, and must fail the whole
+    task so host.py flags the envelope not_materialized and papi
+    re-materialises. An unmapped exception is a bug, not caller input, and
+    propagates the same way."""
+    # Subclasses before their bases: PathEscapesTreeError, BinaryFileError
+    # and InvalidPatternError are all ValueErrors; FileNotFoundError and
+    # NotADirectoryError are OSErrors.
+    if isinstance(exc, PathEscapesTreeError):
+        return "PATH_ESCAPES_TREE"
+    if isinstance(exc, BinaryFileError):
+        return "BINARY_FILE"
+    if isinstance(exc, InvalidPatternError):
+        return "INVALID_PATTERN"
+    if isinstance(exc, FileNotFoundError):
+        return "NOT_FOUND"
+    if isinstance(exc, NotADirectoryError):
+        return "NOT_A_DIRECTORY"
+    if isinstance(exc, OSError):
+        # e.g. permission denied on the path the caller named (ls_tree's
+        # strict listing, or the file itself)
+        return "UNREADABLE"
+    return None
 
 
 def _check_tree_materialized(tree: Path) -> None:
@@ -357,6 +393,7 @@ def _grep_file(
     matches: list[GrepMatch],
     unreadable: _UnreadablePaths,
     context: int = 0,
+    exclude: Callable[[str], bool] | None = None,
 ) -> bool:
     """Scans one file line by line, appending every match until `limit` is
     reached, returning True the instant that happens so the caller can stop
@@ -366,7 +403,12 @@ def _grep_file(
     `context` (0 by default -- unchanged shape for existing callers) slices
     each match's `before`/`after` window straight out of the file's own
     line list, so it's clipped at the file's start/end by ordinary list
-    slicing rather than any extra bounds check."""
+    slicing rather than any extra bounds check.
+
+    `exclude` (None by default) drops a matching line before it counts
+    toward `limit`, and sees the FULL line, never the 400-byte `text`
+    snippet -- `refs` uses it to skip definition lines, where a definition
+    keyword past the snippet cut must still be seen."""
     try:
         data = full.read_bytes()
     except OSError:
@@ -386,6 +428,8 @@ def _grep_file(
     lines = [raw_line.rstrip("\r") for raw_line in text.split("\n")]
     for line_no, line in enumerate(lines, start=1):
         if not pattern.search(line):
+            continue
+        if exclude is not None and exclude(line):
             continue
         line_bytes = line.encode("utf-8")
         if len(line_bytes) > MAX_GREP_MATCH_TEXT_LEN:
@@ -408,6 +452,7 @@ def grep_tree(
     max_matches: int | None = None,
     ignore_case: bool = False,
     context: int = 0,
+    exclude: Callable[[str], bool] | None = None,
 ) -> GrepResult:
     """Ported from handleGrep/grepWorktree in internal/rwcheck/serve/grep.go.
     `pattern` is a regular expression (Python's `re`, not Go's RE2 -- most
@@ -418,12 +463,14 @@ def grep_tree(
     query task) OR together -- a file is kept if it matches ANY of them,
     with match_glob's same any-depth semantics for each -- so an existing
     `glob=` caller sees no change when `globs` is omitted, and a caller
-    that only passes `globs` needs no `glob`."""
+    that only passes `globs` needs no `glob`.
+
+    `exclude` is passed straight to _grep_file (see its docstring)."""
     _check_tree_materialized(Path(tree))
     try:
         compiled = re.compile(pattern, re.IGNORECASE if ignore_case else 0)
     except re.error as exc:
-        raise ValueError(f"invalid pattern: {exc}") from exc
+        raise InvalidPatternError(f"invalid pattern: {exc}") from exc
 
     limit = max_matches if max_matches and max_matches > 0 else DEFAULT_GREP_MAX_MATCHES
     limit = min(limit, HARD_GREP_MAX_MATCHES)
@@ -437,7 +484,9 @@ def grep_tree(
     for rel, full in _walk_files(tree, unreadable):
         if all_globs and not any(match_glob(g, rel) for g in all_globs):
             continue
-        if _grep_file(full, rel, compiled, limit, matches, unreadable, context=context):
+        if _grep_file(
+            full, rel, compiled, limit, matches, unreadable, context=context, exclude=exclude
+        ):
             break
         if len(matches) >= limit:
             break
@@ -464,7 +513,7 @@ def find_around(
     try:
         compiled = re.compile(pattern)
     except re.error as exc:
-        raise ValueError(f"invalid pattern: {exc}") from exc
+        raise InvalidPatternError(f"invalid pattern: {exc}") from exc
 
     full = _confined(tree, path)
     if not full.is_file():

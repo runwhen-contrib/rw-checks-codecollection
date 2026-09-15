@@ -75,6 +75,27 @@ def test_definition_pattern_matches_go_method_with_a_receiver():
     assert re.search(pattern, "func (s *Server) Foo() error {") is not None
 
 
+def test_definition_pattern_matches_a_ts_typed_variable():
+    pattern = definition_pattern("foo")
+    assert re.search(pattern, "export const foo: Foo = makeFoo();") is not None
+    assert re.search(pattern, "let foo : number = 1;") is not None
+
+
+def test_definition_pattern_ts_typed_variable_does_not_match_a_longer_name():
+    pattern = definition_pattern("foo")
+    assert re.search(pattern, "const foo2: Foo = makeFoo();") is None
+
+
+def test_definition_pattern_matches_a_go_generic_func():
+    pattern = definition_pattern("Map")
+    assert re.search(pattern, "func Map[T, U any](xs []T, f func(T) U) []U {") is not None
+
+
+def test_definition_pattern_matches_a_go_method_on_a_generic_receiver():
+    pattern = definition_pattern("Push")
+    assert re.search(pattern, "func (s *Stack[T]) Push(v T) {") is not None
+
+
 def test_definition_pattern_matches_go_type_struct():
     pattern = definition_pattern("Foo")
     assert re.search(pattern, "type Foo struct {") is not None

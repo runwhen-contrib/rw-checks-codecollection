@@ -358,6 +358,18 @@ def test_grep_rejects_invalid_pattern(tmp_path):
         grep_tree(tree, "(unclosed")
 
 
+def test_grep_exclude_drops_lines_before_they_count_toward_max_matches(tmp_path):
+    """`refs` (the query task) excludes definition lines through this: an
+    excluded line must not use up a match slot, and must be judged on the
+    full line rather than the 400-byte text snippet."""
+    long_skip = " " * 450 + "SKIP needle"
+    tree = make_tree(tmp_path, {"a.txt": f"{long_skip}\nSKIP needle\nneedle 1\nneedle 2\n"})
+
+    got = grep_tree(tree, "needle", max_matches=2, exclude=lambda line: "SKIP" in line)
+
+    assert [m.line for m in got.matches] == [3, 4]
+
+
 # --- glob-at-any-depth regression (runwhen-runner e0c9f16) ------------------
 
 

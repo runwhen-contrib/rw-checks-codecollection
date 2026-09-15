@@ -3,7 +3,9 @@ into the scope exactly like rw-checks's `checkout`; `read`, `grep`, `ls`
 are read-only operations against that tree, ported from
 internal/rwcheck/serve/{read,grep,ls}.go in runwhen-runner (the v1
 worktree host) via sdk/runwhen_capability/repo_fs.py -- see that module's
-docstring for the containment and glob-depth-fix details.
+docstring for the containment and glob-depth-fix details. `query` batches
+grep/read/ls/defs/refs ops over the same tree in one request, via
+sdk/runwhen_capability/repo_query.py (RW-1416 cost P2).
 
 Per docs/static-checks/EXECUTOR-CONTRACT.md "Addressing and caching": the
 tree is a cache entry keyed by (repoUrl, sha), not a leased handle.
@@ -17,6 +19,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from runwhen_capability import Context, setup, task
+from runwhen_capability.repo_query import run_query
 
 
 # `setup.task: open` (manifest.yaml) requires this function be named
@@ -61,4 +64,10 @@ def grep(
 @task(outputs={"result": "rw.repo_ls.v1"})
 def ls(ctx: Context, tree: Path, path: str | None = None, depth: int | None = None):
     result = ctx.repo_fs.ls(tree, path=path, depth=depth)
+    return {"result": result}
+
+
+@task(outputs={"result": "rw.repo_query.v1"})
+def query(ctx: Context, tree: Path, ops: list):
+    result = run_query(tree, ops)
     return {"result": result}

@@ -151,6 +151,36 @@ class LsResult(BaseModel):
     unreadableTruncated: bool = False
 
 
+class QueryError(BaseModel):
+    """A per-op failure in a `query` result. `code` is one of repo_fs's
+    error codes (repo_fs.error_code: PATH_ESCAPES_TREE, NOT_FOUND,
+    NOT_A_DIRECTORY, BINARY_FILE, INVALID_PATTERN, UNREADABLE) or one of
+    the query task's own (INVALID_OP, RESPONSE_BUDGET) -- a plain string
+    rather than an enum so a new code is not a schema break for a caller."""
+
+    code: str
+    message: str
+
+
+class QueryOpResult(BaseModel):
+    """One op's entry in a `query` result, at its request `index`. Exactly
+    one of `result`/`error` is non-null; both are always present."""
+
+    index: int
+    op: str | None = None  # null only when the op named no known operation
+    result: GrepResult | ReadRangesResult | LsResult | None = None
+    error: QueryError | None = None
+
+
+class QueryResult(BaseModel):
+    """Output of the `query` task (RW-1416 cost P2, CAP-3; I3): one entry
+    per op, in request order. `truncated` is set when the response budget
+    cut an op short or turned later ops into RESPONSE_BUDGET errors."""
+
+    results: list[QueryOpResult] = Field(default_factory=list)
+    truncated: bool = False
+
+
 # --- Wire 3 (papi <-> capability): the request/result envelope -------------
 
 

@@ -44,7 +44,12 @@ def definition_pattern(symbol: str) -> str:
     """A single alternation matching any of I3's language-specific
     definition forms for `symbol`: Python `def`/`class`/`async def`, JS
     `function`/`const`/`let`/`var`, TS `interface`/`type`/`enum`, Go `func`
-    (with an optional method receiver) and `type X struct`/`interface`."""
+    (with an optional method receiver) and `type X struct`/`interface`.
+
+    Two controller-approved extensions to I3's literal forms (CAP-3): a
+    TS-typed variable (`export const foo: Foo = ...` -- `:` as well as `=`
+    after the name) and a Go generic func (`func Map[T any](...)` -- `[` as
+    well as `(` after the name)."""
     x = re.escape(symbol)
     right = _right_boundary()
     alternatives = [
@@ -52,9 +57,9 @@ def definition_pattern(symbol: str) -> str:
         rf"\bclass\s+{x}{right}",  # Python/JS class
         rf"\basync\s+def\s+{x}{right}",  # Python async def
         rf"\bfunction\s+{x}{right}",  # JS function
-        rf"\b(?:const|let|var)\s+{x}\s*=",  # JS/TS variable
+        rf"\b(?:const|let|var)\s+{x}\s*[:=]",  # JS/TS variable, optionally typed (`: T =`)
         rf"\b(?:interface|type|enum)\s+{x}{right}",  # TS
-        rf"\bfunc\s+(?:\(.*\)\s+)?{x}\(",  # Go func / method with a receiver
+        rf"\bfunc\s+(?:\(.*\)\s+)?{x}[\[(]",  # Go func / method, optionally generic (`X[T any](`)
         rf"\btype\s+{x}\s+(?:struct|interface){right}",  # Go type declaration
     ]
     return "|".join(f"(?:{alt})" for alt in alternatives)

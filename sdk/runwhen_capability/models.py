@@ -71,6 +71,17 @@ class FindingsResult(BaseModel):
 # or null -- agentfarm's tools treat a missing/non-list value as a malformed
 # response, not an empty result (a previously-fixed bug in exactly this
 # shape is what that guard exists to catch).
+#
+# `unreadable`/`unreadableTruncated` on GrepResult/LsResult (grep and ls both
+# walk a subtree; read only ever touches the one path the caller named) carry
+# paths *encountered* during that walk but not readable -- permission denied,
+# a TOCTOU race, etc. Distinct from `truncated`, which means "there was more
+# of what you asked for": `unreadable` means "part of what you asked for
+# could not be read at all", and collapsing the two into one flag would lose
+# that distinction. An absent `unreadable` (an older host predating this
+# field) must read as "nothing reported unreadable", never as an error --
+# agentfarm's tools treat it the same way they already treat an absent
+# `truncated`.
 
 
 class ReadResult(BaseModel):
@@ -95,6 +106,8 @@ class GrepResult(BaseModel):
 
     matches: list[GrepMatch] = Field(default_factory=list)
     truncated: bool = False
+    unreadable: list[str] = Field(default_factory=list)
+    unreadableTruncated: bool = False
 
 
 class LsEntry(BaseModel):
@@ -108,6 +121,8 @@ class LsResult(BaseModel):
 
     entries: list[LsEntry] = Field(default_factory=list)
     truncated: bool = False
+    unreadable: list[str] = Field(default_factory=list)
+    unreadableTruncated: bool = False
 
 
 # --- Wire 3 (papi <-> capability): the request/result envelope -------------

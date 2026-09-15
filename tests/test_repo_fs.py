@@ -13,6 +13,7 @@ import pytest
 from runwhen_capability.repo_fs import (
     MAX_LS_ENTRIES,
     MAX_READ_RESPONSE_BYTES,
+    MAX_UNREADABLE_PATHS,
     BinaryFileError,
     PathEscapesTreeError,
     TreeNotMaterializedError,
@@ -261,16 +262,14 @@ def test_grep_unreadable_tree_root_raises_instead_of_reporting_matches_empty(tmp
 
 
 @skip_if_root
-def test_grep_unreadable_subdirectory_encountered_while_walking_is_still_silently_skipped(
-    tmp_path,
-):
+def test_grep_unreadable_subdirectory_encountered_while_walking_is_disclosed(tmp_path):
     """Unlike the tree root above, a subdirectory merely *encountered*
     while walking is NOT something the caller explicitly asked about --
-    grep has no way to scope to it directly -- so it stays silently
-    skipped for now (deferred: disclosing it needs a new envelope field
-    plus papi/agentfarm changes, not an overload of `truncated`). This
-    pins that the deferral is deliberate, not a regression waiting to be
-    "fixed" by someone who does not know it was already considered."""
+    grep has no way to scope to it directly -- so it can't raise. It must
+    still be disclosed via `unreadable`, not silently dropped: `matches:
+    []`/no error for the unreadable half of the tree is the exact
+    silent-absence shape this whole module exists to close (see
+    FAILURE-POLICY.md's "Deferred deliberately" entry, now implemented)."""
     tree = make_tree(tmp_path, {"ok.py": "import os\n", "locked/secret.py": "import os\n"})
     locked = tree / "locked"
     os.chmod(locked, 0o000)
@@ -278,8 +277,48 @@ def test_grep_unreadable_subdirectory_encountered_while_walking_is_still_silentl
         got = grep_tree(tree, "import")
         assert [m.path for m in got.matches] == ["ok.py"]
         assert got.truncated is False
+        assert got.unreadable == ["locked"]
+        assert got.unreadableTruncated is False
     finally:
         os.chmod(locked, 0o755)
+
+
+@skip_if_root
+def test_grep_unreadable_file_encountered_while_walking_is_disclosed(tmp_path):
+    """The per-file counterpart: a file that fails to open (not a
+    directory) must also surface in `unreadable`, not just render as "the
+    pattern wasn't found here"."""
+    tree = make_tree(tmp_path, {"ok.py": "import os\n", "secret.py": "import os\n"})
+    secret = tree / "secret.py"
+    os.chmod(secret, 0o000)
+    try:
+        got = grep_tree(tree, "import")
+        assert [m.path for m in got.matches] == ["ok.py"]
+        assert got.unreadable == ["secret.py"]
+        assert got.unreadableTruncated is False
+    finally:
+        os.chmod(secret, 0o644)
+
+
+@skip_if_root
+def test_grep_unreadable_paths_are_capped_and_flagged(tmp_path):
+    """A pathologically large unreadable subtree must not blow the
+    envelope: `unreadable` stays bounded at MAX_UNREADABLE_PATHS, and
+    `unreadableTruncated` discloses that more were dropped -- the same
+    shape `truncated` already gives a capped `matches` list."""
+    files = {f"f{i:04d}.py": "import os\n" for i in range(MAX_UNREADABLE_PATHS + 5)}
+    tree = make_tree(tmp_path, {"ok.py": "import os\n", **files})
+    locked = [tree / name for name in files]
+    for f in locked:
+        os.chmod(f, 0o000)
+    try:
+        got = grep_tree(tree, "import")
+        assert [m.path for m in got.matches] == ["ok.py"]
+        assert len(got.unreadable) == MAX_UNREADABLE_PATHS
+        assert got.unreadableTruncated is True
+    finally:
+        for f in locked:
+            os.chmod(f, 0o644)
 
 
 def test_grep_max_matches_caps_and_reports_truncated(tmp_path):
@@ -489,5 +528,23 @@ def test_ls_unreadable_directory_raises_instead_of_reporting_it_empty(tmp_path):
     try:
         with pytest.raises(OSError):
             ls_tree(tree, path="locked")
+    finally:
+        os.chmod(locked, 0o755)
+
+
+@skip_if_root
+def test_ls_unreadable_subdirectory_encountered_while_recursing_is_disclosed(tmp_path):
+    """Unlike the directory the caller explicitly asked for above, a
+    subdirectory merely *encountered* while recursing (depth > 1) can't
+    raise -- it wasn't the caller's own ask. It must still be disclosed
+    via `unreadable`, not silently dropped from the listing."""
+    tree = make_tree(tmp_path, {"ok.py": "x", "locked/secret.py": "s"})
+    locked = tree / "locked"
+    os.chmod(locked, 0o000)
+    try:
+        got = ls_tree(tree, depth=3)
+        assert {e.path for e in got.entries} == {"ok.py", "locked"}
+        assert got.unreadable == ["locked"]
+        assert got.unreadableTruncated is False
     finally:
         os.chmod(locked, 0o755)

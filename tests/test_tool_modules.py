@@ -79,7 +79,7 @@ def test_policy_closes_over_the_declared_severity_map(name):
     # `severity.constant()` extracts its map's one value up front rather
     # than keeping the whole (single-entry) dict alive -- there is nothing
     # left to look up. Accept either shape: the map itself in the closure
-    # (from_level/by_rule_prefix/by_cvss), or the map's own single value
+    # (from_level/by_rule_prefix), or the map's own single value
     # (constant).
     closes_over_map = any(v is mod.SEVERITY for v in cell_values)
     closes_over_constant = len(mod.SEVERITY) == 1 and any(
@@ -88,57 +88,6 @@ def test_policy_closes_over_the_declared_severity_map(name):
     assert closes_over_map or closes_over_constant, (
         f"{name}._POLICY does not close over {name}.SEVERITY"
     )
-
-
-@pytest.mark.parametrize("name", tool_modules())
-def test_declares_the_applicability_contract(name):
-    mod = load(name)
-    if hasattr(mod, "applicable"):
-        pytest.skip(f"{name} uses the diff-scoped contract (tests/test_tool_checks.py)")
-    assert isinstance(getattr(mod, "FILES", None), tuple), f"{name}.FILES must be a tuple"
-    assert getattr(mod, "CONFIG", None) in VALID_CONFIG, (
-        f"{name}.CONFIG must be one of {VALID_CONFIG}"
-    )
-    ci = getattr(mod, "CI_BINARY", "<missing>")
-    assert ci is None or isinstance(ci, str), f"{name}.CI_BINARY must be a str or None"
-    guard = getattr(mod, "GUARD", "<missing>")
-    assert guard is None or callable(guard), f"{name}.GUARD must be callable or None"
-
-
-@pytest.mark.parametrize("name", tool_modules())
-def test_defines_detect_and_check(name):
-    mod = load(name)
-    if hasattr(mod, "applicable"):
-        pytest.skip(f"{name} uses the diff-scoped contract (tests/test_tool_checks.py)")
-    assert callable(getattr(mod, "detect", None)), f"{name} defines no detect()"
-    assert callable(getattr(mod, "check", None)), f"{name} defines no check()"
-
-
-@pytest.mark.parametrize("name", tool_modules())
-def test_detect_returns_paths_on_an_empty_tree(tmp_path, name):
-    """detect() runs during applicability, before any tool is invoked, so it
-    must never raise on a repository that does not use the tool."""
-    mod = load(name)
-    if hasattr(mod, "applicable"):
-        pytest.skip(f"{name} uses the diff-scoped contract (tests/test_tool_checks.py)")
-    result = mod.detect(tmp_path)
-    assert isinstance(result, list)
-    assert all(isinstance(p, Path) for p in result)
-
-
-def test_config_required_tools_skip_an_unconfigured_repo(tmp_path):
-    """A `required` tool must not run without the repo's own config -- an
-    opinionated linter run on defaults reports findings nobody asked for."""
-    from tools import _common
-
-    (tmp_path / "a.py").write_text("import os\n")
-    for name in tool_modules():
-        mod = load(name)
-        if hasattr(mod, "applicable"):
-            continue
-        if getattr(mod, "CONFIG", "optional") != "required":
-            continue
-        assert _common.gate(tmp_path, mod), f"{name} is CONFIG=required but did not skip"
 
 
 # --- the inventory must agree in three places -------------------------------
@@ -181,8 +130,8 @@ def test_tool_modules_manifest_and_registry_all_agree():
 
 
 def test_every_task_declares_both_inputs():
-    """Every task takes both `tree` and `changed`: findings are scoped to
-    the diff (`_common.scoped`), so every module needs the diff to scope to.
+    """Every task takes both `tree` and `changed`: `_plan.plan` scopes every
+    invocation to the diff, so every module needs `changed` to scope to.
     """
     import yaml
 
@@ -193,94 +142,9 @@ def test_every_task_declares_both_inputs():
         )
 
 
-def test_every_module_scopes_its_findings_to_the_diff():
-    """Every check reports on the CHANGE, security scanners included.
-
-    A tool that returns `ctx.sarif.parse(...)` or `ctx.findings.from_records(...)`
-    straight out of `check()` reports the whole repository, which on a
-    three-line pull request buries the review under a backlog the author did
-    not create. `_common.scoped` (and `_common.emit`, which wraps it) is the
-    single place that policy lives; this asserts nothing bypasses it.
-
-    Source-level on purpose: the behavioural version needs the real tool
-    binaries, which only exist inside the built image.
-    """
-    import re
-
-    offenders = {}
-    for name in tool_modules():
-        if hasattr(load(name), "applicable"):
-            continue
-        src = (TOOLS / f"{name}.py").read_text()
-        body = src[src.index("def check(") :]
-        returns = [
-            ln.strip()
-            for ln in body.splitlines()
-            if re.match(r"\s*return (ctx\.sarif\.parse|ctx\.findings\.from_records)", ln)
-        ]
-        if returns:
-            offenders[name] = returns
-    assert not offenders, (
-        "these modules return unscoped findings instead of routing through "
-        f"_common.scoped/_common.emit: {offenders}"
-    )
-
-
-def test_supersession_targets_exist_and_do_not_cycle():
-    """SUPERSEDED_BY must name a real module, and the graph must be acyclic.
-
-    `gate()` does not follow a superseder's own SUPERSEDED_BY, so a cycle
-    cannot hang it -- but a cycle would still mean two tools each waiting
-    for the other, and whichever ran would be an accident of order.
-    """
-    edges = {}
-    for name in tool_modules():
-        mod = load(name)
-        if hasattr(mod, "applicable"):
-            continue
-        target = getattr(mod, "SUPERSEDED_BY", None)
-        if target:
-            assert target in tool_modules(), f"{name}.SUPERSEDED_BY names unknown module {target!r}"
-            assert target != name, f"{name} supersedes itself"
-            edges[name] = target
-    for start in edges:
-        seen, node = [start], start
-        while node in edges:
-            node = edges[node]
-            assert node not in seen, f"supersession cycle: {' -> '.join(seen + [node])}"
-            seen.append(node)
-
-
-def test_superseded_tool_runs_when_its_superseder_does_not_apply():
-    """Dropping flake8 in favour of a ruff that is itself skipped would
-    silently check nothing -- the failure mode supersession must not have.
-    """
-    import tools._common as _common
-
-    flake8, ruff = load("flake8"), load("ruff")
-    if hasattr(flake8, "applicable") or hasattr(ruff, "applicable"):
-        pytest.skip("flake8/ruff use the diff-scoped contract (tests/test_tool_checks.py)")
-    assert flake8.SUPERSEDED_BY == "ruff"
-
-    # ruff applies (repo has .py): flake8 is superseded.
-    tree = Path(__file__).parent / "fixtures" / "sample-repo"
-    skip = _common.supersession_skip(tree, flake8)
-    assert skip is not None and "superseded by ruff" in skip.reason
-
-    # A tree with no Python at all: ruff does not apply, so nothing is
-    # superseded and flake8's own gates decide.
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as empty:
-        assert _common.gate(Path(empty), ruff) is not None, "ruff should not apply to an empty tree"
-        assert _common.supersession_skip(Path(empty), flake8) is None
-
-
 @pytest.mark.parametrize("name", tool_modules())
 def test_diff_scoped_contract(name):
     mod = load(name)
-    if not hasattr(mod, "applicable"):
-        pytest.skip(f"{name} not converted yet")
     for attr in (
         "NAME",
         "KIND",

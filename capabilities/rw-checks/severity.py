@@ -26,8 +26,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 
-from runwhen_capability.sarif import severity as sarif_level_severity
-
 Policy = Callable[[str, str, dict], str]
 
 
@@ -55,41 +53,6 @@ def by_rule_prefix(severity_map: Mapping[str, str]) -> Policy:
     def policy(rule_id: str, level: str, props: dict) -> str:
         prefix = (rule_id or "")[:1].upper()
         return severity_map.get(prefix, "note")
-
-    return policy
-
-
-# --- by_cvss ----------------------------------------------------------------
-# trivy: tests/fixtures/tools/trivy.sarif's CVE rules carry a
-# `security-severity` property (a numeric string, GitHub code-scanning's own
-# convention -- e.g. "7.5"), preferred over SARIF `level`: it is what trivy
-# itself already derived from CVSS for exactly this purpose. Bands follow
-# GitHub's own security-severity convention (critical >= 9.0, high >= 7.0,
-# medium >= 4.0, else low), looked up in the tool's own map. Every rule in
-# the captured fixture -- CVEs and misconfig/secret rules (KSV-*, AWS-*,
-# DS-*) alike -- happens to carry `security-severity`, so the plain-`level`
-# fallback is not exercised by that capture; it stays in as a defensive
-# default for whatever trivy output does omit it (its docs don't guarantee
-# every rule always sets this property).
-def by_cvss(severity_map: Mapping[str, str]) -> Policy:
-    def policy(rule_id: str, level: str, props: dict) -> str:
-        raw = props.get("security-severity")
-        if raw is not None:
-            try:
-                score = float(raw)
-            except (TypeError, ValueError):
-                score = None
-            if score is not None:
-                if score >= 9.0:
-                    band = "critical"
-                elif score >= 7.0:
-                    band = "high"
-                elif score >= 4.0:
-                    band = "medium"
-                else:
-                    band = "low"
-                return severity_map.get(band, sarif_level_severity(level))
-        return sarif_level_severity(level)
 
     return policy
 

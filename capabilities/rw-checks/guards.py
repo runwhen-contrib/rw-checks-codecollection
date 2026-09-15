@@ -15,12 +15,12 @@ imports Python modules from) and vale (a non-empty `Packages` fetches and
 installs a style package from a URL). None of these are findings a scan
 should report; the tool must never be invoked at all.
 
-One guard function per affected tool, called by tasks.py BEFORE the tool
-runs. A guard returns a short human reason when the repo's config is unsafe,
+One guard function per affected tool, called by `_plan.plan` per config group
+BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
 or None when it is safe to run the tool. The reason always begins
-"<repo-relative config path>: " -- tasks.py splits on the first ": " to
-recover the offending path for the `rw-checks/unsafe-config` finding's
-`path` field, so a guard never needs a second return value for it.
+"<repo-relative config path>: " -- `_common.unsafe_config_finding` splits on
+the first ": " to recover the offending path for the `rw-checks/unsafe-config`
+finding's `path` field, so a guard never needs a second return value for it.
 
 A config file matching one of the searched names that fails to parse is
 treated as UNSAFE, not benign: we cannot rule out that it sets one of these
@@ -42,26 +42,11 @@ import yaml
 # --- shared plumbing ---------------------------------------------------------
 
 
-def _config_files(tree: Path, *names: str) -> list[Path]:
-    """Every file under `tree` (recursively, `.git/` excluded) whose
-    basename is one of `names`. A NESTED config is included, not just a
-    root one -- a tool run with that subdirectory as its cwd (or handed it
-    as a --chdir/-d/-r target) reads its own local config exactly the way
-    the root one is read when the tool runs at the repo root."""
-    found: list[Path] = []
-    for name in names:
-        for p in tree.rglob(name):
-            if p.is_file() and ".git" not in p.relative_to(tree).parts:
-                found.append(p)
-    return sorted(found)
-
-
-def _selected(tree: Path, paths: Sequence[Path] | None, *names: str) -> list[Path]:
-    """`paths` given: exactly those files whose basename is one of `names` (the
-    per-config-group guard, DIFF-SCOPED-CHECKS.md §5.5). `paths` None: every
-    matching file in the tree (the legacy whole-repo guard)."""
-    if paths is None:
-        return _config_files(tree, *names)
+def _selected(tree: Path, paths: Sequence[Path], *names: str) -> list[Path]:
+    """Exactly those `paths` whose basename is one of `names` -- the
+    per-config-group guard, DIFF-SCOPED-CHECKS.md §5.5. `tree` keeps the
+    same positional shape as every call site below, which also needs it for
+    `_reason`/`_unparseable`."""
     wanted = set(names)
     return sorted(p for p in paths if p.name in wanted and p.is_file())
 
@@ -143,7 +128,7 @@ _PYLINT_KEYS = {"init-hook", "load-plugins", "load_plugins"}
 _PYLINT_WHY = "which executes arbitrary Python"
 
 
-def pylint(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
+def pylint(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
     for path in _selected(tree, paths, ".pylintrc", "pylintrc"):
         try:
@@ -198,7 +183,7 @@ _CHECKOV_KEYS = {
 _CHECKOV_WHY = "which checkov imports and runs as a Python check plugin"
 
 
-def checkov(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
+def checkov(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
     for path in _selected(tree, paths, ".checkov.yaml", ".checkov.yml"):
         try:
@@ -218,7 +203,7 @@ def checkov(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
 _SQLFLUFF_WHY = "which sqlfluff imports Python modules from"
 
 
-def sqlfluff(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
+def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
     for path in _selected(tree, paths, ".sqlfluff", "setup.cfg", "tox.ini"):
         try:
@@ -248,7 +233,7 @@ def sqlfluff(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
 _VALE_WHY = "which vale fetches and installs from a URL"
 
 
-def vale(tree: Path, paths: Sequence[Path] | None = None) -> str | None:
+def vale(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
     for path in _selected(tree, paths, ".vale.ini", "_vale.ini", "vale.ini"):
         try:

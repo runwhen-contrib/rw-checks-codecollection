@@ -66,7 +66,11 @@ def run(ctx: Any, argv: list[str], *, cwd: Path, env: dict[str, str] | None = No
 
 
 def run_to_file(ctx: Any, argv: list[str], *, cwd: Path, report: Path, module: Any) -> str:
-    """`_common.run_to_file` with a run directory and the writable env."""
+    """Run a tool that writes its report to a FILE and read it back, using
+    this module's `run` (the writable env) and `cwd` (the run/scratch
+    directory an invocation runs from). Raises `_common.ToolFailed` -- never
+    returns silently -- when the process exited outside `module.EXPECT_EXIT`,
+    or when the report is missing/empty."""
     report.parent.mkdir(parents=True, exist_ok=True)
     proc = run(ctx, argv, cwd=cwd)
     try:

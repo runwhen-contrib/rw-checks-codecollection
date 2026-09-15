@@ -37,13 +37,13 @@ import yaml
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-#: Output kind -> the call(s) every task declaring it must wrap its return value in.
+#: Output kind -> the call every task declaring it must wrap its return value in.
 #: A kind absent here is not checked; add it with its wrapper when one is added.
-#: `_dispatch` (tasks.py's temporary dual-dispatch helper, rw-1416 Task 4) is
-#: accepted alongside `ctx.findings.cap`: it always ends in exactly that call,
-#: either directly or through `tools._runner.run_check`. Removed once every
-#: tool module is converted (Task 11) and `_dispatch` itself goes away.
-_REQUIRED_WRAPPER = {"rw.findings.v1": {"ctx.findings.cap", "_dispatch"}}
+#: Every rw-checks task calls `tools._runner.run_check(ctx, tree, changed, tools.X)`,
+#: which itself ends in exactly `ctx.findings.cap(...)` (see tools/_runner.py) --
+#: the temporary `_dispatch` dual-dispatch helper (rw-1416 Task 4) that used to
+#: also be accepted here was removed once every tool module converted (Task 11).
+_REQUIRED_WRAPPER = {"rw.findings.v1": {"tools._runner.run_check"}}
 
 
 def _manifest(capability: str) -> dict:
@@ -124,7 +124,7 @@ def test_findings_outputs_return_the_envelope_not_a_bare_list(capability):
         )
         checked += 1
     if capability == "rw-checks":
-        assert checked == 22, f"expected all 22 rw-checks tasks to be checked, checked {checked}"
+        assert checked == 19, f"expected all 19 rw-checks tasks to be checked, checked {checked}"
 
 
 def test_findings_result_carries_skipped_and_files_checked():

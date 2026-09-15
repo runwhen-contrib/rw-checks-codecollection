@@ -42,6 +42,6 @@ shape.
 ## Secrets in the sample repo are fake
 
 `sample-repo/src/config.py` contains syntactically valid, deliberately
-non-functional token shapes so gitleaks and trufflehog have something to
-match. Real AWS documentation keys (`AKIAIOSFODNN7EXAMPLE`) are allowlisted
-by both tools by design, which is why the first capture found nothing.
+non-functional token shapes so gitleaks has something to match. Real AWS
+documentation keys (`AKIAIOSFODNN7EXAMPLE`) are allowlisted by gitleaks by
+design, which is why the first capture found nothing.

@@ -26,7 +26,6 @@ import tools.actionlint
 import tools.ast_grep
 import tools.biome
 import tools.buf
-import tools.checkmake
 import tools.checkov
 import tools.dotenv_linter
 import tools.flake8
@@ -39,8 +38,6 @@ import tools.ruff
 import tools.shellcheck
 import tools.sqlfluff
 import tools.tflint
-import tools.trivy
-import tools.trufflehog
 import tools.vale
 import tools.yamllint
 import tools.zizmor
@@ -54,141 +51,115 @@ def checkout(ctx: Context, repo_url: str, sha: str, base_sha: str | None = None)
     return {"tree": tree, "changed": changed}
 
 
-def _dispatch(ctx: Context, tree: Path, changed: list[str] | None, module):
-    """Converted modules (with `applicable`) go through the diff-scoped runner.
-    Unconverted ones keep their legacy whole-tree `check`. Removed in Task 11."""
-    if hasattr(module, "applicable"):
-        return tools._runner.run_check(ctx, tree, changed, module)
-    return ctx.findings.cap(module.check(ctx, tree, changed))
-
-
 @task(outputs={"findings": "rw.findings.v1"})
 def actionlint(ctx: Context, tree: Path, changed: list[str] | None = None):
     """actionlint -- GitHub Actions workflow lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.actionlint)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.actionlint)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def ast_grep(ctx: Context, tree: Path, changed: list[str] | None = None):
     """ast-grep -- structural code search/lint against the repo's OWN rules."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.ast_grep)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.ast_grep)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def biome(ctx: Context, tree: Path, changed: list[str] | None = None):
     """biome -- JS/TS/JSON/CSS lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.biome)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.biome)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def buf(ctx: Context, tree: Path, changed: list[str] | None = None):
     """buf -- protobuf lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.buf)}
-
-
-@task(outputs={"findings": "rw.findings.v1"})
-def checkmake(ctx: Context, tree: Path, changed: list[str] | None = None):
-    """checkmake -- Makefile lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.checkmake)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.buf)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def checkov(ctx: Context, tree: Path, changed: list[str] | None = None):
     """checkov -- IaC misconfiguration scanning."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.checkov)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.checkov)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def dotenv_linter(ctx: Context, tree: Path, changed: list[str] | None = None):
     """dotenv-linter -- .env file lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.dotenv_linter)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.dotenv_linter)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def flake8(ctx: Context, tree: Path, changed: list[str] | None = None):
     """flake8 -- fast Python lint, ahead of pylint's deeper (slower) pass."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.flake8)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.flake8)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def gitleaks(ctx: Context, tree: Path, changed: list[str] | None = None):
     """gitleaks -- committed-credential scanning."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.gitleaks)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.gitleaks)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def hadolint(ctx: Context, tree: Path, changed: list[str] | None = None):
     """hadolint -- Dockerfile defects."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.hadolint)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.hadolint)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def osv_scanner(ctx: Context, tree: Path, changed: list[str] | None = None):
     """osv-scanner -- dependency (lockfile) vulnerability scanning."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.osv_scanner)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.osv_scanner)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def pylint(ctx: Context, tree: Path, changed: list[str] | None = None):
     """pylint -- deeper Python analysis than ruff, and slower."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.pylint)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.pylint)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def regal(ctx: Context, tree: Path, changed: list[str] | None = None):
     """regal -- Rego (OPA policy) lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.regal)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.regal)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def ruff(ctx: Context, tree: Path, changed: list[str] | None = None):
     """ruff -- fast Python linting."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.ruff)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.ruff)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def shellcheck(ctx: Context, tree: Path, changed: list[str] | None = None):
     """ShellCheck -- shell script defects."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.shellcheck)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.shellcheck)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def sqlfluff(ctx: Context, tree: Path, changed: list[str] | None = None):
     """sqlfluff -- SQL lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.sqlfluff)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.sqlfluff)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def tflint(ctx: Context, tree: Path, changed: list[str] | None = None):
     """tflint -- Terraform linting."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.tflint)}
-
-
-@task(outputs={"findings": "rw.findings.v1"})
-def trivy(ctx: Context, tree: Path, changed: list[str] | None = None):
-    """trivy -- vulnerability / misconfig / secret scanning across IaC and."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.trivy)}
-
-
-@task(outputs={"findings": "rw.findings.v1"})
-def trufflehog(ctx: Context, tree: Path, changed: list[str] | None = None):
-    """trufflehog -- committed-credential scanning."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.trufflehog)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.tflint)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def vale(ctx: Context, tree: Path, changed: list[str] | None = None):
     """vale -- prose lint for docs."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.vale)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.vale)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def yamllint(ctx: Context, tree: Path, changed: list[str] | None = None):
     """yamllint -- YAML lint."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.yamllint)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.yamllint)}
 
 
 @task(outputs={"findings": "rw.findings.v1"})
 def zizmor(ctx: Context, tree: Path, changed: list[str] | None = None):
     """zizmor -- GitHub Actions workflow security scanning."""
-    return {"findings": _dispatch(ctx, tree, changed, tools.zizmor)}
+    return {"findings": tools._runner.run_check(ctx, tree, changed, tools.zizmor)}

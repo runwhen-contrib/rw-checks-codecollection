@@ -53,15 +53,6 @@ tools:
       amd64: https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
       arm64: https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_arm64.tar.gz
 
-  - name: trufflehog
-    version: "3.90.8"
-    purl: pkg:github/trufflesecurity/trufflehog@v3.90.8
-    kind: tar.gz
-    binary: trufflehog
-    urls:
-      amd64: https://github.com/trufflesecurity/trufflehog/releases/download/v3.90.8/trufflehog_3.90.8_linux_amd64.tar.gz
-      arm64: https://github.com/trufflesecurity/trufflehog/releases/download/v3.90.8/trufflehog_3.90.8_linux_arm64.tar.gz
-
   - name: osv-scanner
     version: "1.9.2"
     purl: pkg:github/google/osv-scanner@v1.9.2
@@ -70,15 +61,6 @@ tools:
     urls:
       amd64: https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_amd64
       arm64: https://github.com/google/osv-scanner/releases/download/v1.9.2/osv-scanner_linux_arm64
-
-  - name: trivy
-    version: "0.74.0"
-    purl: pkg:github/aquasecurity/trivy@v0.74.0
-    kind: tar.gz
-    binary: trivy
-    urls:
-      amd64: https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
-      arm64: https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz
 
   - name: tflint
     version: "0.55.0"
@@ -142,11 +124,3 @@ tools:
     urls:
       amd64: https://github.com/dotenv-linter/dotenv-linter/releases/download/v3.3.0/dotenv-linter-linux-x86_64.tar.gz
       arm64: https://github.com/dotenv-linter/dotenv-linter/releases/download/v3.3.0/dotenv-linter-linux-aarch64.tar.gz
-
-  - name: checkmake
-    version: "0.2.2"
-    purl: pkg:github/mrtazz/checkmake@0.2.2
-    kind: binary
-    binary: checkmake
-    urls:
-      amd64: https://github.com/mrtazz/checkmake/releases/download/0.2.2/checkmake-0.2.2.linux.amd64

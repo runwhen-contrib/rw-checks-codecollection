@@ -31,6 +31,55 @@ from .pathsafe import safe_path
 
 _READ_LINE_TIMEOUT_MSG = "line out of range"
 
+# SARIF_BYTE_BUDGET: refuse a raw SARIF payload before json.loads ever builds
+# a dict from it. MAX_FINDINGS_PER_RESULT already caps the *parsed* result at
+# 100,000 findings, but that cap runs too late to help here: `json.loads`
+# builds one full copy of the report -- the dict, every nested list/dict, every
+# string -- before any of our code (the islice in parse(), ctx.findings.cap())
+# gets a chance to act, and that copy is what OOMs the pod on a pathological
+# report. Measured: a 500k-finding / 132 MB runaway peaks at ~1.0-1.16 GB RSS
+# even with the finding-count cap in place (see docs/static-checks/
+# FAILURE-POLICY.md, "Memory, measured -- the findings ceiling does not
+# protect the pod") -- over the 1Gi executor limit. This budget stops that
+# copy from ever being made.
+#
+# Sized the same way MAX_FINDINGS_PER_RESULT was: bytes a report would
+# legitimately reach if it actually carried a full ceiling's worth of
+# findings, not a guess. ~371 bytes/finding on the wire (measured) x
+# MAX_FINDINGS_PER_RESULT (100,000) = 37,100,000 bytes ~= 35.4 MiB. Rounded up
+# to a clean 40,000,000 (40 MB) for headroom against rule-metadata/message/
+# snippet overhead the flat per-finding average doesn't capture. That leaves
+# real reports -- the 468-platform monorepo case this all exists for is 6.3 MB
+# / ~18,700 findings -- with >6x headroom, comfortably under the 64 MiB papi
+# ingress allows on the output side, and measured safe against the 1Gi
+# executor limit: a 40 MB report at this budget's own boundary parses to
+# ~418 MB peak RSS today (pre-guard), well under the 1Gi ceiling with margin
+# to spare for the tool subprocess and the rest of the task's own overhead.
+#
+# A streaming parser (e.g. ijson) was considered instead -- it would let a
+# large-but-legitimate report through where a flat byte budget cannot. Not
+# worth it here: this cap is sized with >6x headroom above the only real
+# case on record, ijson is a new dependency baked into every capability
+# image for a case that -- by the numbers above -- is not expected to bite,
+# and the failure mode this budget produces (a disclosed, honest refusal) is
+# exactly what FAILURE-POLICY.md wants for a pathological report anyway. A
+# byte guard is the simpler trade.
+SARIF_BYTE_BUDGET = 40_000_000
+
+
+class SarifTooLargeError(ValueError):
+    """Raised by SarifClient.parse() when `text` exceeds SARIF_BYTE_BUDGET,
+    checked BEFORE json.loads runs -- see SARIF_BYTE_BUDGET's docstring for
+    why that ordering is the whole point. An ordinary exception, kept local
+    to this module the way repo_fs.py's TreeNotMaterializedError is rather
+    than moved to errors.py: uncaught here, it propagates out of the
+    capability's task function and is caught by host.py's generic handler
+    like any other task exception, recorded as `TaskResult(status="failed",
+    error=str(exc))`. That is a disclosed failure -- papi surfaces it
+    through failed_runs/scanFailed -- never a silently empty or partial
+    findings list, per FAILURE-POLICY.md's "the failure that hurts is ... a
+    clean, complete-looking result"."""
+
 
 @dataclass
 class _RawFinding:
@@ -232,7 +281,16 @@ class SarifClient:
         full size -- see MAX_FINDINGS_PER_RESULT's docstring). Real results
         (measured: 6.3 MB / ~18,700 findings) stay far under the ceiling and
         pass through whole, byte for byte -- islice only ever bites on the
-        pathological case this ceiling exists for."""
+        pathological case this ceiling exists for.
+
+        That ceiling still runs too late to bound `json.loads` itself, which
+        is why the very first thing this method does is check `text`'s size
+        against SARIF_BYTE_BUDGET and raise SarifTooLargeError before
+        `json.loads` ever touches it -- see that constant's docstring for the
+        arithmetic and why a byte budget beats a streaming parser here."""
+        size = len(text.encode("utf-8"))
+        if size > SARIF_BYTE_BUDGET:
+            raise SarifTooLargeError(f"check output too large to process: {size} bytes")
         root = Path(root)
         report = json.loads(text)
         severity_fn = (

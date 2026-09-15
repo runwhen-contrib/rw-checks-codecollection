@@ -49,6 +49,12 @@ _WHITESPACE_RUN = re.compile(r"\s+")
 # generous headroom above any realistic PR-scoped result, and even lets a
 # monorepo-wide run like the 19,527-finding case above pass through whole --
 # this cap only bites on a genuine runaway well past that.
+#
+# This bounds the PARSED result, not the raw report `json.loads` builds it
+# from -- that copy is bigger, made before this cap (or `_flatten`'s islice
+# in sarif.py) ever runs, and is what a pathological report actually OOMs the
+# pod with. See sarif.py's SARIF_BYTE_BUDGET for the guard that stops
+# `json.loads` itself from being handed more than it can safely build.
 MAX_FINDINGS_PER_RESULT = 100_000
 
 

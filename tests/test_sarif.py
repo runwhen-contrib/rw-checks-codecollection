@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from runwhen_capability import Context
-from runwhen_capability.sarif import normalize_uri, severity
+from runwhen_capability.sarif import SARIF_BYTE_BUDGET, SarifTooLargeError, normalize_uri, severity
 
 FIXTURES = Path(__file__).parent / "fixtures"
 REPO = FIXTURES / "repo"
@@ -180,3 +180,84 @@ def test_normalize_uri_unsupported_scheme():
 )
 def test_severity(level, want):
     assert severity(level) == want
+
+
+# --- SARIF_BYTE_BUDGET (guard before json.loads) -----------------------------
+# See sarif.py's SARIF_BYTE_BUDGET docstring for the arithmetic. These build
+# ASCII payloads, so `len(text) == len(text.encode("utf-8"))` and the exact
+# byte counts below are exact -- except the UTF-8 test, which exists
+# specifically to prove the guard counts encoded bytes, not characters.
+
+
+def _padded_sarif_text(total_bytes: int) -> str:
+    """A valid, parseable SARIF-shaped ASCII JSON string of exactly
+    `total_bytes` bytes (== characters, since every filler byte is ASCII):
+    `{"runs": [], "pad": "<a * n>"}`. Valid JSON matters for the
+    at-or-under-budget cases, which must actually reach json.loads and
+    succeed -- an over-budget payload never gets that far, but building one
+    that would still parse (rather than e.g. random garbage) keeps every
+    case here testing the same shape."""
+    template = '{{"runs": [], "pad": "{}"}}'
+    empty_len = len(template.format(""))
+    assert total_bytes >= empty_len, "total_bytes too small for the template overhead"
+    return template.format("a" * (total_bytes - empty_len))
+
+
+def test_parse_exactly_at_budget_is_accepted():
+    text = _padded_sarif_text(SARIF_BYTE_BUDGET)
+    assert len(text.encode("utf-8")) == SARIF_BYTE_BUDGET
+
+    ctx = make_ctx("ruff")
+    findings = ctx.sarif.parse(text, root=REPO)
+
+    assert findings == []
+
+
+def test_parse_one_byte_over_budget_is_rejected():
+    text = _padded_sarif_text(SARIF_BYTE_BUDGET + 1)
+
+    ctx = make_ctx("ruff")
+    with pytest.raises(SarifTooLargeError) as exc_info:
+        ctx.sarif.parse(text, root=REPO)
+
+    # The exact message FAILURE-POLICY.md requires: a disclosed cause, not a
+    # silent empty/partial findings list -- host.py records this verbatim as
+    # the failed TaskResult's `error`.
+    assert (
+        str(exc_info.value) == f"check output too large to process: {SARIF_BYTE_BUDGET + 1} bytes"
+    )
+
+
+def test_parse_over_budget_never_reaches_json_loads(monkeypatch):
+    """The whole point of checking size before parsing: json.loads must
+    never even be called on an over-budget payload, so the runaway
+    allocation it would make never happens."""
+    import runwhen_capability.sarif as sarif_module
+
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("json.loads must not run on an over-budget payload")
+
+    monkeypatch.setattr(sarif_module.json, "loads", _boom)
+
+    text = _padded_sarif_text(SARIF_BYTE_BUDGET + 1)
+    ctx = make_ctx("ruff")
+    with pytest.raises(SarifTooLargeError):
+        ctx.sarif.parse(text, root=REPO)
+
+
+def test_parse_budget_is_measured_in_utf8_bytes_not_characters():
+    """A multi-byte character pads the byte count faster than the character
+    count -- the guard must reject on bytes, or a report full of non-ASCII
+    text could sail through under a budget sized for bytes while actually
+    costing json.loads far more than SARIF_BYTE_BUDGET bytes to parse."""
+    # "é" (e-acute) is 1 char, 2 UTF-8 bytes: well under SARIF_BYTE_BUDGET
+    # in character count, comfortably over it in encoded bytes.
+    template = '{{"runs": [], "pad": "{}"}}'
+    filler_chars = SARIF_BYTE_BUDGET // 2 + 1000
+    text = template.format("é" * filler_chars)
+    assert len(text) < SARIF_BYTE_BUDGET  # char count alone would look fine
+    assert len(text.encode("utf-8")) > SARIF_BYTE_BUDGET  # actual bytes do not
+
+    ctx = make_ctx("ruff")
+    with pytest.raises(SarifTooLargeError):
+        ctx.sarif.parse(text, root=REPO)

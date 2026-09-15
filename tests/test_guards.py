@@ -242,8 +242,12 @@ def test_guarded_task_skips_the_tool_and_reports_one_finding(tmp_path, monkeypat
     # holds. GUARD is the contract surface -- see tools/_common.py.
     import importlib
 
+    mod = importlib.import_module(f"tools.{task_name}")
+    if hasattr(mod, "applicable"):
+        pytest.skip(f"{task_name} uses the diff-scoped contract (tests/test_tool_checks.py)")
+
     reason = ".pylintrc: sets init-hook, which executes arbitrary Python"
-    monkeypatch.setattr(importlib.import_module(f"tools.{task_name}"), "GUARD", lambda tree: reason)
+    monkeypatch.setattr(mod, "GUARD", lambda tree: reason)
 
     ctx = _NoRunContext(capability="rw-checks", operation=task_name, workdir=tmp_path)
     result = getattr(tasks, task_name)(ctx, tree=tmp_path, changed=None)

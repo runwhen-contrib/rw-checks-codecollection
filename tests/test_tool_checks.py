@@ -163,3 +163,47 @@ def test_lane_a_checks_set_writable_env(tmp_path, monkeypatch, name):
     ctx = RecordingContext(tmp_path, outputs=fixture_outputs())
     _runner.run_check(ctx, tree, [target], mod)
     assert ctx.calls and "HOME" in ctx.calls[0]["env"]
+
+
+def test_ruff_needs_config_and_forces_excludes(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "svc/pyproject.toml", "[tool.ruff]\nline-length = 100\n")
+    write(tree, "svc/a.py")
+    write(tree, "scripts/b.py")
+    sarif = (FIXTURES / "ruff.sarif").read_text()
+    ctx, result = run(tmp_path, "ruff", ["svc/a.py", "scripts/b.py"], {"ruff": sarif})
+    assert ctx.calls[0]["argv"] == [
+        "ruff",
+        "check",
+        "--output-format=sarif",
+        "--force-exclude",
+        "svc/a.py",
+    ]
+    assert result.skipped == "1 of 2 changed Python files have no ruff config"
+
+
+def test_ruff_without_any_config_does_not_run(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "a.py")
+    ctx, result = run(tmp_path, "ruff", ["a.py"])
+    assert ctx.calls == [] and result.skipped == "no ruff config applies to the changed files"
+
+
+def test_sqlfluff_guard_sees_the_merged_ancestor_chain(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, ".sqlfluff", "[sqlfluff:templater:jinja]\nlibrary_path = ./macros\n")
+    write(tree, "db/.sqlfluff", "[sqlfluff]\ndialect = postgres\n")
+    write(tree, "db/q.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/q.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable sqlfluff config is unsafe"
+    assert [f.rule for f in result.findings] == ["rw-checks/unsafe-config"]
+
+
+def test_sqlfluff_runs_files_from_root(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "db/.sqlfluff", "[sqlfluff]\ndialect = postgres\n")
+    write(tree, "db/q.sql", "select 1\n")
+    ctx, _ = run(tmp_path, "sqlfluff", ["db/q.sql"], {"sqlfluff": "[]"})
+    assert ctx.calls[0]["argv"] == ["sqlfluff", "lint", "--format", "json", "db/q.sql"]
+    assert ctx.calls[0]["cwd"] == tree

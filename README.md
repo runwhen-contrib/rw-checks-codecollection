@@ -14,13 +14,49 @@ This repository ships:
   a runner over plain HTTP/JSON, and `rwtask run` is the same code path against the local
   filesystem, for development.
 - **`capabilities/rw-checks/`** -- the `rw-checks` capability: a manifest
-  (`manifest.yaml`), its tasks (`tasks.py`: `checkout` setup, `ruff` and `gitleaks` tasks),
-  and the JSON Schema exported from the SDK's models (`schemas/findings.json`).
+  (`manifest.yaml`), its tasks (`tasks.py`: `checkout` setup plus 19 check tasks -- `ruff`,
+  `gitleaks`, `osv_scanner`, `checkov`, `zizmor`, `tflint`, `shellcheck`, `hadolint`,
+  `yamllint`, `actionlint`, `pylint`, `sqlfluff`, `biome`, `ast_grep`, `regal`, `vale`,
+  `flake8`, `dotenv_linter`, `buf`), and the JSON Schema exported from the SDK's models
+  (`schemas/findings.json`).
 
 See `docs/static-checks/CAPABILITY-CONTRACT.md` and `docs/static-checks/EXECUTOR-CONTRACT.md`
 in `runwhen-auto` for the binding contracts this package implements -- the manifest shape, the
 finding shape, and the wire between papi, the runner and this image. This README is just an
 entry point.
+
+## How a check runs
+
+Every check runs only against the PR's changed files -- never the whole tree
+(`docs/static-checks/DIFF-SCOPED-CHECKS.md` in `runwhen-auto`). Each check module exposes two
+functions, driven by the generic runner (`tools/_runner.run_check`):
+
+- `applicable(ctx, tree, changed)` -- never executes the tool. Narrows `changed` to the files
+  this check is eligible for (file-pattern match, CI-duplicate skip, nearest applicable config,
+  a per-config-group safety guard) and groups them into one or more invocations (files, config,
+  cwd).
+- `check(ctx, tree, inv)` -- runs the tool on exactly `inv.files`, using `inv.config` from
+  `inv.cwd`, and returns findings with repo-relative paths.
+
+Each invocation runs in one of four lanes:
+
+- **A -- root run.** One invocation for the whole check; the tool resolves each file's config
+  itself, or the config is fixed-location.
+- **B -- one run per config.** One invocation per resolved config, run from that config's
+  directory, so relative paths inside the config keep working.
+- **C -- scratch view.** The eligible files (and config) are hard-linked into
+  `ctx.workdir/view-<check>/` and the tool runs against that view alone -- used by gitleaks,
+  which only accepts a directory target.
+- **D -- module run.** tflint and buf run against their module/workspace root (`--chdir`,
+  `--path`) so the tool keeps correctness context, but only changed-file findings are kept.
+
+Checks are either **config-gated** (a file only runs once a recognised config applies to it --
+ruff, pylint, flake8, biome, yamllint, sqlfluff, ast-grep, regal, vale, buf, tflint) or
+**always-on** (gitleaks, osv-scanner, zizmor, actionlint, checkov, hadolint, shellcheck,
+dotenv-linter: they use a config if present but never require one). A check that has nothing
+to run explains why in `FindingsResult.skipped` -- no diff available, no matching changed
+files, no config applies, an unsafe config, or (osv-scanner only) `api.osv.dev` being
+unreachable.
 
 ## Developing a task locally
 

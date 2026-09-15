@@ -301,6 +301,44 @@ def test_checkov_file_args_and_explicit_config(tmp_path):
     assert ctx.calls[0]["cwd"] == tree / "infra"
 
 
+def test_flake8_honours_config_excludes_for_explicit_files(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "f8/.flake8", "[flake8]\nexclude = gen,\n  build/*\nextend-exclude = *_pb2.py\n")
+    for f in ("f8/app.py", "f8/gen/x.py", "f8/sub/gen/y.py", "f8/build/z.py", "f8/api_pb2.py"):
+        write(tree, f, "import os\n")
+    changed = ["f8/app.py", "f8/gen/x.py", "f8/sub/gen/y.py", "f8/build/z.py", "f8/api_pb2.py"]
+    ctx, result = run(tmp_path, "flake8", changed, {"flake8": ""})
+    assert [c["argv"][-1:] for c in ctx.calls] == [["app.py"]]
+    assert result.skipped == "4 of 5 changed Python files are excluded by flake8 config"
+
+
+def test_checkov_honours_skip_path_for_explicit_files(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "ck/.checkov.yaml", "skip-path:\n  - gen\n  - '.*/vendor/.*'\n")
+    for f in ("ck/main.tf", "ck/gen/main.tf", "ck/x/vendor/v.tf"):
+        write(tree, f, 'resource "aws_s3_bucket" "b" {}\n')
+    sarif = (FIXTURES / "checkov.sarif").read_text()
+    ctx, result = run(
+        tmp_path,
+        "checkov",
+        ["ck/main.tf", "ck/gen/main.tf", "ck/x/vendor/v.tf"],
+        {"checkov": sarif},
+    )
+    argv = ctx.calls[0]["argv"]
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == "-f"] == ["main.tf"]
+    assert result.skipped == "2 of 3 changed IaC files are skipped by checkov config"
+
+
+def test_checkov_without_config_keeps_every_file(tmp_path):
+    tree = tmp_path / "tree"
+    write(tree, "infra/gen/main.tf", 'resource "aws_s3_bucket" "b" {}\n')
+    sarif = (FIXTURES / "checkov.sarif").read_text()
+    ctx, result = run(tmp_path, "checkov", ["infra/gen/main.tf"], {"checkov": sarif})
+    argv = ctx.calls[0]["argv"]
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == "-f"] == ["infra/gen/main.tf"]
+    assert result.skipped is None
+
+
 def test_ast_grep_runs_from_sgconfig_directory(tmp_path):
     tree = tmp_path / "tree"
     write(tree, "svc/sgconfig.yml", "ruleDirs: [rules]\n")

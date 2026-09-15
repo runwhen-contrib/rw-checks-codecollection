@@ -7,8 +7,9 @@ reasoning as pylint.py.
 
 from __future__ import annotations
 
+import fnmatch
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import adapters
 from runwhen_capability import Context
@@ -42,8 +43,42 @@ EXPECT_EXIT = (0, 1)
 _FORMAT = "--format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s"
 
 
+def _split_patterns(raw: str) -> list[str]:
+    """Comma- and/or newline-separated glob patterns, stripped, empties dropped."""
+    return [p.strip() for p in raw.replace("\n", ",").split(",") if p.strip()]
+
+
+def _exclude_patterns(tree: Path, resolved: _plan.Resolved) -> list[str]:
+    section = _common.ini_section(tree / resolved.path, "flake8") or {}
+    patterns: list[str] = []
+    for key in ("exclude", "extend-exclude"):
+        if section.get(key):
+            patterns += _split_patterns(section[key])
+    return patterns
+
+
+def _excluded(rel: str, base: str, patterns: list[str]) -> bool:
+    """flake8 semantics: a pattern matches the basename, the whole path
+    relative to the config's directory, or any parent directory of that
+    relative path -- by name or by its own relative path."""
+    rel_to_base = PurePosixPath(rel).relative_to(base).as_posix() if base else rel
+    parts = PurePosixPath(rel_to_base).parts
+    for pattern in patterns:
+        if fnmatch.fnmatchcase(parts[-1], pattern) or fnmatch.fnmatchcase(rel_to_base, pattern):
+            return True
+        for i in range(1, len(parts)):
+            if fnmatch.fnmatchcase(parts[i - 1], pattern) or fnmatch.fnmatchcase(
+                "/".join(parts[:i]), pattern
+            ):
+                return True
+    return False
+
+
 def narrow(ctx, tree, changed, groups):
-    """ruff reimplements flake8 and emits its rule IDs: drop files ruff checks."""
+    """ruff reimplements flake8 and emits its rule IDs: drop files ruff checks.
+    Then drop files the repo's own [flake8] exclude/extend-exclude would skip --
+    flake8 ignores those excludes when given explicit file arguments, so the
+    planner applies them itself (spec §8)."""
     ruff_files = {
         f for inv in tools.ruff.applicable(ctx, tree, changed).invocations for f in inv.files
     }
@@ -51,8 +86,28 @@ def narrow(ctx, tree, changed, groups):
     kept = {r: fs for r, fs in kept.items() if fs}
     dropped = sum(len(fs) for fs in groups.values()) - sum(len(fs) for fs in kept.values())
     total = sum(len(fs) for fs in groups.values())
-    note = f"{dropped} of {total} changed Python files are covered by ruff" if dropped else None
-    return kept, note
+    ruff_note = (
+        f"{dropped} of {total} changed Python files are covered by ruff" if dropped else None
+    )
+
+    excluded = 0
+    after_excludes: dict[_plan.Resolved, list[str]] = {}
+    for resolved, files in kept.items():
+        patterns = _exclude_patterns(tree, resolved)
+        remaining = (
+            [f for f in files if not _excluded(f, resolved.base, patterns)] if patterns else files
+        )
+        excluded += len(files) - len(remaining)
+        if remaining:
+            after_excludes[resolved] = remaining
+    exclude_note = (
+        f"{excluded} of {total} changed Python files are excluded by flake8 config"
+        if excluded
+        else None
+    )
+
+    notes = [n for n in (ruff_note, exclude_note) if n]
+    return after_excludes, "; ".join(notes) if notes else None
 
 
 def applicable(ctx: Context, tree: Path, changed: list[str] | None) -> _plan.Applicability:

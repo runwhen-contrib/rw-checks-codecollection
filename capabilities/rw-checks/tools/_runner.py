@@ -11,6 +11,9 @@ from collections.abc import Sequence
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from runwhen_capability.errors import OutputTooLargeError
+from runwhen_capability.sarif import SARIF_BYTE_BUDGET
+
 from . import _common
 from ._plan import Invocation
 
@@ -108,9 +111,23 @@ def run_to_file(ctx: Any, argv: list[str], *, cwd: Path, report: Path, module: A
     this module's `run` (the writable env) and `cwd` (the run/scratch
     directory an invocation runs from). Raises `_common.ToolFailed` -- never
     returns silently -- when the process exited outside `module.EXPECT_EXIT`,
-    or when the report is missing/empty."""
+    or when the report is missing/empty.
+
+    Also raises `OutputTooLargeError` -- checked via `report.stat()`, BEFORE
+    `report.read_text()` -- when the report file itself exceeds
+    SARIF_BYTE_BUDGET. `ctx.run`'s own stdout cap does not cover this path:
+    gitleaks and checkov write their report to a FILE, not stdout, which is
+    the whole reason this function exists. A file-sized runaway would
+    otherwise be read into memory whole -- and could OOM the pod -- before
+    `ctx.sarif.parse` ever got a chance to apply its own guard."""
     report.parent.mkdir(parents=True, exist_ok=True)
     proc = run(ctx, argv, cwd=cwd)
+    try:
+        size = report.stat().st_size
+    except OSError:
+        size = 0
+    if size > SARIF_BYTE_BUDGET:
+        raise OutputTooLargeError(f"check output too large to process: {size} bytes")
     try:
         text = report.read_text()
     except OSError:

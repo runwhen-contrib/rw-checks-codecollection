@@ -9,10 +9,11 @@ satisfy this or the suite fails.
 
 from __future__ import annotations
 
+import dis
 import importlib
 import pkgutil
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -154,6 +155,8 @@ def test_diff_scoped_contract(name):
         "CI_BINARY",
         "LANE",
         "EXPECT_EXIT",
+        "GUARD",
+        "applicable",
         "check",
     ):
         assert hasattr(mod, attr), f"{name} lacks {attr}"
@@ -163,3 +166,50 @@ def test_diff_scoped_contract(name):
     import inspect
 
     assert list(inspect.signature(mod.check).parameters) == ["ctx", "tree", "inv"]
+
+
+# --- CONFIG_NAMES and the guard must agree on which files matter ------------
+
+# Every guarded tool names its config files twice: once as `CONFIG_NAMES` on
+# the module, and again as the literal basenames passed to
+# `guards._selected(paths, ...)` inside its own guard function. Nothing
+# enforces that these agree -- add a name to CONFIG_NAMES and forget the
+# guard, and the guard silently stops covering that file. `regal` is excluded:
+# its guard never calls `_selected` at all (it globs a `.regal/rules/`
+# directory instead), so there is nothing here to extract.
+_NOT_BASENAME_DRIVEN = {"regal"}
+
+
+def _selected_literal_names(guard) -> set[str]:
+    """The string literals passed as `*names` to every `guards._selected(...)`
+    call inside `guard`'s own code object -- found by walking its
+    instructions and collecting the `LOAD_CONST` strings between each
+    `_selected` load and the `CALL` that follows it. Light introspection, not
+    a general-purpose call-argument extractor: it only has to hold for the
+    one call shape every guard here actually uses."""
+    names: set[str] = set()
+    instructions = list(dis.get_instructions(guard))
+    for i, instr in enumerate(instructions):
+        if instr.argval != "_selected" or not instr.opname.startswith("LOAD_"):
+            continue
+        for later in instructions[i + 1 :]:
+            if later.opname.startswith("CALL"):
+                break
+            if later.opname == "LOAD_CONST" and isinstance(later.argval, str):
+                names.add(later.argval)
+    return names
+
+
+@pytest.mark.parametrize("name", [n for n in tool_modules() if n not in _NOT_BASENAME_DRIVEN])
+def test_config_names_covered_by_the_guard(name):
+    mod = load(name)
+    guard = mod.GUARD
+    if guard is None:
+        pytest.skip(f"{name} has no guard")
+    selected = _selected_literal_names(guard)
+    for config_name in mod.CONFIG_NAMES:
+        basename = PurePosixPath(config_name.name).name
+        assert basename in selected, (
+            f"{name}.CONFIG_NAMES names {config_name.name!r}, but guards.{name}'s own "
+            f"_selected(...) calls never filter on {basename!r}: {sorted(selected)}"
+        )

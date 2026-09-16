@@ -31,8 +31,8 @@ CI_BINARY = "buf"
 # network -- see guards.py.
 GUARD = guards.buf
 # buf also reads the workspace-root buf.yaml (via buf.work.yaml), not only
-# the module's own -- the chain (root down to each file's directory,
-# section-agnostic since 0c1c67e) is what makes the root file visible here.
+# the module's own -- the section-agnostic chain (root down to each file's
+# directory) is what makes the root file visible here.
 GUARD_CHAIN = True
 LANE = "D"
 # tests/fixtures/tools/capture.log: buf lint findings exit 100 -- buf's own

@@ -3,10 +3,12 @@ can make THEM do something dangerous when we run them against a PR's repo,
 as opposed to dangerous code in the repo that the tool merely reports as a
 finding.
 
-CONFIRMED VULNERABILITY: we run `pylint --recursive=y .` with the repo as
-cwd (tasks.py's `pylint` task), so pylint reads the repo's own `.pylintrc`.
-A PR adding `init-hook=import subprocess; subprocess.run(...)` to that file
-executes arbitrary code in our pod -- verified against the built image. The
+CONFIRMED VULNERABILITY: `tools/pylint.py`'s `check()` runs `pylint
+--output-format=json --exit-zero --rcfile <cfg> <files>`, where `<cfg>` is a
+config file resolved from the PR's own tree, so pylint reads the repo's own
+`.pylintrc`. A PR adding `init-hook=import subprocess; subprocess.run(...)`
+to that file executes arbitrary code in our pod -- verified against the
+built image. The
 same shape -- a repo-controlled config the tool acts on before or instead of
 scanning code -- exists for checkov (`external-checks-dir`/
 `external-checks-git` import and run a directory or git repo of Python check
@@ -124,9 +126,9 @@ together, before entering the chain, so every hop compares against the
 same resolved root from the start.
 
 A pre-merge review found that the PREVIOUS round's own line-start fix
-(`e197f3d`, which stopped an ordinary trailing `-- sqlfluff` comment from
-refusing a file) narrowed the byte backstop too far and reopened the RCE it
-had otherwise fixed: `_sql_marker_pattern` anchored a marker to the start of
+(which stopped an ordinary trailing `-- sqlfluff` comment from refusing a
+file) narrowed the byte backstop too far and reopened the RCE it had
+otherwise fixed: `_sql_marker_pattern` anchored a marker to the start of
 the data or an encoded newline ONLY, while `_sql_inline_directive` -- which
 its own docstring claims this mirrors -- iterates `text.splitlines()`, and
 real sqlfluff's own `process_raw_file_for_config` does exactly the same
@@ -153,9 +155,9 @@ drifted from the first once) and adding the UTF-8 BOM to `_SQL_BOMS`; the
 backstop's start-of-data branch now also allows an optional encoded BOM
 immediately after it, per `_SQL_BOM_BY_ENCODING`, since a BOM is stripped
 before `_sql_texts` decodes anything and so never reaches
-`_sql_inline_directive` as text either. `e197f3d`'s actual fix -- a marker
-that is NOT at a line start (a trailing comment, a marker inside a string
-literal) is not a directive and must not refuse -- is unchanged.
+`_sql_inline_directive` as text either. The line-start fix's own rule -- a
+marker that is NOT at a line start (a trailing comment, a marker inside a
+string literal) is not a directive and must not refuse -- is unchanged.
 
 One guard function per affected tool, called by `_plan.plan` per config group
 BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
@@ -688,8 +690,8 @@ def _splitlines_boundary_chars() -> str:
     computed by asking `str.splitlines()` itself, one candidate character at
     a time, rather than hand-copying CPython's own list into a SECOND,
     byte-level list that could silently drift from the first the way B1
-    (final-fix-10) did: `e197f3d` anchored the byte backstop to an encoded
-    `\\n` alone, while `_sql_inline_directive` above -- which its own
+    (final-fix-10) did: the line-start fix anchored the byte backstop to an
+    encoded `\\n` alone, while `_sql_inline_directive` above -- which its own
     docstring claims this mirrors -- gets the FULL boundary set for free by
     calling `text.splitlines()` directly, and the two quietly stopped
     agreeing. `_sql_marker_pattern` below cannot decode `text` to call

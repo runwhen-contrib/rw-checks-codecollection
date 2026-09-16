@@ -85,6 +85,8 @@ def test_ruff_stdout_overflow_fails_only_that_task(tmp_path, monkeypatch):
     # only this ">" proves it was caught while still streaming in.
     assert ">" in by_task["ruff"].error
 
+    assert by_task["actionlint"].status == "ok"
+
 
 def test_gitleaks_report_file_overflow_fails_only_that_task(tmp_path, monkeypatch):
     """gitleaks writes its SARIF to a report FILE, read back by

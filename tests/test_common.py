@@ -149,3 +149,25 @@ def test_check_exit_outside_expect_exit_returns_a_finding(tmp_path):
     findings = _common.check_exit(ctx, tmp_path, "tool", proc, Mod)
     assert len(findings) == 1
     assert findings[0].rule == "rw-checks/check-failed"
+
+
+# --- toml_table never raises (H6) --------------------------------------------
+
+
+def test_toml_table_recursion_error_returns_none_not_raise(tmp_path):
+    """`toml_table` is called during ELIGIBILITY (`_plan._counts`), before any
+    guard runs -- a config that blows tomllib's own parser recursion must
+    come back as "not a config" (None), not escape as a RecursionError and
+    crash the whole task."""
+    n = 5000
+    path = write(tmp_path, "pyproject.toml", "x = " + "[" * n + "1" + "]" * n + "\n")
+    assert _common.toml_table(path, "tool", "sqlfluff") is None
+
+
+def test_toml_table_missing_file_returns_none(tmp_path):
+    assert _common.toml_table(tmp_path / "nope.toml", "tool") is None
+
+
+def test_toml_table_malformed_returns_none(tmp_path):
+    path = write(tmp_path, "pyproject.toml", "not [[[ valid toml\n===\n")
+    assert _common.toml_table(path, "tool") is None

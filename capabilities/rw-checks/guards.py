@@ -46,6 +46,24 @@ finding whenever biome then exits outside `EXPECT_EXIT`: confirmed, though
 not deterministically outside `(0, 1)`). GritQL `plugins` in a biome config
 are declarative -- no exec, no fetch -- and are not guarded.
 
+An adversarial re-review ran the real tools in the built image against the
+guards above and found five more bypasses, not new vectors: tflint's HCL
+comment stripper tracked quoted strings but not heredocs (`<<EOT ... EOT`),
+so a `/*` inside a heredoc's literal body -- not a comment to tflint at all
+-- was treated as an unterminated block comment and deleted a real
+`plugin "pwn"` block that followed it; sqlfluff's inline `-- sqlfluff:`
+directive scan read a linted `.sql` file as UTF-8 only, so a UTF-16-BOM
+file's directive decoded to replacement-character noise and was missed,
+while sqlfluff's own `encoding=autodetect` honoured it; ruff's and biome's
+`extend`/`extends` guard rejected only absolute, `~`-relative, and literal
+`..` values -- a repo-committed SYMLINKED directory turns a plain relative
+value into one that still escapes the tree, which none of those textual
+checks can see; and `_walk_kv` returned only the FIRST occurrence of a
+matching key, so a decoy (e.g. ruff's `lint.per-file-ignores."extend"`, a
+valid glob list that sorts before a real top-level `extend` string) hid the
+real, dangerous occurrence from a guard that inspects the value, not merely
+the key's presence.
+
 One guard function per affected tool, called by `_plan.plan` per config group
 BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
 or None when it is safe to run the tool. The reason always begins
@@ -132,44 +150,43 @@ _WALK_MAX_DEPTH = 64
 _TOO_DEEP = object()
 
 
-def _walk_kv(obj: Any, keys: set[str], depth: int = 0) -> Any:
-    """Like `_walk`, but returns the matching `(key, value)` PAIR instead of
-    only the key -- for a guard that must inspect the value itself (ruff's
-    `extend` path, biome's `extends` entries), not merely detect that the
-    key is present. Same depth bound and `_TOO_DEEP` sentinel as `_walk`,
-    which is defined in terms of this rather than duplicating the walk."""
+def _walk_kv(obj: Any, keys: set[str], depth: int = 0):
+    """Recursively search a parsed TOML/YAML/JSON document for EVERY dict key
+    in `keys` with a truthy value, at ANY nesting depth, yielding each
+    matching `(key, value)` PAIR as it is found -- not only the first.
+    CONFIRMED #5: a decoy key that sorts earlier in the document (or nests
+    one level differently, e.g. ruff's `lint.per-file-ignores."extend"`, a
+    valid glob list) must never hide a later, dangerous occurrence of the
+    same key from a caller that inspects the VALUE, not merely the key's
+    presence -- a caller that stopped at the first match saw only the decoy.
+    Also yields the `_TOO_DEEP` sentinel and stops, once `depth` passes
+    `_WALK_MAX_DEPTH` -- a config nested that deep is hiding something, and
+    the caller must treat "we gave up looking" as unsafe on its own, the
+    same as a real match, without waiting for more of the document."""
     if depth > _WALK_MAX_DEPTH:
-        return _TOO_DEEP
+        yield _TOO_DEEP
+        return
     if isinstance(obj, dict):
         for k, v in obj.items():
             key = str(k).lower()
             if key in keys and v:
-                return key, v
-            found = _walk_kv(v, keys, depth + 1)
-            if found:
-                return found
+                yield key, v
+            yield from _walk_kv(v, keys, depth + 1)
     elif isinstance(obj, list):
         for item in obj:
-            found = _walk_kv(item, keys, depth + 1)
-            if found:
-                return found
-    return None
+            yield from _walk_kv(item, keys, depth + 1)
 
 
 def _walk(obj: Any, keys: set[str], depth: int = 0) -> Any:
-    """Recursively search a parsed TOML/YAML document for any of `keys` as
-    a dict key with a truthy value, at ANY nesting depth. Whoever writes a
-    malicious config controls which section it lives under, not just the
-    key name -- a guard that only checks one fixed path is trivially
-    dodged by nesting the same key one level differently. Returns the
-    matched key (lowercased), `_TOO_DEEP` once `depth` passes
-    `_WALK_MAX_DEPTH` -- a config nested that deep is hiding something, and
-    the caller must treat "we gave up looking" as unsafe, not as None -- or
+    """Whether ANY of `keys` is present (as a dict key with a truthy value,
+    at any nesting depth) -- for a caller that only needs to know THAT a key
+    is there, not its value, so the first `_walk_kv` match already refuses
+    and nothing is gained by seeing the rest. Returns the matched key
+    (lowercased), `_TOO_DEEP` if the walk bailed out before finding one, or
     None when nothing was found within the bound."""
-    found = _walk_kv(obj, keys, depth)
-    if found is None or found is _TOO_DEEP:
-        return found
-    return found[0]
+    for found in _walk_kv(obj, keys, depth):
+        return _TOO_DEEP if found is _TOO_DEEP else found[0]
+    return None
 
 
 def _too_deep(tree: Path, path: Path) -> str:
@@ -189,17 +206,30 @@ def _toml_table(doc: Any, *path: str) -> Any:
     return cur
 
 
-def _unsafe_path(value: str) -> bool:
-    """True when `value` -- a path a tool config points somewhere else on
-    disk -- would resolve outside the repository: absolute, `~`-relative (a
-    tool's own path handling may expand that to the user's home, which is
-    outside the repo too), or containing a `..` segment. A plain relative
-    path that stays inside the repo is ordinary config reuse and is safe."""
+def _unsafe_path(tree: Path, config_dir: Path, value: str) -> bool:
+    """True when `value` -- a path a tool config at `config_dir` points
+    somewhere else on disk -- would resolve outside the repository.
+    Absolute and `~`-relative values (a tool's own path handling may expand
+    the latter to the user's home, which is outside the repo too) are
+    refused outright, without touching the filesystem, so nothing here
+    depends on resolution alone. A plain relative value must also actually
+    RESOLVE (`Path.resolve()`, non-strict, so a dangling symlink still
+    resolves to its lexical target) inside `tree` -- CONFIRMED #3/#4: a
+    repo-committed symlinked directory on the way turns an ordinary-looking
+    relative value into one that walks straight out of the tree, which a
+    purely textual `..`/absolute check never sees."""
     if value.startswith("~"):
         return True
     if PurePosixPath(value).is_absolute():
         return True
-    return ".." in PurePosixPath(value).parts
+    try:
+        resolved = (config_dir / value).resolve()
+        root = tree.resolve()
+    except (OSError, RuntimeError):
+        # A path we cannot even resolve (e.g. a symlink loop) is exactly the
+        # "we couldn't tell" case guards.py's own docstring treats as unsafe.
+        return True
+    return not resolved.is_relative_to(root)
 
 
 # --- pylint -------------------------------------------------------------
@@ -340,6 +370,51 @@ def _sql_files(paths: Sequence[Path]) -> list[Path]:
     return sorted(p for p in paths if p.suffix == ".sql" and p.is_file())
 
 
+#: CONFIRMED #2: sqlfluff's own loader reads a linted file with
+#: `encoding=autodetect`, so a UTF-16 file's inline `-- sqlfluff:` directive
+#: is honoured by the real tool -- while the old naive UTF-8 read here
+#: decoded a UTF-16-BOM file's first line to replacement-character noise
+#: and missed it entirely. Each BOM is stripped before decoding under its
+#: matching encoding, the same way sqlfluff's own reader would.
+_SQL_BOMS = ((b"\xff\xfe", "utf-16-le"), (b"\xfe\xff", "utf-16-be"))
+
+
+def _sql_texts(data: bytes) -> list[str]:
+    """Every decoding this guard scans a linted `.sql` file's bytes under --
+    not the single naive UTF-8 read it used to be. `errors="replace"` only
+    for the UTF-8 attempt: a genuinely UTF-16 file decoded as UTF-8 is
+    mostly replacement characters and simply will not spell out a
+    directive; a UTF-16 decode itself is either right or raises, so a
+    failing attempt is just skipped rather than guessed at."""
+    texts = [data.decode("utf-8", errors="replace")]
+    for bom, encoding in _SQL_BOMS:
+        raw = data[len(bom) :] if data.startswith(bom) else data
+        try:
+            texts.append(raw.decode(encoding))
+        except UnicodeDecodeError:
+            continue
+    return texts
+
+
+def _sql_inline_directive(text: str) -> str | None:
+    """The first `_SQLFLUFF_KEYS` key an inline `-- sqlfluff:`/`--sqlfluff:`
+    directive anywhere in `text` sets, or None."""
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith("-- sqlfluff"):
+            marker = "-- sqlfluff"
+        elif stripped.startswith("--sqlfluff"):
+            marker = "--sqlfluff"
+        else:
+            continue
+        key_path = stripped[len(marker) :].split(":")[:-1]
+        for segment in key_path:
+            key = segment.strip().lower()
+            if key in _SQLFLUFF_KEYS:
+                return key
+    return None
+
+
 def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
     """Reason to refuse, or None when safe."""
     for path in _selected(paths, ".sqlfluff", "setup.cfg", "tox.ini", "pep8.ini"):
@@ -373,22 +448,13 @@ def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
     # files it is guarding, only their config.
     for path in _sql_files(paths):
         try:
-            text = path.read_text(errors="replace")
+            data = path.read_bytes()
         except (OSError, RecursionError) as e:
             return _unparseable(tree, path, e)
-        for line in text.splitlines():
-            stripped = line.lstrip()
-            if stripped.startswith("-- sqlfluff"):
-                marker = "-- sqlfluff"
-            elif stripped.startswith("--sqlfluff"):
-                marker = "--sqlfluff"
-            else:
-                continue
-            key_path = stripped[len(marker) :].split(":")[:-1]
-            for segment in key_path:
-                key = segment.strip().lower()
-                if key in _SQLFLUFF_KEYS:
-                    return _reason(tree, path, f"{key} inline", _sqlfluff_why(key))
+        for text in _sql_texts(data):
+            key = _sql_inline_directive(text)
+            if key:
+                return _reason(tree, path, f"{key} inline", _sqlfluff_why(key))
 
     return None
 
@@ -435,11 +501,49 @@ _TFLINT_PLUGIN_DIR_WHY = "which tflint loads plugin binaries from"
 _TFLINT_PLUGIN_BLOCK = re.compile(r'plugin\s+"([^"]*)"\s*\{')
 _TFLINT_PLUGIN_DIR_KEY = re.compile(r"\bplugin_dir\b\s*=")
 _TFLINT_PLUGIN_ATTR_KEY = re.compile(r"\b(?:source|version)\b\s*=")
+#: HCL heredoc introducer: `<<EOT` or the indented `<<-EOT` form. CONFIRMED
+#: #1: `_strip_hcl_comments` tracked quoted strings but not heredocs, so a
+#: `/*` inside a heredoc's literal body -- not a comment to tflint at all --
+#: was treated as an unterminated block comment and stripped everything
+#: from there to EOF, deleting a real `plugin "pwn"` block that followed.
+_HCL_HEREDOC_INTRO = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_]*)")
 
 
-def _strip_hcl_comments(text: str) -> str:
+def _hcl_heredoc_end(text: str, body_start: int, marker: str, indented: bool) -> int | None:
+    """The index just past the heredoc TERMINATOR line (including its
+    trailing newline, or end of text if the terminator is the file's last
+    line), or None if `marker` never appears alone on its own line before
+    EOF. The indented `<<-` form allows the terminator line leading
+    whitespace; the plain `<<` form requires it flush left -- same as HCL's
+    own grammar."""
+    i, n = body_start, len(text)
+    while i <= n:
+        nl = text.find("\n", i)
+        line = text[i:n] if nl == -1 else text[i:nl]
+        candidate = line.strip() if indented else line.rstrip("\r")
+        if candidate == marker:
+            return n if nl == -1 else nl + 1
+        if nl == -1:
+            return None
+        i = nl + 1
+    return None
+
+
+def _strip_hcl_comments(text: str) -> str | None:
     """`#`/`//` to end of line and `/* ... */` blocks, never stripped inside
-    a quoted string."""
+    a quoted string or a heredoc body (`<<EOT ... EOT` / `<<-EOT ... EOT`):
+    a `/*`, `#` or `//` that only LOOKS like a comment marker because it
+    happens to sit inside a heredoc's literal text is not one, and treating
+    it as one is exactly how CONFIRMED #1 hid a real `plugin "pwn"` block
+    from this scanner. A heredoc's introducer/body/terminator lines are
+    instead blanked out to spaces (newlines kept) -- opaque data, not
+    re-scanned for `plugin`/`plugin_dir` and not miscounted by
+    `_hcl_block`'s own brace tracking, which runs on this already-stripped
+    text and therefore needs no separate heredoc awareness of its own.
+    An unterminated string, block comment, or heredoc cannot be told apart
+    from one hiding the rest of the file -- the same shape as CONFIRMED #1
+    -- so it is UNSAFE, signalled by returning None rather than guessing
+    where it would have ended."""
     out: list[str] = []
     in_string = False
     i, n = 0, len(text)
@@ -466,8 +570,27 @@ def _strip_hcl_comments(text: str) -> str:
             continue
         if text[i : i + 2] == "/*":
             j = text.find("*/", i + 2)
-            i = n if j == -1 else j + 2
+            if j == -1:
+                return None
+            i = j + 2
             continue
+        if text[i : i + 2] == "<<":
+            m = _HCL_HEREDOC_INTRO.match(text, i)
+            if m:
+                line_end = text.find("\n", m.end())
+                if line_end == -1:
+                    return None
+                marker = m.group(2)
+                indented = m.group(1) == "-"
+                body_start = line_end + 1
+                term_end = _hcl_heredoc_end(text, body_start, marker, indented)
+                if term_end is None:
+                    return None
+                out.append(text[i : line_end + 1])
+                heredoc = text[body_start:term_end]
+                out.append("".join(c if c == "\n" else " " for c in heredoc))
+                i = term_end
+                continue
         out.append(ch)
         i += 1
     return "".join(out)
@@ -512,6 +635,8 @@ def tflint(tree: Path, paths: Sequence[Path]) -> str | None:
         except (OSError, UnicodeDecodeError) as e:
             return _unparseable(tree, path, e)
         stripped = _strip_hcl_comments(text)
+        if stripped is None:
+            return _unparseable(tree, path, ValueError("unterminated string, comment, or heredoc"))
         for m in _TFLINT_PLUGIN_BLOCK.finditer(stripped):
             name = m.group(1)
             block = _hcl_block(stripped, m.end() - 1)
@@ -617,9 +742,22 @@ def regal(tree: Path, paths: Sequence[Path]) -> str | None:
 # which is that file's content -- straight into the PR finding. Searched at
 # any nesting depth via `_walk_kv`, same defense-in-depth as every other
 # guard here, even though ruff's own schema only ever reads `extend` from
-# the top level (of the file, or of `[tool.ruff]`).
+# the top level (of the file, or of `[tool.ruff]`). CONFIRMED #5: every
+# occurrence is checked, not just the first -- `lint.per-file-ignores.
+# "extend"` is a valid ruff glob list that sorts before a real top-level
+# `extend` string and used to hide it from a first-match walk entirely.
 _RUFF_KEYS = {"extend"}
 _RUFF_WHY = "which ruff reads from outside the repository"
+
+
+def _ruff_unsafe_extend(tree: Path, path: Path, section: Any) -> str | None:
+    for found in _walk_kv(section, _RUFF_KEYS):
+        if found is _TOO_DEEP:
+            return _too_deep(tree, path)
+        key, value = found
+        if isinstance(value, str) and _unsafe_path(tree, path.parent, value):
+            return _reason(tree, path, key, _RUFF_WHY)
+    return None
 
 
 def ruff(tree: Path, paths: Sequence[Path]) -> str | None:
@@ -629,13 +767,9 @@ def ruff(tree: Path, paths: Sequence[Path]) -> str | None:
             doc = tomllib.loads(path.read_text())
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as e:
             return _unparseable(tree, path, e)
-        found = _walk_kv(doc, _RUFF_KEYS)
-        if found is _TOO_DEEP:
-            return _too_deep(tree, path)
-        if found:
-            key, value = found
-            if isinstance(value, str) and _unsafe_path(value):
-                return _reason(tree, path, key, _RUFF_WHY)
+        reason = _ruff_unsafe_extend(tree, path, doc)
+        if reason:
+            return reason
 
     for path in _selected(paths, "pyproject.toml"):
         try:
@@ -643,13 +777,10 @@ def ruff(tree: Path, paths: Sequence[Path]) -> str | None:
         except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, RecursionError) as e:
             return _unparseable(tree, path, e)
         section = _toml_table(doc, "tool", "ruff")
-        found = _walk_kv(section, _RUFF_KEYS) if section is not None else None
-        if found is _TOO_DEEP:
-            return _too_deep(tree, path)
-        if found:
-            key, value = found
-            if isinstance(value, str) and _unsafe_path(value):
-                return _reason(tree, path, key, _RUFF_WHY)
+        if section is not None:
+            reason = _ruff_unsafe_extend(tree, path, section)
+            if reason:
+                return reason
 
     return None
 
@@ -705,14 +836,14 @@ def _strip_jsonc_comments(text: str) -> str:
     return "".join(out)
 
 
-def _unsafe_extends(value: Any) -> bool:
+def _unsafe_extends(tree: Path, config_dir: Path, value: Any) -> bool:
     """`extends` is a string or a list of strings; any entry that resolves
     outside the repo trips the guard. A non-string entry (or a differently
     shaped `extends`) names no path at all, so it is left alone."""
     if isinstance(value, str):
-        return _unsafe_path(value)
+        return _unsafe_path(tree, config_dir, value)
     if isinstance(value, list):
-        return any(isinstance(v, str) and _unsafe_path(v) for v in value)
+        return any(isinstance(v, str) and _unsafe_path(tree, config_dir, v) for v in value)
     return False
 
 
@@ -723,11 +854,12 @@ def biome(tree: Path, paths: Sequence[Path]) -> str | None:
             doc = json.loads(_strip_jsonc_comments(path.read_text()))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as e:
             return _unparseable(tree, path, e)
-        found = _walk_kv(doc, {"extends"})
-        if found is _TOO_DEEP:
-            return _too_deep(tree, path)
-        if found:
+        # CONFIRMED #5-shaped: every `extends` occurrence is checked, not
+        # just the first -- see the same fix on ruff above.
+        for found in _walk_kv(doc, {"extends"}):
+            if found is _TOO_DEEP:
+                return _too_deep(tree, path)
             _, value = found
-            if _unsafe_extends(value):
+            if _unsafe_extends(tree, path.parent, value):
                 return _reason(tree, path, "extends", _BIOME_WHY)
     return None

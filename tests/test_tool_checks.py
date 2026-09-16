@@ -268,6 +268,27 @@ def test_sqlfluff_guard_chain_reaches_nested_jinja_only_tox_ini(tmp_path):
     assert [f.path for f in result.findings] == ["db/q/tox.ini"]
 
 
+def test_sqlfluff_recursion_error_pyproject_is_refused_not_raised(tmp_path):
+    """H6: a pyproject.toml that blows tomllib's own parser recursion raised
+    an uncaught RecursionError out of `_plan.plan`'s ELIGIBILITY step (via
+    `_common.toml_table`, called from `nearest_config`/`_counts`), before
+    any guard ever ran -- crashing the whole task instead of refusing. The
+    malicious file sits in the linted file's own directory, tried before
+    `db/.sqlfluff` is found one directory up, so eligibility must actually
+    reach it; GUARD_CHAIN then still puts it on the guard's chain via
+    `is_file()`, where guards.sqlfluff's own (already-correct)
+    RecursionError handling turns it into a refusal."""
+    tree = tmp_path / "tree"
+    write(tree, "db/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")
+    n = 5000
+    write(tree, "db/q/pyproject.toml", "x = " + "[" * n + "1" + "]" * n + "\n")
+    write(tree, "db/q/x.sql", "select 1\n")
+    ctx, result = run(tmp_path, "sqlfluff", ["db/q/x.sql"])
+    assert ctx.calls == []
+    assert result.skipped == "every applicable sqlfluff config is unsafe"
+    assert [f.path for f in result.findings] == ["db/q/pyproject.toml"]
+
+
 def test_sqlfluff_guard_chain_per_group_isolation(tmp_path):
     tree = tmp_path / "tree"
     write(tree, "a/.sqlfluff", "[sqlfluff]\ndialect = ansi\n")

@@ -66,6 +66,19 @@ def test_tool_env_excludes_a_secret_looking_variable(tmp_path, monkeypatch):
     assert "GPG_KEY" not in env
 
 
+def test_run_sets_inherit_env_false(tmp_path):
+    """rw-1416 G7: `_runner.run` must pass `inherit_env=False` on every call
+    -- `tool_env` is the tool's WHOLE child environment (_PASSTHROUGH_ENV),
+    not a few extras layered over the executor pod's own, so
+    `ctx.run`'s OWN default (`inherit_env=True`) must never be left in
+    place. Asserted at the `_runner.run` call site itself (the fake ctx
+    records the kwarg) -- reverting `inherit_env=False` in `_runner.run`
+    previously left the whole suite green with no test noticing."""
+    ctx = RecordingContext(tmp_path)
+    _runner.run(ctx, ["true"], cwd=tmp_path)
+    assert ctx.calls[0]["inherit_env"] is False
+
+
 def test_records_are_remapped_to_repo_relative(tmp_path):
     tree = tmp_path / "tree"
     (tree / "svc").mkdir(parents=True)

@@ -56,16 +56,24 @@ def ini_section(tree_file: Path, section: str) -> dict[str, str] | None:
     """One INI section's items, or None if the file is unreadable/unparseable."""
     try:
         parser = parse_ini(tree_file.read_text(errors="replace"))
-    except (OSError, configparser.Error):
+    except (OSError, configparser.Error, RecursionError):
         return None
     return dict(parser[section]) if parser.has_section(section) else None
 
 
 def toml_table(path: Path, *keys: str) -> Any:
-    """A dotted TOML table (`toml_table(p, "tool", "ruff")`), or None."""
+    """A dotted TOML table (`toml_table(p, "tool", "ruff")`), or None.
+
+    Called during ELIGIBILITY (`_plan._counts`), before any guard runs --
+    H6: a pyproject.toml that blows tomllib's own parser recursion must
+    come back as "not a config" here, not escape as an uncaught
+    RecursionError and crash the whole task. A file that fails this way
+    still exists on disk (`is_file()`), so `_plan.guard_paths` still puts
+    it on a guard's chain, and the guard's own parsing (which already
+    catches RecursionError) turns it into a refusal instead."""
     try:
         doc: Any = tomllib.loads(path.read_text(errors="replace"))
-    except (OSError, tomllib.TOMLDecodeError):
+    except (OSError, tomllib.TOMLDecodeError, RecursionError, UnicodeDecodeError):
         return None
     for key in keys:
         if not isinstance(doc, dict) or key not in doc:

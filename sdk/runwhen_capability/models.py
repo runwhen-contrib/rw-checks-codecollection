@@ -103,18 +103,45 @@ class ReadResult(BaseModel):
 
 
 class GrepMatch(BaseModel):
+    # before/after: the `context`-line window around this match, in file
+    # order -- empty (the default) when the caller didn't ask for context,
+    # so an existing caller that never passes `context` sees no shape
+    # change (the query task's `grep` and `defs` ops carry context; `refs`
+    # uses 0).
     path: str
     line: int
     text: str
+    before: list[str] = Field(default_factory=list)
+    after: list[str] = Field(default_factory=list)
 
 
 class GrepResult(BaseModel):
-    """Output of the `grep` task."""
+    """Output of the `grep` task -- also the result of the query task's
+    `defs`/`refs` ops."""
 
     matches: list[GrepMatch] = Field(default_factory=list)
     truncated: bool = False
     unreadable: list[str] = Field(default_factory=list)
     unreadableTruncated: bool = False
+
+
+class ReadRange(BaseModel):
+    """One merged range in a `read_ranges` result."""
+
+    start: int
+    end: int
+    content: str
+
+
+class ReadRangesResult(BaseModel):
+    """Output of `read_ranges` -- the multi-range counterpart to
+    ReadResult, backing the query task's `read` op (`ranges` and `around`
+    both resolve to this shape)."""
+
+    path: str
+    ranges: list[ReadRange] = Field(default_factory=list)
+    totalLines: int
+    truncated: bool = False
 
 
 class LsEntry(BaseModel):
@@ -130,6 +157,38 @@ class LsResult(BaseModel):
     truncated: bool = False
     unreadable: list[str] = Field(default_factory=list)
     unreadableTruncated: bool = False
+
+
+class QueryError(BaseModel):
+    """A per-op failure in a `query` result. `code` is one of repo_fs's
+    error codes (repo_fs.error_code: PATH_ESCAPES_TREE, NOT_FOUND,
+    NOT_A_DIRECTORY, BINARY_FILE, INVALID_PATTERN, UNREADABLE) or one of
+    the query task's own (INVALID_OP, RESPONSE_BUDGET, DEADLINE) -- a
+    plain string rather than an enum so a new code is not a schema break
+    for a caller."""
+
+    code: str
+    message: str
+
+
+class QueryOpResult(BaseModel):
+    """One op's entry in a `query` result, at its request `index`. Exactly
+    one of `result`/`error` is non-null; both are always present."""
+
+    index: int
+    op: str | None = None  # null only when the op named no known operation
+    result: GrepResult | ReadRangesResult | LsResult | None = None
+    error: QueryError | None = None
+
+
+class QueryResult(BaseModel):
+    """Output of the `query` task: one entry per op, in request order.
+    `truncated` is set when the response budget cut an op short, turned
+    later ops into RESPONSE_BUDGET errors, an op's own result alone
+    exceeded the budget, or the time budget turned an op into DEADLINE."""
+
+    results: list[QueryOpResult] = Field(default_factory=list)
+    truncated: bool = False
 
 
 # --- Wire 3 (papi <-> capability): the request/result envelope -------------

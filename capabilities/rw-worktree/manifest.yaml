@@ -53,7 +53,13 @@ execution:
   # tradeoff, never a correctness one.
   idleTtlSeconds: 1800
   # `open` does a shallow clone, bounded by git.py's own GIT_TIMEOUT
-  # (300s); read/grep/ls each finish in a small fraction of that.
+  # (300s); read/grep/ls each finish in a small fraction of that. `query`'s
+  # in-task deadline is 20s (repo_query.py's QUERY_DEADLINE_SECONDS) so
+  # papi's two serialized calls (head+base) finish within papi's 50s
+  # per-call deadline for `query`. That deadline is only checked between
+  # ops (repo_query.py's module docstring), so one full-tree op already in
+  # flight can still overrun it -- either way this stays comfortably under
+  # this 300s request timeout.
   requestTimeoutSeconds: 300
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------
@@ -74,7 +80,7 @@ needs:
   # generation is built, it must derive destinations from the resolved
   # installation, never from a literal in this file.
 
-# --- runs once per (repoUrn, sha) cache key, before read/grep/ls ----------------------
+# --- runs once per (repoUrn, sha) cache key, before read/grep/ls/query ----------------
 setup:
   task: open
   inputs:
@@ -120,6 +126,16 @@ tasks:
       result:
         kind: rw.repo_ls.v1
         schema: ./schemas/ls.json
+
+  - name: query
+    description: Run a batch of grep/read/ls/defs/refs operations against the checked-out tree
+    inputs:
+      tree: { from: "${setup.tree}" }
+      ops:  { from: request }              # JSON array of ops, answered in order
+    outputs:
+      result:
+        kind: rw.repo_query.v1
+        schema: ./schemas/query.json
 
 retention:
   pod: on_failure                        # all | on_failure | none

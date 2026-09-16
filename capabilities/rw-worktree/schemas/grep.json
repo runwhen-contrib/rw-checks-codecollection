@@ -13,6 +13,20 @@
         "text": {
           "title": "Text",
           "type": "string"
+        },
+        "before": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Before",
+          "type": "array"
+        },
+        "after": {
+          "items": {
+            "type": "string"
+          },
+          "title": "After",
+          "type": "array"
         }
       },
       "required": [
@@ -24,7 +38,7 @@
       "type": "object"
     }
   },
-  "description": "Output of the `grep` task.",
+  "description": "Output of the `grep` task -- also the result of the query task's\n`defs`/`refs` ops.",
   "properties": {
     "matches": {
       "items": {

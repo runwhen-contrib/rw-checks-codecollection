@@ -355,6 +355,45 @@ def test_sqlfluff_sql_inline_latin1ish_no_directive_is_safe(tmp_path):
     assert guards.sqlfluff(tmp_path, [path]) is None
 
 
+# --- sqlfluff: W2 (final-fix-7), UTF-32 `.sql` files ---------------------
+# sqlfluff decodes a linted file with `chardet.detect`, which returns
+# UTF-32 at confidence 1.0 for a UTF-32 file; the fixed utf-8/utf-16-le/
+# utf-16-be scan above never tried UTF-32 at all, so a UTF-32 file's inline
+# `-- sqlfluff:` directive was invisible to the guard and honoured by
+# sqlfluff. The 4-byte UTF-32-LE BOM (`ff fe 00 00`) starts with the
+# 2-byte UTF-16-LE BOM (`ff fe`) -- an implementation that checked (and
+# stopped at) the 2-byte BOMs first would strip only 2 of the 4 BOM bytes
+# and decode the wrong-length code units, scattering the directive text
+# with embedded NULs and missing it just the same. rr4/attacks/sqlfluff-
+# utf32 is the confirmed reproduction.
+
+
+def test_sqlfluff_sql_inline_utf32_le_bom_trips_the_guard(tmp_path):
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        b"\xff\xfe\x00\x00"
+        + "-- sqlfluff:library_path:lib\nSELECT {{1}} FROM t;\n".encode("utf-32-le")
+    )
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+    assert "library_path" in reason
+
+
+def test_sqlfluff_sql_inline_utf32_be_bom_trips_the_guard(tmp_path):
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        b"\x00\x00\xfe\xff"
+        + "-- sqlfluff:library_path:lib\nSELECT {{1}} FROM t;\n".encode("utf-32-be")
+    )
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+    assert "library_path" in reason
+
+
 # --- sqlfluff: B3, unbounded `_walk` recursion ---------------------------
 
 
@@ -682,6 +721,82 @@ def test_tflint_unterminated_heredoc_is_unsafe(tmp_path):
     assert "could not be parsed" in reason
 
 
+# --- tflint: W1 (final-fix-7), heredoc terminator leading/trailing
+# whitespace -- `_hcl_heredoc_end` closed a heredoc only on a flush-left,
+# unpadded terminator line, while real HCL/tflint accepts leading and
+# trailing whitespace (and tabs) around it. An indented terminator closes
+# the heredoc for real tflint, exposing the `plugin "pwn"` block that
+# follows -- but the old scanner required the terminator flush-left and
+# kept consuming past it as opaque heredoc body, hiding the block from the
+# guard entirely. rr4/attacks/tflint-heredoc-rce, tflint-trailspace,
+# tflint-leadtab are the confirmed reproductions.
+
+
+def _tflint_heredoc_terminator_config(terminator: str) -> str:
+    return (
+        'plugin "terraform" {\n'
+        "  enabled = true\n"
+        "  x = <<EOT\n"
+        "body\n"
+        f"{terminator}\n"
+        "}\n"
+        'plugin "pwn" {\n'
+        "  enabled = true\n"
+        "}\n"
+        "config {\n"
+        '  plugin_dir = "./p"\n'
+        "  format = <<EOT\n"
+        "EOT\n"
+        "}\n"
+    )
+
+
+def test_tflint_heredoc_indented_terminator_trips_the_guard(tmp_path):
+    """rr4/attacks/tflint-heredoc-rce: a 2-space-indented `  EOT` terminator."""
+    path = write(tmp_path, "infra/.tflint.hcl", _tflint_heredoc_terminator_config("  EOT"))
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert "infra/.tflint.hcl" in reason
+    assert 'plugin "pwn"' in reason
+
+
+def test_tflint_heredoc_trailing_space_terminator_trips_the_guard(tmp_path):
+    """rr4/attacks/tflint-trailspace: `EOT ` (trailing space)."""
+    path = write(tmp_path, "infra/.tflint.hcl", _tflint_heredoc_terminator_config("EOT "))
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert 'plugin "pwn"' in reason
+
+
+def test_tflint_heredoc_leading_tab_terminator_trips_the_guard(tmp_path):
+    """rr4/attacks/tflint-leadtab: a leading-tab `\tEOT` terminator."""
+    path = write(tmp_path, "infra/.tflint.hcl", _tflint_heredoc_terminator_config("\tEOT"))
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert 'plugin "pwn"' in reason
+
+
+def test_tflint_heredoc_substring_line_does_not_close_it(tmp_path):
+    """A body line that merely CONTAINS the marker (not equal to it once
+    stripped) must not close the heredoc -- a substring-matching "fix"
+    would instead close it here and wrongly expose the plugin "pwn" text
+    (still inside the heredoc's literal body, opaque to real tflint) as a
+    live block, refusing when the real tool would not."""
+    path = write(
+        tmp_path,
+        ".tflint.hcl",
+        'plugin "terraform" {\n'
+        "  x = <<EOT\n"
+        "this line contains EOT but is not the terminator\n"
+        'plugin "pwn" {\n'
+        "  enabled = true\n"
+        "}\n"
+        "EOT\n"
+        "}\n",
+    )
+    assert guards.tflint(tmp_path, [path]) is None
+
+
 # --- buf (final-fix-4 G2) --------------------------------------------------
 
 
@@ -906,6 +1021,71 @@ def test_ruff_two_extend_keys_second_one_unsafe_trips_the_guard(tmp_path):
     assert "extend" in reason
 
 
+# --- ruff: W3 (final-fix-7), transitive `extend` chain ----------------------
+# The guard only ever inspected the ONE config file `_plan` resolved; a SAFE
+# first hop (`ruff.toml`'s `extend = "base.toml"`, relative, inside the
+# tree) hid an UNSAFE second hop (`base.toml`'s own `extend =
+# "/etc/hostname"`) from it entirely -- real ruff follows exactly this
+# chain itself, and leaked /etc/hostname's content into a PR finding.
+# rr4/attacks/ruff-transitive is the confirmed reproduction.
+
+
+def test_ruff_transitive_extend_trips_the_guard(tmp_path):
+    """rr4/attacks/ruff-transitive: ruff.toml's own extend is safe on its
+    own; its target base.toml's extend is what escapes the tree."""
+    write(tmp_path, "base.toml", 'extend = "/etc/hostname"\n')
+    path = write(tmp_path, "ruff.toml", 'extend = "base.toml"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "base.toml" in reason
+    assert "extend" in reason
+
+
+def test_ruff_two_hop_extend_chain_entirely_inside_the_repo_is_safe(tmp_path):
+    write(tmp_path, "b.toml", "")
+    write(tmp_path, "a.toml", 'extend = "b.toml"\n')
+    path = write(tmp_path, "ruff.toml", 'extend = "a.toml"\n')
+    assert guards.ruff(tmp_path, [path]) is None
+
+
+def test_ruff_extend_chain_cycle_is_refused_and_does_not_hang(tmp_path):
+    write(tmp_path, "a.toml", 'extend = "b.toml"\n')
+    write(tmp_path, "b.toml", 'extend = "a.toml"\n')
+    path = write(tmp_path, "ruff.toml", 'extend = "a.toml"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "extend" in reason
+
+
+def test_ruff_extend_chain_eleven_hops_deep_is_refused(tmp_path):
+    """10 hops (top -> f1 -> ... -> f10) stay within the depth bound; the
+    11th (f10 -> f11) exceeds it and must refuse, not hang or silently
+    accept an unbounded chain."""
+    for i in range(1, 10):
+        write(tmp_path, f"f{i}.toml", f'extend = "f{i + 1}.toml"\n')
+    write(tmp_path, "f10.toml", 'extend = "f11.toml"\n')
+    path = write(tmp_path, "ruff.toml", 'extend = "f1.toml"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "extend" in reason
+
+
+# --- ruff: W4 (final-fix-7), embedded NUL in `extend` ------------------------
+# A TOML string escape for NUL decodes to a real U+0000 in the parsed VALUE
+# -- `_unsafe_path`'s `Path.resolve()` (added by wave 6 to catch the
+# symlink-escape case above) raises `ValueError` on that, which
+# `except (OSError, RuntimeError)` did not catch -- the exception escaped
+# the guard entirely, crashing the whole task. rr4/probe_nul.py is the
+# confirmed reproduction (both ruff and biome).
+
+
+def test_ruff_embedded_nul_in_extend_is_refused_not_raised(tmp_path):
+    path = write(tmp_path, "ruff.toml", 'extend = "a\\u0000b"\n')
+    reason = guards.ruff(tmp_path, [path])
+    assert reason is not None
+    assert "extend" in reason
+
+
 # --- biome (final-fix-5 G6) --------------------------------------------------
 
 
@@ -1017,4 +1197,59 @@ def test_biome_decoy_nested_extends_does_not_hide_the_real_extends(tmp_path):
     reason = guards.biome(tmp_path, [path])
     assert reason is not None
     assert "biome.json" in reason
+    assert "extends" in reason
+
+
+# --- biome: W3 (final-fix-7), transitive `extends` chain ---------------------
+# Applied even though biome's transitive case did not reproduce against the
+# real tool -- the guard shape (inspect only the ONE config file `_plan`
+# resolved) is identical to ruff's, above. rr4/attacks/biome-transitive is
+# the tree.
+
+
+def test_biome_transitive_extends_trips_the_guard(tmp_path):
+    write(tmp_path, "base.json", '{"extends": ["/etc/hostname"]}\n')
+    path = write(tmp_path, "biome.json", '{"extends": ["./base.json"]}\n')
+    reason = guards.biome(tmp_path, [path])
+    assert reason is not None
+    assert "base.json" in reason
+    assert "extends" in reason
+
+
+def test_biome_two_hop_extends_chain_entirely_inside_the_repo_is_safe(tmp_path):
+    write(tmp_path, "b.json", "{}\n")
+    write(tmp_path, "a.json", '{"extends": ["./b.json"]}\n')
+    path = write(tmp_path, "biome.json", '{"extends": ["./a.json"]}\n')
+    assert guards.biome(tmp_path, [path]) is None
+
+
+def test_biome_extends_chain_cycle_is_refused_and_does_not_hang(tmp_path):
+    write(tmp_path, "a.json", '{"extends": ["./b.json"]}\n')
+    write(tmp_path, "b.json", '{"extends": ["./a.json"]}\n')
+    path = write(tmp_path, "biome.json", '{"extends": ["./a.json"]}\n')
+    reason = guards.biome(tmp_path, [path])
+    assert reason is not None
+    assert "extends" in reason
+
+
+def test_biome_extends_chain_eleven_hops_deep_is_refused(tmp_path):
+    for i in range(1, 10):
+        write(tmp_path, f"f{i}.json", f'{{"extends": ["./f{i + 1}.json"]}}\n')
+    write(tmp_path, "f10.json", '{"extends": ["./f11.json"]}\n')
+    path = write(tmp_path, "biome.json", '{"extends": ["./f1.json"]}\n')
+    reason = guards.biome(tmp_path, [path])
+    assert reason is not None
+    assert "extends" in reason
+
+
+# --- biome: W4 (final-fix-7), embedded NUL in `extends` ----------------------
+# Same crash as ruff's above -- `_unsafe_path`'s `Path.resolve()` raises
+# `ValueError` on an embedded NUL, uncaught -- confirmed for biome too by
+# rr4/probe_nul.py.
+
+
+def test_biome_embedded_nul_in_extends_is_refused_not_raised(tmp_path):
+    path = write(tmp_path, "biome.json", '{"extends": ["a\\u0000b"]}\n')
+    reason = guards.biome(tmp_path, [path])
+    assert reason is not None
     assert "extends" in reason

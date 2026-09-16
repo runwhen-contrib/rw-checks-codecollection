@@ -468,6 +468,58 @@ def test_sqlfluff_sql_marker_present_but_directive_read_cleanly_is_safe(tmp_path
     assert guards.sqlfluff(tmp_path, [path]) is None
 
 
+# --- sqlfluff: X1 (final-fix-9), the byte backstop must be line-start-aware
+# -- `_sql_marker_present` used to substring-match the marker text ANYWHERE
+# in the bytes, while `_sql_inline_directive` -- correctly, matching
+# sqlfluff -- only recognises a directive at the START OF A LINE. So a
+# marker appearing anywhere but a line start (an ordinary trailing comment,
+# or inside a string literal) wrongly refused a file sqlfluff would ignore
+# entirely. The fix must not weaken the backstop itself: a marker at a genuine
+# line start that no candidate decode here could read is still unsafe.
+
+
+def test_sqlfluff_sql_marker_trailing_comment_is_safe(tmp_path):
+    """An ordinary trailing SQL comment that happens to contain the marker
+    text mid-line is not a directive under `_sql_inline_directive`'s own
+    line-start rule, and must not trip the byte-level backstop either."""
+    path = write(tmp_path, "db/new.sql", "SELECT 1 AS x -- sqlfluff is the tool we use\n")
+    assert guards.sqlfluff(tmp_path, [path]) is None
+
+
+def test_sqlfluff_sql_marker_inside_string_literal_is_safe(tmp_path):
+    """The marker text sitting inside a string literal's value, never at a
+    line start, is likewise not a directive and must not trip the
+    backstop."""
+    path = write(tmp_path, "db/new.sql", "SELECT 'http://x/--sqlfluff-guide' AS url;\n")
+    assert guards.sqlfluff(tmp_path, [path]) is None
+
+
+def test_sqlfluff_sql_marker_after_newline_undecodable_still_refused(tmp_path):
+    """A BOM-less UTF-16LE file whose directive sits on the SECOND line (a
+    genuine line start reached via an encoded newline, not just start-of-
+    file) and is unreadable by every candidate decode here (no BOM to match,
+    and chardet is unavailable in this venv) -- the backstop's line-start
+    rule must recognise a newline boundary, not only start-of-data, and
+    still refuse it."""
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes("select 1;\n-- sqlfluff:library_path:lib\nselect 2;\n".encode("utf-16-le"))
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+
+
+def test_sqlfluff_sql_marker_leading_whitespace_still_refused(tmp_path):
+    """A directive indented under leading whitespace is still a directive
+    under `_sql_inline_directive`'s own `line.lstrip()` rule; the backstop's
+    line-start match must allow the same optional whitespace, not require
+    the marker to be the line's literal first byte."""
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes("select 1;\n    -- sqlfluff:library_path:lib\nselect 2;\n".encode("utf-16-le"))
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+
+
 # --- sqlfluff: B3, unbounded `_walk` recursion ---------------------------
 
 
@@ -631,6 +683,25 @@ def test_tflint_plugin_block_names_a_binary_trips_the_guard(tmp_path):
 
 def test_tflint_terraform_plugin_alone_is_safe(tmp_path):
     path = write(tmp_path, ".tflint.hcl", 'plugin "terraform" {\n  enabled = true\n}\n')
+    assert guards.tflint(tmp_path, [path]) is None
+
+
+# --- tflint: X2 (final-fix-9), the plugin-block regex must tolerate no
+# whitespace between `plugin` and the quoted name -- real tflint accepts
+# `plugin"pwn"{` with no space, but `_TFLINT_PLUGIN_BLOCK`'s `plugin\s+"`
+# required at least one, so such a block was invisible to this guard.
+
+
+def test_tflint_plugin_block_with_no_whitespace_trips_the_guard(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", 'plugin"pwn"{enabled=true}\n')
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert ".tflint.hcl" in reason
+    assert 'plugin "pwn"' in reason
+
+
+def test_tflint_terraform_plugin_alone_with_no_whitespace_is_still_safe(tmp_path):
+    path = write(tmp_path, ".tflint.hcl", 'plugin"terraform"{enabled=true}\n')
     assert guards.tflint(tmp_path, [path]) is None
 
 

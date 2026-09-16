@@ -628,22 +628,49 @@ def _sql_inline_directive(text: str) -> tuple[bool, str | None]:
 #: attempts one.
 _SQL_DIRECTIVE_MARKERS = ("-- sqlfluff", "--sqlfluff")
 _SQL_MARKER_ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be")
+#: X1: the horizontal whitespace `_sql_inline_directive`'s own `line.lstrip()`
+#: strips before a directive marker -- the newline itself is matched
+#: separately, below, as the line boundary.
+_SQL_LINE_WS = " \t\r\x0b\x0c"
+
+
+def _sql_marker_pattern(marker: str, encoding: str) -> re.Pattern[bytes]:
+    """A compiled byte regex matching `marker` under `encoding`, only when
+    preceded by a line boundary -- start of data, or an encoded newline --
+    plus optional encoded horizontal whitespace. A byte-for-byte mirror of
+    `_sql_inline_directive`'s own `line.lstrip()` rule, under an encoding
+    that scan never even attempts to decode."""
+    marker_bytes = marker.encode(encoding)
+    newline_bytes = "\n".encode(encoding)
+    ws_alt = b"|".join(re.escape(c.encode(encoding)) for c in _SQL_LINE_WS)
+    return re.compile(
+        rb"(?:\A|" + re.escape(newline_bytes) + rb")(?:" + ws_alt + rb")*" + re.escape(marker_bytes)
+    )
+
+
+_SQL_MARKER_PATTERNS = tuple(
+    _sql_marker_pattern(marker, encoding)
+    for marker in _SQL_DIRECTIVE_MARKERS
+    for encoding in _SQL_MARKER_ENCODINGS
+)
 
 
 def _sql_marker_present(data: bytes) -> bool:
     """Whether the sqlfluff inline-directive marker (case-insensitive)
-    appears anywhere in `data`'s raw bytes, encoded under any of
-    `_SQL_MARKER_ENCODINGS`. `bytes.lower()` only ever folds the ASCII
-    range (0x41-0x5A), so it safely case-folds a marker's letters wherever
-    they sit inside a multi-byte encoding too -- the padding/null bytes
-    around them under UTF-16/UTF-32 are untouched -- without needing a
-    per-encoding case fold of its own."""
+    appears at the START OF A LINE anywhere in `data`'s raw bytes, encoded
+    under any of `_SQL_MARKER_ENCODINGS`. X1: a marker mid-line -- an
+    ordinary trailing comment, or the marker text sitting inside a string
+    literal -- is not a directive under `_sql_inline_directive`'s own
+    line-start rule either, and must not trip this backstop; only a marker
+    sqlfluff itself would treat as a directive, but that none of this
+    guard's own decodes above could read, means "unsafe". `bytes.lower()`
+    only ever folds the ASCII range (0x41-0x5A), so it safely case-folds a
+    marker's letters wherever they sit inside a multi-byte encoding too --
+    the padding/null bytes around them under UTF-16/UTF-32, and the
+    line-boundary bytes matched alongside it, are untouched -- without
+    needing a per-encoding case fold of its own."""
     lowered = data.lower()
-    return any(
-        marker.encode(encoding) in lowered
-        for marker in _SQL_DIRECTIVE_MARKERS
-        for encoding in _SQL_MARKER_ENCODINGS
-    )
+    return any(pattern.search(lowered) for pattern in _SQL_MARKER_PATTERNS)
 
 
 def _sql_marker_unreadable(tree: Path, path: Path) -> str:
@@ -744,7 +771,12 @@ _TFLINT_PLUGIN_ATTR_WHY = (
     "as a binary from the repository's plugin dir"
 )
 _TFLINT_PLUGIN_DIR_WHY = "which tflint loads plugin binaries from"
-_TFLINT_PLUGIN_BLOCK = re.compile(r'plugin\s+"([^"]*)"\s*\{')
+#: X2: `\s*`, not `\s+` -- real tflint accepts `plugin"pwn"{` with no space
+#: between the keyword and the quoted name at all. `_TFLINT_PLUGIN_DIR_KEY`
+#: and `_TFLINT_PLUGIN_ATTR_KEY` below already use `\s*` around their `=`,
+#: so this block regex was the only one of the three requiring whitespace
+#: that real tflint does not.
+_TFLINT_PLUGIN_BLOCK = re.compile(r'plugin\s*"([^"]*)"\s*\{')
 _TFLINT_PLUGIN_DIR_KEY = re.compile(r"\bplugin_dir\b\s*=")
 _TFLINT_PLUGIN_ATTR_KEY = re.compile(r"\b(?:source|version)\b\s*=")
 #: V1: a THIRD attempt at matching a heredoc's own terminator -- CONFIRMED

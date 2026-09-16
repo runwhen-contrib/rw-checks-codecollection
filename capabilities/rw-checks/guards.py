@@ -88,6 +88,41 @@ JSON escape sequence), which the guard's `except (OSError, RuntimeError)`
 did not catch, so the exception escaped `run_check` and crashed the whole
 task, confirmed for both ruff and biome.
 
+A third adversarial re-review, against the fixes above, found that BOTH of
+that round's own fixes produced ANOTHER same-class bypass, both fresh
+RCEs: tflint's heredoc introducer regex captured only the identifier
+portion of a hyphenated or non-ASCII marker (`<<EO-T` matched marker `EO`,
+not the real `EO-T`; `<<café` the same way) -- tflint itself closes the
+heredoc at the marker it actually wrote, but the guard kept hunting for
+its own truncated one and swallowed a real `plugin "pwn"` block, plus its
+enabling `config { plugin_dir = "./p" }`, as opaque heredoc body; and
+sqlfluff's `.sql` decoder still decoded every candidate STRICTLY (a single
+malformed unit -- a stray trailing byte making a UTF-16 file odd-length, a
+lone surrogate, an invalid multibyte sequence -- raised `UnicodeDecodeError`
+and discarded that candidate's ENTIRE text), while sqlfluff itself opens a
+linted file with `errors="backslashreplace"` and recovers everything
+around the bad unit, honouring an intact directive elsewhere in the same
+file. Three rounds running into the same failure mode -- a hand-rolled
+parser has to agree with the real tool's parser exactly, and it keeps
+diverging at a new edge -- is why both are fixed structurally instead this
+time, accepting the false-negative/false-positive cost instead of trying
+to match the parser again: `tflint` now refuses ANY `.tflint.hcl`
+containing a heredoc outright, without attempting to parse it at all (the
+heredoc-tracking code this made dead was deleted, not kept around unused);
+and every sqlfluff `.sql` candidate decode now uses `errors=
+"backslashreplace"`, matching sqlfluff's own reader exactly, backed by a
+byte-level scan for the directive marker under five encodings that does
+not depend on any candidate decode succeeding, recognising the directive,
+or even running at all. Separately (latent, not itself exploitable in the
+built image, where `/work/tree` has no symlink component): `_reason` and
+`_too_deep` compare a `_walk_extend_chain` hop -- always `Path.resolve()`d
+-- against an unresolved `tree`, which can raise `ValueError` when the
+repo root itself sits behind a symlink hop the OS quietly follows (macOS's
+`/var` -> `/private/var`, or a repo-committed symlinked tree root); `ruff`
+and `biome` now resolve both `tree` and the starting config path once,
+together, before entering the chain, so every hop compares against the
+same resolved root from the start.
+
 One guard function per affected tool, called by `_plan.plan` per config group
 BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
 or None when it is safe to run the tool. The reason always begins
@@ -275,6 +310,38 @@ def _unsafe_path(tree: Path, config_dir: Path, value: str) -> bool:
 
 
 _CHAIN_MAX_DEPTH = 10
+
+
+def _try_resolve(path: Path) -> Path:
+    """`path.resolve()`, defensively -- guards must never raise, and
+    `Path.resolve()` can (a genuine symlink loop), the same "we couldn't
+    tell" shape `_resolve_in_tree` above already guards against. Falls back
+    to `path` unresolved rather than crash."""
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
+def _chain_start(tree: Path, path: Path) -> tuple[Path, Path]:
+    """V3 (latent): every hop `_walk_extend_chain` follows is a
+    `Path.resolve()`d value (`_resolve_in_tree`'s return), but `_reason` /
+    `_unparseable` / `_too_deep` compare it against `tree` AS GIVEN --
+    unresolved. When the repo root itself sits behind a symlink hop the OS
+    quietly follows (macOS's `/var` -> `/private/var`; a repo-committed
+    symlinked tree root), that comparison raises `ValueError` out of the
+    guard entirely. It does not reproduce in the image, where `/work/tree`
+    has no symlink component, but nothing here should depend on that.
+    Resolving `tree` ALONE would only move the mismatch: every OTHER guard
+    (and the very first, non-hop config file here) builds `path` directly
+    from the UNRESOLVED `tree` argument and never resolves it independently,
+    so comparing that against a freshly resolved `tree` breaks exactly as
+    often as the bug it would fix. Resolving both together, ONCE, right
+    before the chain starts -- and passing that same pair all the way down,
+    since every hop after it is already resolved the same way -- means
+    `tree` and `path` can never drift apart again for the rest of the
+    walk."""
+    return _try_resolve(tree), _try_resolve(path)
 
 
 def _walk_extend_chain(
@@ -486,41 +553,54 @@ _SQL_BOMS = (
 
 def _sql_texts(data: bytes) -> list[str]:
     """Every decoding this guard scans a linted `.sql` file's bytes under --
-    not the single naive UTF-8 read it used to be. `errors="replace"` only
-    for the UTF-8 attempt: a genuinely UTF-16/UTF-32 file decoded as UTF-8
-    is mostly replacement characters and simply will not spell out a
-    directive; the BOM-matched decodes are either right or raise, so a
-    failing attempt is just skipped rather than guessed at. W2: also scans
-    under `chardet.detect()`'s own guess, when chardet is importable --
-    this tracks sqlfluff's actual autodetection rather than a fixed list of
-    encodings, the same way a new encoding sqlfluff's chardet learns to
-    detect would be covered here too. Do NOT treat a decode error, or any
-    U+FFFD in a successful one, as itself unsafe: a legitimate latin-1
-    `.sql` file decodes "successfully" under the wrong encoding too, and
-    must not be refused just because some OTHER candidate encoding failed
-    or produced noise -- only an actual directive match does that."""
+    not the single naive UTF-8 read it used to be. V2 (CONFIRMED,
+    sqlfluff-u16-odd): NEVER decode strictly -- the BOM-matched and
+    chardet-guessed candidates below now both use `errors="backslashreplace"`,
+    matching how sqlfluff's own loader opens a linted file exactly. A single
+    malformed unit ANYWHERE (a stray trailing byte making a UTF-16 file
+    odd-length, a lone surrogate, an invalid multibyte sequence) used to
+    raise `UnicodeDecodeError` under a strict decode and discard that
+    candidate's text WHOLESALE, while sqlfluff recovers everything around
+    the bad unit and honours an intact directive elsewhere in the same
+    file -- confirmed with an odd-length, BOM-less UTF-16LE `.sql` file
+    whose `-- sqlfluff:library_path:` directive was invisible here and
+    honoured by sqlfluff. `errors="replace"` (not `"backslashreplace"`) is
+    still used for the plain UTF-8 attempt only -- a genuinely UTF-16/
+    UTF-32 file decoded as UTF-8 is mostly noise either way and will not
+    spell out a directive, so nothing here depends on which noise it
+    produces. `_sql_marker_present` below is an independent backstop for
+    when NONE of these candidates recognise a directive at all -- no
+    BOM, chardet unavailable, or chardet's guess wrong -- so a decode
+    failing to run, or to guess right, is no longer itself enough to miss
+    one."""
     texts = [data.decode("utf-8", errors="replace")]
     for bom, encoding in _SQL_BOMS:
         if not data.startswith(bom):
             continue
-        try:
-            texts.append(data[len(bom) :].decode(encoding))
-        except UnicodeDecodeError:
-            pass
+        texts.append(data[len(bom) :].decode(encoding, errors="backslashreplace"))
         break  # a file has exactly one BOM; the longest match wins
     if chardet is not None:
         guessed = chardet.detect(data).get("encoding")
         if guessed:
             try:
-                texts.append(data.decode(guessed))
-            except (UnicodeDecodeError, LookupError):
-                pass
+                texts.append(data.decode(guessed, errors="backslashreplace"))
+            except LookupError:
+                pass  # chardet's guessed name is not a codec Python knows.
     return texts
 
 
-def _sql_inline_directive(text: str) -> str | None:
-    """The first `_SQLFLUFF_KEYS` key an inline `-- sqlfluff:`/`--sqlfluff:`
-    directive anywhere in `text` sets, or None."""
+def _sql_inline_directive(text: str) -> tuple[bool, str | None]:
+    """Scans `text`'s lines for a `-- sqlfluff:`/`--sqlfluff:` inline
+    directive. Returns `(True, key)` for the first `_SQLFLUFF_KEYS` key such
+    a directive sets, `(True, None)` when a directive line is present but
+    sets none of them (e.g. `-- sqlfluff:dialect:postgres`), and `(False,
+    None)` when `text` has no such line at all. V2: the `bool` lets
+    `sqlfluff()`'s byte-level marker backstop below tell "this decode DID
+    read a directive here, it just was not a dangerous key" apart from
+    "this decode never recognised one at all" -- only the latter, alongside
+    a raw marker match under some OTHER encoding entirely, means this
+    guard's own reading of the file cannot be trusted."""
+    found = False
     for line in text.splitlines():
         stripped = line.lstrip()
         if stripped.startswith("-- sqlfluff"):
@@ -529,12 +609,49 @@ def _sql_inline_directive(text: str) -> str | None:
             marker = "--sqlfluff"
         else:
             continue
+        found = True
         key_path = stripped[len(marker) :].split(":")[:-1]
         for segment in key_path:
             key = segment.strip().lower()
             if key in _SQLFLUFF_KEYS:
-                return key
-    return None
+                return True, key
+    return found, None
+
+
+#: V2: the inline directive's own marker text, searched for directly in the
+#: linted file's RAW BYTES -- independent of any candidate decode above
+#: succeeding, recognising a directive, or even running at all (chardet may
+#: be unavailable, or simply guess an encoding neither the BOM list nor its
+#: own detection covers). Each of the five encodings sqlfluff's own loader
+#: might be reading the file as is tried; a file with no BOM is exactly the
+#: shape this backstop exists for, since `_SQL_BOMS` above never even
+#: attempts one.
+_SQL_DIRECTIVE_MARKERS = ("-- sqlfluff", "--sqlfluff")
+_SQL_MARKER_ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be")
+
+
+def _sql_marker_present(data: bytes) -> bool:
+    """Whether the sqlfluff inline-directive marker (case-insensitive)
+    appears anywhere in `data`'s raw bytes, encoded under any of
+    `_SQL_MARKER_ENCODINGS`. `bytes.lower()` only ever folds the ASCII
+    range (0x41-0x5A), so it safely case-folds a marker's letters wherever
+    they sit inside a multi-byte encoding too -- the padding/null bytes
+    around them under UTF-16/UTF-32 are untouched -- without needing a
+    per-encoding case fold of its own."""
+    lowered = data.lower()
+    return any(
+        marker.encode(encoding) in lowered
+        for marker in _SQL_DIRECTIVE_MARKERS
+        for encoding in _SQL_MARKER_ENCODINGS
+    )
+
+
+def _sql_marker_unreadable(tree: Path, path: Path) -> str:
+    rel = path.relative_to(tree).as_posix()
+    return (
+        f"{rel}: may contain an inline sqlfluff directive this guard could not "
+        "decode; treating as unsafe"
+    )
 
 
 def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
@@ -573,10 +690,17 @@ def sqlfluff(tree: Path, paths: Sequence[Path]) -> str | None:
             data = path.read_bytes()
         except (OSError, RecursionError) as e:
             return _unparseable(tree, path, e)
+        directive_seen = False
         for text in _sql_texts(data):
-            key = _sql_inline_directive(text)
+            found, key = _sql_inline_directive(text)
             if key:
                 return _reason(tree, path, f"{key} inline", _sqlfluff_why(key))
+            directive_seen = directive_seen or found
+        # V2: none of the candidate decodes above recognised a directive at
+        # all -- if the marker's bytes are in the file anyway, under any
+        # encoding, we know a directive is present and could not read it.
+        if not directive_seen and _sql_marker_present(data):
+            return _sql_marker_unreadable(tree, path)
 
     return None
 
@@ -623,54 +747,36 @@ _TFLINT_PLUGIN_DIR_WHY = "which tflint loads plugin binaries from"
 _TFLINT_PLUGIN_BLOCK = re.compile(r'plugin\s+"([^"]*)"\s*\{')
 _TFLINT_PLUGIN_DIR_KEY = re.compile(r"\bplugin_dir\b\s*=")
 _TFLINT_PLUGIN_ATTR_KEY = re.compile(r"\b(?:source|version)\b\s*=")
-#: HCL heredoc introducer: `<<EOT` or the indented `<<-EOT` form. CONFIRMED
-#: #1: `_strip_hcl_comments` tracked quoted strings but not heredocs, so a
-#: `/*` inside a heredoc's literal body -- not a comment to tflint at all --
-#: was treated as an unterminated block comment and stripped everything
-#: from there to EOF, deleting a real `plugin "pwn"` block that followed.
-_HCL_HEREDOC_INTRO = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_]*)")
-
-
-def _hcl_heredoc_end(text: str, body_start: int, marker: str) -> int | None:
-    """The index just past the heredoc TERMINATOR line (including its
-    trailing newline, or end of text if the terminator is the file's last
-    line), or None if `marker` never appears alone on its own line before
-    EOF. W1: real HCL/tflint accepts leading AND trailing whitespace (tabs
-    included) around the terminator for BOTH the plain `<<` form and the
-    indented `<<-` form -- this used to require the plain form's terminator
-    flush-left and unpadded (`line.rstrip("\r") == marker`), so an indented
-    terminator closed the heredoc for tflint but not for this scanner,
-    which kept consuming a real `plugin "pwn"` block that followed as
-    opaque heredoc body. Matching on the STRIPPED line (equality, not a
-    substring check) still means a body line that merely contains `marker`
-    somewhere in it does not close the heredoc early."""
-    i, n = body_start, len(text)
-    while i <= n:
-        nl = text.find("\n", i)
-        line = text[i:n] if nl == -1 else text[i:nl]
-        if line.strip() == marker:
-            return n if nl == -1 else nl + 1
-        if nl == -1:
-            return None
-        i = nl + 1
-    return None
+#: V1: a THIRD attempt at matching a heredoc's own terminator -- CONFIRMED
+#: #1 (a `/*` inside the body wrongly read as an unterminated block
+#: comment) and W1 (an indented terminator wrongly left unclosed) were each
+#: a real bug in a real HCL feature this scanner had to re-implement, fixed
+#: in turn, and each fix still diverged from real HCL/tflint at a new edge:
+#: a hyphenated or non-ASCII marker (`<<EO-T`, `<<café`) matched only the
+#: identifier PORTION of the old introducer regex (`EO`, not the real
+#: `EO-T`), so tflint closed the heredoc where the guard did not, and a
+#: real `plugin "pwn"` block past it was swallowed as opaque body. No
+#: amount of matching the real parser more closely has held for three
+#: rounds running -- so a `.tflint.hcl` containing ANY heredoc introducer
+#: is refused outright, below, before any of this module's own HCL
+#: scanning ever runs on it. The false negative this accepts (a heredoc
+#: that sets nothing unsafe is refused all the same) is the deliberate
+#: point: a refusal is cheap, a fourth divergence is not.
+_HCL_HEREDOC_WHY = "which this guard cannot analyse safely"
 
 
 def _strip_hcl_comments(text: str) -> str | None:
-    """`#`/`//` to end of line and `/* ... */` blocks, never stripped inside
-    a quoted string or a heredoc body (`<<EOT ... EOT` / `<<-EOT ... EOT`):
-    a `/*`, `#` or `//` that only LOOKS like a comment marker because it
-    happens to sit inside a heredoc's literal text is not one, and treating
-    it as one is exactly how CONFIRMED #1 hid a real `plugin "pwn"` block
-    from this scanner. A heredoc's introducer/body/terminator lines are
-    instead blanked out to spaces (newlines kept) -- opaque data, not
-    re-scanned for `plugin`/`plugin_dir` and not miscounted by
-    `_hcl_block`'s own brace tracking, which runs on this already-stripped
-    text and therefore needs no separate heredoc awareness of its own.
-    An unterminated string, block comment, or heredoc cannot be told apart
-    from one hiding the rest of the file -- the same shape as CONFIRMED #1
-    -- so it is UNSAFE, signalled by returning None rather than guessing
-    where it would have ended."""
+    """`#`/`//` to end of line and `/* ... */` blocks, never stripped
+    inside a quoted string: a `/*`, `#` or `//` that only LOOKS like a
+    comment marker because it happens to sit inside a string value is not
+    one. `tflint` above refuses any `.tflint.hcl` containing a heredoc
+    outright before this ever runs, so this no longer needs (or has) any
+    heredoc awareness of its own -- the heredoc-tracking this scanner used
+    to do is exactly the dead code three rounds of diverging from tflint's
+    own parser argue against keeping around. An unterminated string or
+    block comment cannot be told apart from one hiding the rest of the
+    file, so it is UNSAFE, signalled by returning None rather than
+    guessing where it would have ended."""
     out: list[str] = []
     in_string = False
     i, n = 0, len(text)
@@ -701,22 +807,6 @@ def _strip_hcl_comments(text: str) -> str | None:
                 return None
             i = j + 2
             continue
-        if text[i : i + 2] == "<<":
-            m = _HCL_HEREDOC_INTRO.match(text, i)
-            if m:
-                line_end = text.find("\n", m.end())
-                if line_end == -1:
-                    return None
-                marker = m.group(2)
-                body_start = line_end + 1
-                term_end = _hcl_heredoc_end(text, body_start, marker)
-                if term_end is None:
-                    return None
-                out.append(text[i : line_end + 1])
-                heredoc = text[body_start:term_end]
-                out.append("".join(c if c == "\n" else " " for c in heredoc))
-                i = term_end
-                continue
         out.append(ch)
         i += 1
     return "".join(out)
@@ -760,9 +850,13 @@ def tflint(tree: Path, paths: Sequence[Path]) -> str | None:
             text = path.read_text()
         except (OSError, UnicodeDecodeError) as e:
             return _unparseable(tree, path, e)
+        # V1: before any other analysis -- a heredoc is refused outright,
+        # not parsed, see `_HCL_HEREDOC_WHY` above.
+        if "<<" in text:
+            return _reason(tree, path, "a heredoc", _HCL_HEREDOC_WHY)
         stripped = _strip_hcl_comments(text)
         if stripped is None:
-            return _unparseable(tree, path, ValueError("unterminated string, comment, or heredoc"))
+            return _unparseable(tree, path, ValueError("unterminated string or comment"))
         for m in _TFLINT_PLUGIN_BLOCK.finditer(stripped):
             name = m.group(1)
             block = _hcl_block(stripped, m.end() - 1)
@@ -893,15 +987,16 @@ def ruff(tree: Path, paths: Sequence[Path]) -> str | None:
             doc = tomllib.loads(path.read_text())
         except _RUFF_LOAD_ERRORS as e:
             return _unparseable(tree, path, e)
+        root, start = _chain_start(tree, path)
         reason = _walk_extend_chain(
-            tree,
-            path,
+            root,
+            start,
             doc,
             _RUFF_KEYS,
             _RUFF_WHY,
             _load_ruff_hop,
             _RUFF_LOAD_ERRORS,
-            {path.resolve()},
+            {start},
             0,
         )
         if reason:
@@ -914,15 +1009,16 @@ def ruff(tree: Path, paths: Sequence[Path]) -> str | None:
             return _unparseable(tree, path, e)
         section = _toml_table(doc, "tool", "ruff")
         if section is not None:
+            root, start = _chain_start(tree, path)
             reason = _walk_extend_chain(
-                tree,
-                path,
+                root,
+                start,
                 section,
                 _RUFF_KEYS,
                 _RUFF_WHY,
                 _load_ruff_hop,
                 _RUFF_LOAD_ERRORS,
-                {path.resolve()},
+                {start},
                 0,
             )
             if reason:
@@ -998,15 +1094,16 @@ def biome(tree: Path, paths: Sequence[Path]) -> str | None:
             return _unparseable(tree, path, e)
         # CONFIRMED #5-shaped: every `extends` occurrence is checked, not
         # just the first -- see the same fix on ruff above.
+        root, start = _chain_start(tree, path)
         reason = _walk_extend_chain(
-            tree,
-            path,
+            root,
+            start,
             doc,
             {"extends"},
             _BIOME_WHY,
             _load_biome_hop,
             _BIOME_LOAD_ERRORS,
-            {path.resolve()},
+            {start},
             0,
         )
         if reason:

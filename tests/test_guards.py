@@ -394,6 +394,80 @@ def test_sqlfluff_sql_inline_utf32_be_bom_trips_the_guard(tmp_path):
     assert "library_path" in reason
 
 
+# --- sqlfluff: V2 (final-fix-8), never decode strictly + a byte-level
+# backstop -- every candidate decode above still decoded STRICTLY, so a
+# single malformed unit ANYWHERE (a stray trailing byte, a lone surrogate,
+# an invalid multibyte sequence) raised `UnicodeDecodeError` and discarded
+# that candidate's ENTIRE text, while sqlfluff's own reader
+# (`errors="backslashreplace"`) recovers everything around it and honours
+# an intact directive elsewhere in the same file. rr4/attacks/
+# sqlfluff-u16-odd is the confirmed reproduction: a BOM-less UTF-16LE file
+# made odd-length by one stray trailing byte, so neither `_SQL_BOMS` (no
+# BOM to match) nor a strict decode (raises) ever saw its directive.
+
+
+def test_sqlfluff_sql_u16_odd_length_no_bom_trips_the_guard(tmp_path):
+    """The exact rr4/attacks/sqlfluff-u16-odd/db/new.sql shape: BOM-less
+    UTF-16LE, one stray trailing byte making the file odd-length. No BOM
+    means `_SQL_BOMS` never even attempts a decode, and chardet may be
+    unavailable entirely (it is, in this venv) -- so this exercises the
+    byte-level marker backstop specifically, not the backslashreplace
+    decode fix."""
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(
+        "-- sqlfluff:library_path:lib\nSELECT {{1}} FROM t;\n".encode("utf-16-le") + b"A"
+    )
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+
+
+def test_sqlfluff_sql_bom_less_utf16_trips_the_guard(tmp_path):
+    """A BOM-less UTF-16LE file at ordinary (even) length -- distinct from
+    the odd-length repro above, proving the backstop does not depend on the
+    oddness at all, only on the absence of a BOM (and of a chardet guess)."""
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes("-- sqlfluff:library_path:lib\nselect 1;\n".encode("utf-16-le"))
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+
+
+def test_sqlfluff_sql_inline_lone_surrogate_trips_the_guard(tmp_path):
+    """A BOM-tagged UTF-16LE file with an unpaired (lone) surrogate code
+    unit BEFORE the directive -- `bytes.decode("utf-16-le")` (strict)
+    raises `UnicodeDecodeError` on it, discarding the directive that
+    follows in the SAME candidate decode; `errors="backslashreplace"`
+    recovers around it instead. Exercises the decode fix directly, not the
+    byte-level backstop -- the BOM makes `_SQL_BOMS` attempt this decode at
+    all."""
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = (
+        "junk\n".encode("utf-16-le")
+        + b"\x00\xd8"  # an unpaired UTF-16 high surrogate (U+D800), on its own line
+        + "\n".encode("utf-16-le")
+        + "-- sqlfluff:library_path:lib\nselect 1;\n".encode("utf-16-le")
+    )
+    path.write_bytes(b"\xff\xfe" + body)
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+    assert "library_path" in reason
+
+
+def test_sqlfluff_sql_marker_present_but_directive_read_cleanly_is_safe(tmp_path):
+    """The backstop must not double-refuse a directive this guard already
+    read successfully: the marker's raw UTF-8 bytes are trivially present
+    in an ordinary, plain-UTF-8 `-- sqlfluff:dialect:postgres` file too --
+    but the plain UTF-8 decode already recognised it as a (benign) inline
+    directive, so `directive_seen` must suppress the backstop."""
+    path = write(tmp_path, "db/new.sql", "-- sqlfluff:dialect:postgres\nselect 1\n")
+    assert guards.sqlfluff(tmp_path, [path]) is None
+
+
 # --- sqlfluff: B3, unbounded `_walk` recursion ---------------------------
 
 
@@ -634,17 +708,62 @@ def test_tflint_unreadable_config_is_unsafe(tmp_path):
     assert "could not be parsed" in reason
 
 
-# --- tflint: CONFIRMED #1, HCL heredocs -----------------------------------
-# `_strip_hcl_comments` tracked quoted strings but not heredocs (`<<EOT ...
-# EOT` / `<<-EOT ... EOT`); a `/*` inside a heredoc's literal body is not a
-# comment to tflint, but the old scanner treated it as an unterminated block
-# comment and stripped everything from there to EOF -- deleting a real
-# `plugin "pwn"` block that followed. rr3/repro/tflint-heredoc/ is the
-# confirmed reproduction.
+# --- tflint: V1 (final-fix-8), heredocs are refused outright ---------------
+# CONFIRMED #1 (a `/*` inside a heredoc body wrongly read as an unterminated
+# block comment) and W1 (an indented terminator wrongly left unclosed) were
+# each a real divergence from real HCL/tflint's own heredoc handling, fixed
+# in turn -- and each fix still diverged at a NEW edge: `<<EO-T`'s hyphenated
+# marker matched only the identifier portion (`EO`) of the old introducer
+# regex, so tflint closed the heredoc at the marker it actually wrote
+# (`EO-T`) while this scanner kept hunting for `EO` and swallowed a real
+# `plugin "pwn"` block, plus its enabling `plugin_dir`, as opaque heredoc
+# body. rr4/attacks/tflint-hyphen is the confirmed reproduction. Rather than
+# a fourth attempt at matching tflint's own parser, `tflint` now refuses ANY
+# `.tflint.hcl` containing a heredoc outright, before any of this module's
+# own HCL scanning ever runs on it -- every test below that used to prove a
+# heredoc was seen through safely now proves the opposite: the same input is
+# refused, full stop, including the previously-safe ones (the false negative
+# this accepts, recorded deliberately).
 
 
-def test_tflint_heredoc_body_hides_plugin_pwn_trips_the_guard(tmp_path):
-    """The exact rr3/repro/tflint-heredoc/infra/.tflint.hcl shape."""
+def test_tflint_hyphenated_heredoc_terminator_trips_the_guard(tmp_path):
+    """The exact rr4/attacks/tflint-hyphen/infra/.tflint.hcl shape: the old
+    introducer regex captured only `EO` from `<<EO-T`'s marker, not the
+    real `EO-T` -- so it kept hunting for a bare `EO` line, which the file's
+    OWN second heredoc (`format = <<EO ... EO`) happens to supply, and
+    everything between (the real `plugin "pwn"` block and `plugin_dir`)
+    was swallowed as opaque body. A trimmed-down version without that
+    second heredoc does NOT reproduce the bypass -- the old scanner's hunt
+    for `EO` just runs off the end of the file unterminated instead -- so
+    this test keeps the second heredoc rather than simplify it away."""
+    path = write(
+        tmp_path,
+        "infra/.tflint.hcl",
+        'plugin "terraform" {\n'
+        "  enabled = true\n"
+        "  x = <<EO-T\n"
+        "body\n"
+        "EO-T\n"
+        "}\n"
+        'plugin "pwn" {\n'
+        "  enabled = true\n"
+        "}\n"
+        "config {\n"
+        '  plugin_dir = "./p"\n'
+        "  format = <<EO\n"
+        "EO\n"
+        "}\n",
+    )
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert "infra/.tflint.hcl" in reason
+    assert "heredoc" in reason
+
+
+def test_tflint_heredoc_body_hides_plugin_pwn_still_trips_the_guard(tmp_path):
+    """The exact rr3/repro/tflint-heredoc/infra/.tflint.hcl shape -- still
+    refused, now by the blunt V1 rule rather than by seeing through to the
+    `plugin "pwn"` block the heredoc used to hide."""
     path = write(
         tmp_path,
         ".tflint.hcl",
@@ -664,15 +783,12 @@ def test_tflint_heredoc_body_hides_plugin_pwn_trips_the_guard(tmp_path):
     reason = guards.tflint(tmp_path, [path])
     assert reason is not None
     assert ".tflint.hcl" in reason
-    assert 'plugin "pwn"' in reason
+    assert "heredoc" in reason
 
 
-def test_tflint_indented_heredoc_body_hides_plugin_trips_the_guard(tmp_path):
-    """The `<<-EOT` indented form, with the real unsafe block after the
-    terminator, and the body's `/*` never actually closed anywhere -- an
-    unterminated real block comment would (correctly) also refuse, so the
-    body must contain a would-be-unterminated marker to prove it is opaque,
-    not merely skipped because it happens to balance."""
+def test_tflint_indented_heredoc_body_still_trips_the_guard(tmp_path):
+    """The `<<-EOT` indented form -- still refused, now by the blunt V1
+    rule."""
     path = write(
         tmp_path,
         ".tflint.hcl",
@@ -687,13 +803,15 @@ def test_tflint_indented_heredoc_body_hides_plugin_trips_the_guard(tmp_path):
     )
     reason = guards.tflint(tmp_path, [path])
     assert reason is not None
-    assert 'plugin "pwn"' in reason
+    assert "heredoc" in reason
 
 
-def test_tflint_heredoc_data_containing_plugin_name_is_safe(tmp_path):
-    """A heredoc body containing the literal text `plugin "aws"` is opaque
-    DATA to tflint, not a real block -- it must not itself trip the guard
-    when nothing outside the heredoc is unsafe."""
+def test_tflint_heredoc_with_nothing_unsafe_is_now_refused(tmp_path):
+    """V1's deliberate false negative, recorded: a legitimate, flush-left
+    `<<EOT` heredoc with nothing unsafe anywhere in the file -- the body's
+    literal text `plugin "aws"` used to be correctly treated as opaque
+    data, and this config was safe. It is now refused outright, because
+    this guard no longer looks inside a heredoc at all."""
     path = write(
         tmp_path,
         ".tflint.hcl",
@@ -706,10 +824,15 @@ def test_tflint_heredoc_data_containing_plugin_name_is_safe(tmp_path):
         "EOT\n"
         "}\n",
     )
-    assert guards.tflint(tmp_path, [path]) is None
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert "heredoc" in reason
 
 
-def test_tflint_unterminated_heredoc_is_unsafe(tmp_path):
+def test_tflint_unterminated_heredoc_is_still_refused(tmp_path):
+    """No longer "could not be parsed" from a failed terminator search --
+    V1's blunt rule refuses on the `<<` alone, before ever trying (and
+    failing) to find one."""
     path = write(
         tmp_path,
         ".tflint.hcl",
@@ -718,18 +841,13 @@ def test_tflint_unterminated_heredoc_is_unsafe(tmp_path):
     reason = guards.tflint(tmp_path, [path])
     assert reason is not None
     assert ".tflint.hcl" in reason
-    assert "could not be parsed" in reason
+    assert "heredoc" in reason
 
 
-# --- tflint: W1 (final-fix-7), heredoc terminator leading/trailing
-# whitespace -- `_hcl_heredoc_end` closed a heredoc only on a flush-left,
-# unpadded terminator line, while real HCL/tflint accepts leading and
-# trailing whitespace (and tabs) around it. An indented terminator closes
-# the heredoc for real tflint, exposing the `plugin "pwn"` block that
-# follows -- but the old scanner required the terminator flush-left and
-# kept consuming past it as opaque heredoc body, hiding the block from the
-# guard entirely. rr4/attacks/tflint-heredoc-rce, tflint-trailspace,
-# tflint-leadtab are the confirmed reproductions.
+# --- tflint: wave-7's terminator-whitespace variants -- still refused, now
+# by V1's blunt rule rather than by seeing through to the `plugin "pwn"`
+# block a correct terminator match used to expose. rr4/attacks/
+# tflint-heredoc-rce, tflint-trailspace, tflint-leadtab.
 
 
 def _tflint_heredoc_terminator_config(terminator: str) -> str:
@@ -751,37 +869,38 @@ def _tflint_heredoc_terminator_config(terminator: str) -> str:
     )
 
 
-def test_tflint_heredoc_indented_terminator_trips_the_guard(tmp_path):
+def test_tflint_heredoc_indented_terminator_still_trips_the_guard(tmp_path):
     """rr4/attacks/tflint-heredoc-rce: a 2-space-indented `  EOT` terminator."""
     path = write(tmp_path, "infra/.tflint.hcl", _tflint_heredoc_terminator_config("  EOT"))
     reason = guards.tflint(tmp_path, [path])
     assert reason is not None
     assert "infra/.tflint.hcl" in reason
-    assert 'plugin "pwn"' in reason
+    assert "heredoc" in reason
 
 
-def test_tflint_heredoc_trailing_space_terminator_trips_the_guard(tmp_path):
+def test_tflint_heredoc_trailing_space_terminator_still_trips_the_guard(tmp_path):
     """rr4/attacks/tflint-trailspace: `EOT ` (trailing space)."""
     path = write(tmp_path, "infra/.tflint.hcl", _tflint_heredoc_terminator_config("EOT "))
     reason = guards.tflint(tmp_path, [path])
     assert reason is not None
-    assert 'plugin "pwn"' in reason
+    assert "heredoc" in reason
 
 
-def test_tflint_heredoc_leading_tab_terminator_trips_the_guard(tmp_path):
+def test_tflint_heredoc_leading_tab_terminator_still_trips_the_guard(tmp_path):
     """rr4/attacks/tflint-leadtab: a leading-tab `\tEOT` terminator."""
     path = write(tmp_path, "infra/.tflint.hcl", _tflint_heredoc_terminator_config("\tEOT"))
     reason = guards.tflint(tmp_path, [path])
     assert reason is not None
-    assert 'plugin "pwn"' in reason
+    assert "heredoc" in reason
 
 
-def test_tflint_heredoc_substring_line_does_not_close_it(tmp_path):
-    """A body line that merely CONTAINS the marker (not equal to it once
-    stripped) must not close the heredoc -- a substring-matching "fix"
-    would instead close it here and wrongly expose the plugin "pwn" text
-    (still inside the heredoc's literal body, opaque to real tflint) as a
-    live block, refusing when the real tool would not."""
+def test_tflint_heredoc_substring_line_config_is_now_refused(tmp_path):
+    """V1's deliberate false negative again: a body line that merely
+    CONTAINS the marker (not equal to it once stripped) did not close this
+    heredoc for real tflint either, and nothing outside it was unsafe --
+    this config used to be safe and is now refused, because the guard no
+    longer distinguishes a substring occurrence from a real terminator at
+    all; it never looks past the `<<`."""
     path = write(
         tmp_path,
         ".tflint.hcl",
@@ -794,7 +913,9 @@ def test_tflint_heredoc_substring_line_does_not_close_it(tmp_path):
         "EOT\n"
         "}\n",
     )
-    assert guards.tflint(tmp_path, [path]) is None
+    reason = guards.tflint(tmp_path, [path])
+    assert reason is not None
+    assert "heredoc" in reason
 
 
 # --- buf (final-fix-4 G2) --------------------------------------------------
@@ -1253,3 +1374,70 @@ def test_biome_embedded_nul_in_extends_is_refused_not_raised(tmp_path):
     reason = guards.biome(tmp_path, [path])
     assert reason is not None
     assert "extends" in reason
+
+
+# --- ruff/biome: V3 (final-fix-8, latent), a symlinked tree root ------------
+# `_walk_extend_chain`'s hops are always `Path.resolve()`d (`_resolve_in_tree`'s
+# return); `_reason` / `_unparseable` / `_too_deep` then compared one against
+# `tree` AS GIVEN -- unresolved. When the repo root itself sits behind a
+# symlink hop the OS quietly follows, that raised `ValueError` out of the
+# guard entirely instead of returning a refusal string. Does not reproduce
+# in the built image (`/work/tree` has no symlink component), but pytest's
+# own `tmp_path` is already fully resolved on this machine too -- so these
+# build an EXPLICIT symlinked tree root (`tree` argument is the symlink
+# itself, never resolved) to reproduce the mismatch directly, the same
+# shape as macOS's own `/var` -> `/private/var`.
+
+
+def test_ruff_extend_hop_malformed_under_symlinked_tree_root_does_not_raise(tmp_path):
+    """A single relative (in-tree) `extend` hop that fails to PARSE is
+    enough on its own -- `_unparseable(tree, hop, e)` compares the
+    already-resolved `hop` against `tree` directly, no second hop needed."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    (real / "base.toml").write_text("this is not [[[ valid toml\n===\n")
+    (real / "ruff.toml").write_text('extend = "base.toml"\n')
+    reason = guards.ruff(link, [link / "ruff.toml"])
+    assert reason is not None
+    assert "base.toml" in reason
+
+
+def test_ruff_transitive_extend_under_symlinked_tree_root_does_not_raise(tmp_path):
+    """The W3 transitive-chain shape, under a symlinked tree root: the
+    SECOND hop is what is unsafe, so `_reason` is reached with the FIRST
+    hop (already resolved) as `path`."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    (real / "base.toml").write_text('extend = "/etc/hostname"\n')
+    (real / "ruff.toml").write_text('extend = "base.toml"\n')
+    reason = guards.ruff(link, [link / "ruff.toml"])
+    assert reason is not None
+    assert "extend" in reason
+
+
+def test_biome_extend_hop_malformed_under_symlinked_tree_root_does_not_raise(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    (real / "base.json").write_text("{not valid json\n")
+    (real / "biome.json").write_text('{"extends": ["./base.json"]}\n')
+    reason = guards.biome(link, [link / "biome.json"])
+    assert reason is not None
+    assert "base.json" in reason
+
+
+def test_ruff_extend_hop_inside_symlinked_tree_root_is_still_safe(tmp_path):
+    """The other half of V3's contract: a symlinked tree root must not
+    itself become a refusal for a chain that is entirely safe."""
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    (real / "base.toml").write_text("")
+    (real / "ruff.toml").write_text('extend = "base.toml"\n')
+    assert guards.ruff(link, [link / "ruff.toml"]) is None

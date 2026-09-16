@@ -8,9 +8,12 @@
 # ghcr.io/runwhen-contrib/rw-checks-codecollection@sha256:<actual digest>
 # before the manifest is picked up by the catalog. Do not hand-edit the
 # placeholder; do not ship it as-is.
+#
+# 0.3.0: every task runs only on changed files; results carry `skipped` and
+# `files_checked` (DIFF-SCOPED-CHECKS.md).
 apiVersion: capability/v1
 capability: rw-checks
-version: "0.2.0"
+version: "0.3.0"
 description: Static checks for source repositories
 image: ghcr.io/runwhen-contrib/rw-checks-codecollection@sha256:INJECTED_BY_CI
 
@@ -71,14 +74,6 @@ tasks:
 
   - name: gitleaks
     description: Secret scanning
-    inputs:
-      tree:    { from: "${setup.tree}" }
-      changed: { from: "${setup.changed}" }
-    outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
-
-  - name: trivy
-    description: Filesystem vulnerability, misconfiguration and secret scanning
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -207,14 +202,6 @@ tasks:
     outputs:
       findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
 
-  - name: checkmake
-    description: Makefile lint
-    inputs:
-      tree:    { from: "${setup.tree}" }
-      changed: { from: "${setup.changed}" }
-    outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
-
   - name: dotenv_linter                  # must equal the tasks.py function name: the host
                                           # looks up registry.tasks by this exact string
     description: .env file lint
@@ -226,14 +213,6 @@ tasks:
 
   - name: buf
     description: Protocol Buffers lint
-    inputs:
-      tree:    { from: "${setup.tree}" }
-      changed: { from: "${setup.changed}" }
-    outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
-
-  - name: trufflehog
-    description: Filesystem secret scanning
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }

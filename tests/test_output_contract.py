@@ -39,7 +39,11 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: Output kind -> the call every task declaring it must wrap its return value in.
 #: A kind absent here is not checked; add it with its wrapper when one is added.
-_REQUIRED_WRAPPER = {"rw.findings.v1": "ctx.findings.cap"}
+#: Every rw-checks task calls `tools._runner.run_check(ctx, tree, changed, tools.X)`,
+#: which itself ends in exactly `ctx.findings.cap(...)` (see tools/_runner.py) --
+#: the temporary `_dispatch` dual-dispatch helper (rw-1416 Task 4) that used to
+#: also be accepted here was removed once every tool module converted (Task 11).
+_REQUIRED_WRAPPER = {"rw.findings.v1": {"tools._runner.run_check"}}
 
 
 def _manifest(capability: str) -> dict:
@@ -109,15 +113,40 @@ def test_findings_outputs_return_the_envelope_not_a_bare_list(capability):
     functions = _task_functions(capability)
     checked = 0
     for task_name, output_name, kind in _declared_outputs(capability):
-        wrapper = _REQUIRED_WRAPPER.get(kind)
-        if wrapper is None:
+        wrappers = _REQUIRED_WRAPPER.get(kind)
+        if wrappers is None:
             continue
         actual = _wrapper_call(functions[task_name], output_name)
-        assert actual == wrapper, (
+        assert actual in wrappers, (
             f"{capability}: task '{task_name}' output '{output_name}' is declared {kind}, "
-            f"which is an envelope -- expected it wrapped in {wrapper}(...), got "
+            f"which is an envelope -- expected it wrapped in one of {sorted(wrappers)}(...), got "
             f"{actual or 'a bare value'}. papi validates this shape and rejects a bare array."
         )
         checked += 1
     if capability == "rw-checks":
-        assert checked == 22, f"expected all 22 rw-checks tasks to be checked, checked {checked}"
+        assert checked == 19, f"expected all 19 rw-checks tasks to be checked, checked {checked}"
+
+
+def test_findings_result_carries_skipped_and_files_checked():
+    from runwhen_capability.models import FindingsResult
+
+    result = FindingsResult(findings=[], skipped="no changed Python files", files_checked=0)
+    dumped = result.model_dump()
+    assert dumped["skipped"] == "no changed Python files"
+    assert dumped["files_checked"] == 0
+
+
+def test_findings_result_defaults_keep_the_old_shape_valid():
+    from runwhen_capability.models import FindingsResult
+
+    old = FindingsResult.model_validate({"findings": [], "truncated": False})
+    assert old.skipped is None
+    assert old.files_checked == 0
+
+
+def test_cap_passes_skipped_and_files_checked_through(tmp_path):
+    from runwhen_capability import Context
+
+    ctx = Context(capability="rw-checks", operation="ruff", workdir=tmp_path)
+    result = ctx.findings.cap([], skipped="partial", files_checked=3)
+    assert (result.skipped, result.files_checked, result.truncated) == ("partial", 3, False)

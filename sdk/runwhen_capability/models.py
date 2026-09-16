@@ -56,6 +56,13 @@ class FindingsResult(BaseModel):
 
     findings: list[Finding] = Field(default_factory=list)
     truncated: bool = False
+    # Why this check did not run, or ran on only part of the diff (DIFF-SCOPED-CHECKS.md §4).
+    # None when every eligible changed file was checked. Optional on the wire:
+    # consumers detect it by presence, never by a version bump.
+    skipped: str | None = None
+    # How many changed files the tool was actually run on. 0 with `skipped`
+    # set means "did not run"; 0 with `skipped` None means nothing to check.
+    files_checked: int = 0
 
 
 # --- rw-worktree task outputs -----------------------------------------------

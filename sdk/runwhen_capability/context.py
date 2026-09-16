@@ -180,6 +180,8 @@ class Context:
         cwd: Path | str | None = None,
         timeout: float | None = None,
         env: dict[str, str] | None = None,
+        *,
+        inherit_env: bool = True,
     ) -> subprocess.CompletedProcess:
         """Runs argv as a subprocess. stdout is captured (returned on
         `.stdout`); stderr is captured and forwarded line-by-line to
@@ -195,7 +197,18 @@ class Context:
         process -- a global mutation would leak into whatever else is
         running alongside.
 
-        The case this exists for: the capability's root filesystem is
+        `inherit_env=False` replaces that merge with EXACTLY `env` -- no
+        `os.environ` in the child at all. This is for a capability that
+        runs tools whose OWN config, supplied by an untrusted repo, decides
+        what that tool reads or reaches (rw-checks' guards.py): such a
+        caller builds its own allow-list rather than handing the tool
+        every variable the executor pod happens to hold, including
+        anything secret. The default stays `True` -- capabilities/
+        rw-worktree and every other existing caller relies on inheriting
+        the parent environment, so opting OUT of that is a deliberate
+        choice a caller makes, never the default.
+
+        The case the MERGE exists for: the capability's root filesystem is
         READ-ONLY, so a tool that writes to the default `/tmp` fails
         outright. Only `workdir` (`/work`) is writable, so such a tool
         must be pointed at it -- see `tools/trivy.py`, whose vulnerability
@@ -239,15 +252,36 @@ class Context:
         the process-group kill, and this method still has to return control
         -- with the right exception -- rather than block on a thread that
         may now never finish.
+
+        `errors="replace"` on the Popen: a linter can write a byte its own
+        stdout encoding does not consider valid (a mangled multibyte
+        sequence in a repo file it is reporting on, for instance). Without
+        this, `stream.read()` inside a drain thread's own loop raises
+        UnicodeDecodeError -- uncaught there, that kills the thread mid-read
+        with `chunks` and `state` however far they had got, which this
+        method never learns about: `stdout_state.get("over")` below then
+        reads as falsy (never set, not merely False), so a tool that
+        actually emitted invalid UTF-8 comes back as returncode=<real
+        code>, stdout='' -- a silent empty result, exactly what errors.py's
+        own docstring says must never happen. Replacing the bad byte with
+        U+FFFD instead loses only that one mangled unit, not everything
+        the drain thread had already read or would have read after it --
+        a linter's finding should not cost the whole result over one byte
+        it got wrong.
         """
         run_cwd = Path(cwd) if cwd is not None else self.workdir
+        if inherit_env:
+            run_env = {**os.environ, **env} if env else None
+        else:
+            run_env = dict(env or {})
         proc = subprocess.Popen(  # noqa: S603 -- argv is capability-controlled, by design
             argv,
             cwd=str(run_cwd),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
-            env={**os.environ, **env} if env else None,
+            errors="replace",  # see the docstring above: a mangled byte must not go silent
+            env=run_env,
             start_new_session=True,  # so `proc.pid` is also the process group id -- see above
         )
         stdout_chunks: list[str] = []

@@ -252,6 +252,22 @@ class Context:
         the process-group kill, and this method still has to return control
         -- with the right exception -- rather than block on a thread that
         may now never finish.
+
+        `errors="replace"` on the Popen: a linter can write a byte its own
+        stdout encoding does not consider valid (a mangled multibyte
+        sequence in a repo file it is reporting on, for instance). Without
+        this, `stream.read()` inside a drain thread's own loop raises
+        UnicodeDecodeError -- uncaught there, that kills the thread mid-read
+        with `chunks` and `state` however far they had got, which this
+        method never learns about: `stdout_state.get("over")` below then
+        reads as falsy (never set, not merely False), so a tool that
+        actually emitted invalid UTF-8 comes back as returncode=<real
+        code>, stdout='' -- a silent empty result, exactly what errors.py's
+        own docstring says must never happen. Replacing the bad byte with
+        U+FFFD instead loses only that one mangled unit, not everything
+        the drain thread had already read or would have read after it --
+        a linter's finding should not cost the whole result over one byte
+        it got wrong.
         """
         run_cwd = Path(cwd) if cwd is not None else self.workdir
         if inherit_env:
@@ -264,6 +280,7 @@ class Context:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",  # see the docstring above: a mangled byte must not go silent
             env=run_env,
             start_new_session=True,  # so `proc.pid` is also the process group id -- see above
         )

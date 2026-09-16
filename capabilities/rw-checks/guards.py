@@ -123,6 +123,40 @@ and `biome` now resolve both `tree` and the starting config path once,
 together, before entering the chain, so every hop compares against the
 same resolved root from the start.
 
+A pre-merge review found that the PREVIOUS round's own line-start fix
+(`e197f3d`, which stopped an ordinary trailing `-- sqlfluff` comment from
+refusing a file) narrowed the byte backstop too far and reopened the RCE it
+had otherwise fixed: `_sql_marker_pattern` anchored a marker to the start of
+the data or an encoded newline ONLY, while `_sql_inline_directive` -- which
+its own docstring claims this mirrors -- iterates `text.splitlines()`, and
+real sqlfluff's own `process_raw_file_for_config` does exactly the same
+(`raw_str.splitlines()`, confirmed against the built image's source) --
+which also breaks on a carriage return, a vertical tab, a form feed, the
+file/group/record separator control codes, the NEL control code, and the
+Unicode line- and paragraph-separator characters, none of which the
+narrowed regex matched. A directive after any of those was honoured by
+sqlfluff and missed here. Second, independent root cause: `_SQL_BOMS` had
+no UTF-8 BOM (`EF BB BF`) entry, and `str.lstrip()` does not strip the BOM
+character either, so a directive on a UTF-8-BOM file's very first line
+decoded with the BOM still attached was never recognised by
+`_sql_inline_directive`'s own `line.lstrip()` check either -- confirmed
+end to end: real `sqlfluff lint`, run against the built image, imports the
+named directory for exactly this payload (`EF BB BF` + a `library_path`
+directive on line 1), and this guard's own UTF-8 decode path -- independent
+of chardet's own guess, which is a heuristic this module already treats as
+unreliable elsewhere (see `_sql_marker_present`'s "chardet unavailable, or
+chardet's guess wrong" case below) -- failed to recognise the directive
+without this fix. Fixed by deriving the backstop's boundary alternation directly from
+`str.splitlines()` itself (`_SQL_LINE_BOUNDARIES`, probed against the real
+builtin rather than hand-copied into a second list that had already
+drifted from the first once) and adding the UTF-8 BOM to `_SQL_BOMS`; the
+backstop's start-of-data branch now also allows an optional encoded BOM
+immediately after it, per `_SQL_BOM_BY_ENCODING`, since a BOM is stripped
+before `_sql_texts` decodes anything and so never reaches
+`_sql_inline_directive` as text either. `e197f3d`'s actual fix -- a marker
+that is NOT at a line start (a trailing comment, a marker inside a string
+literal) is not a directive and must not refuse -- is unchanged.
+
 One guard function per affected tool, called by `_plan.plan` per config group
 BEFORE the tool runs. A guard returns a short human reason when the repo's config is unsafe,
 or None when it is safe to run the tool. The reason always begins
@@ -533,22 +567,37 @@ def _sql_files(paths: Sequence[Path]) -> list[Path]:
     return sorted(p for p in paths if p.suffix == ".sql" and p.is_file())
 
 
-#: CONFIRMED #2 (UTF-16) and W2 (UTF-32): sqlfluff's own loader reads a
-#: linted file with `encoding=autodetect` -- `chardet.detect` -- so a
-#: UTF-16 OR UTF-32 file's inline `-- sqlfluff:` directive is honoured by
-#: the real tool while a naive UTF-8-only read here never sees it. Each BOM
-#: is stripped before decoding under its matching encoding, the same way
-#: sqlfluff's own reader would. The 4-byte UTF-32-LE BOM (`ff fe 00 00`)
-#: starts with the 2-byte UTF-16-LE BOM (`ff fe`) -- listed and matched
-#: FIRST (longest first, and at most one BOM per file), so a UTF-32-LE file
-#: is never mistaken for a UTF-16-LE one with only the first two of its
-#: four BOM bytes stripped.
+#: CONFIRMED #2 (UTF-16), W2 (UTF-32) and B1 (final-fix-10, UTF-8): sqlfluff's
+#: own loader reads a linted file with `encoding=autodetect` -- `chardet.
+#: detect` -- so a UTF-16, UTF-32, or UTF-8-BOM file's inline `-- sqlfluff:`
+#: directive is honoured by the real tool while a naive UTF-8-only read here
+#: never sees it (a UTF-8 BOM in particular survives a plain `errors=
+#: "replace"` UTF-8 decode as a literal U+FEFF character, which `str.
+#: lstrip()` does not strip, so even a directive on line 1 was missed
+#: without this entry). Each BOM is stripped before decoding under its
+#: matching encoding, the same way sqlfluff's own reader would. The 4-byte
+#: UTF-32-LE BOM (`ff fe 00 00`) starts with the 2-byte UTF-16-LE BOM
+#: (`ff fe`) -- listed and matched FIRST (longest first, and at most one BOM
+#: per file), so a UTF-32-LE file is never mistaken for a UTF-16-LE one with
+#: only the first two of its four BOM bytes stripped; the 3-byte UTF-8 BOM
+#: (`ef bb bf`) shares no prefix with any of the others, so its own position
+#: in the tuple only has to come before the two 2-byte UTF-16 entries to keep
+#: the "longest first" rule honest.
 _SQL_BOMS = (
     (b"\xff\xfe\x00\x00", "utf-32-le"),
     (b"\x00\x00\xfe\xff", "utf-32-be"),
+    (b"\xef\xbb\xbf", "utf-8"),
     (b"\xff\xfe", "utf-16-le"),
     (b"\xfe\xff", "utf-16-be"),
 )
+
+#: B1 (final-fix-10): the byte backstop's `\A` branch (`_sql_marker_pattern`
+#: below) needs the SAME per-encoding BOM `_SQL_BOMS` already defines, not a
+#: second copy of it -- a directive at the genuine start of a BOM'd file
+#: sits right after those bytes in the raw stream, and the BOM itself never
+#: reaches `_sql_inline_directive` as text (it is stripped before decoding),
+#: so the backstop has to allow for it separately from any decoded string.
+_SQL_BOM_BY_ENCODING = {encoding: bom for bom, encoding in _SQL_BOMS}
 
 
 def _sql_texts(data: bytes) -> list[str]:
@@ -629,22 +678,57 @@ def _sql_inline_directive(text: str) -> tuple[bool, str | None]:
 _SQL_DIRECTIVE_MARKERS = ("-- sqlfluff", "--sqlfluff")
 _SQL_MARKER_ENCODINGS = ("utf-8", "utf-16-le", "utf-16-be", "utf-32-le", "utf-32-be")
 #: X1: the horizontal whitespace `_sql_inline_directive`'s own `line.lstrip()`
-#: strips before a directive marker -- the newline itself is matched
-#: separately, below, as the line boundary.
+#: strips before a directive marker -- a line boundary itself is matched
+#: separately, below, via `_SQL_LINE_BOUNDARIES`.
 _SQL_LINE_WS = " \t\r\x0b\x0c"
+
+
+def _splitlines_boundary_chars() -> str:
+    """Every character `str.splitlines()` treats as a line boundary --
+    computed by asking `str.splitlines()` itself, one candidate character at
+    a time, rather than hand-copying CPython's own list into a SECOND,
+    byte-level list that could silently drift from the first the way B1
+    (final-fix-10) did: `e197f3d` anchored the byte backstop to an encoded
+    `\\n` alone, while `_sql_inline_directive` above -- which its own
+    docstring claims this mirrors -- gets the FULL boundary set for free by
+    calling `text.splitlines()` directly, and the two quietly stopped
+    agreeing. `_sql_marker_pattern` below cannot decode `text` to call
+    `str.splitlines()` on it at all (recognising a directive without a
+    successful decode is the whole point of the backstop), so this builds a
+    byte regex out of the same rule instead of a second list of it."""
+    candidates = "\n\r\v\f\x1c\x1d\x1e\x85" + chr(0x2028) + chr(0x2029)
+    return "".join(c for c in candidates if ("a" + c + "b").splitlines() == ["a", "b"])
+
+
+_SQL_LINE_BOUNDARIES = _splitlines_boundary_chars()
 
 
 def _sql_marker_pattern(marker: str, encoding: str) -> re.Pattern[bytes]:
     """A compiled byte regex matching `marker` under `encoding`, only when
-    preceded by a line boundary -- start of data, or an encoded newline --
-    plus optional encoded horizontal whitespace. A byte-for-byte mirror of
-    `_sql_inline_directive`'s own `line.lstrip()` rule, under an encoding
-    that scan never even attempts to decode."""
+    preceded by a line boundary -- start of data (optionally preceded by
+    that encoding's own BOM, per `_SQL_BOM_BY_ENCODING`: a BOM is stripped
+    before `_sql_texts` decodes anything, so it never reaches
+    `_sql_inline_directive` as text either, and a directive on a BOM'd
+    file's very first line sits right after those bytes in the raw stream)
+    or any boundary `_SQL_LINE_BOUNDARIES` lists, encoded under `encoding`
+    the same way the marker itself is -- plus optional encoded horizontal
+    whitespace. A byte-for-byte mirror of `_sql_inline_directive`'s own
+    `line.lstrip()` rule, under an encoding that scan never even attempts
+    to decode."""
     marker_bytes = marker.encode(encoding)
-    newline_bytes = "\n".encode(encoding)
+    bom = _SQL_BOM_BY_ENCODING.get(encoding, b"")
+    start = rb"\A" + (rb"(?:" + re.escape(bom) + rb")?" if bom else b"")
+    boundary_alt = b"|".join(re.escape(c.encode(encoding)) for c in _SQL_LINE_BOUNDARIES)
     ws_alt = b"|".join(re.escape(c.encode(encoding)) for c in _SQL_LINE_WS)
     return re.compile(
-        rb"(?:\A|" + re.escape(newline_bytes) + rb")(?:" + ws_alt + rb")*" + re.escape(marker_bytes)
+        rb"(?:"
+        + start
+        + rb"|"
+        + boundary_alt
+        + rb")(?:"
+        + ws_alt
+        + rb")*"
+        + re.escape(marker_bytes)
     )
 
 

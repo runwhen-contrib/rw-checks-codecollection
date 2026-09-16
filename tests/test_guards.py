@@ -520,6 +520,72 @@ def test_sqlfluff_sql_marker_leading_whitespace_still_refused(tmp_path):
     assert reason is not None
 
 
+# --- sqlfluff: B1 (final-fix-10), the byte backstop's line-boundary rule --
+# `e197f3d` anchored the backstop's marker to the start of the data or an
+# encoded newline only, while `_sql_inline_directive` -- which its own
+# docstring claims this mirrors -- iterates `text.splitlines()`, which also
+# breaks on a carriage return, a vertical tab, a form feed, the file/group/
+# record separator control codes, the NEL control code, and the Unicode
+# line- and paragraph-separator characters. A directive after any of those
+# is honoured by sqlfluff (`process_raw_file_for_config` also uses
+# `raw_str.splitlines()`, confirmed against the built image's own source)
+# but was missed by the narrowed backstop -- reopening the RCE `e197f3d`
+# had otherwise fixed. Second, independent root cause: `_SQL_BOMS` had no
+# UTF-8 BOM (`EF BB BF`) entry, so a UTF-8-BOM file's directive on its very
+# first line was invisible to `_sql_inline_directive` itself (the BOM
+# character survives the plain-UTF-8 decode, and `str.lstrip()` does not
+# strip it) as well as to the backstop's bare start-of-data anchor. -------
+
+
+_SQL_OTHER_LINE_BOUNDARIES = [
+    pytest.param("\r", id="cr"),
+    pytest.param("\v", id="vt"),
+    pytest.param("\f", id="ff"),
+    pytest.param("\x1c", id="fs"),
+    pytest.param("\x1d", id="gs"),
+    pytest.param("\x1e", id="rs"),
+    pytest.param("\x85", id="nel"),
+    pytest.param("\u2028", id="ls"),
+    pytest.param("\u2029", id="ps"),
+]
+
+
+@pytest.mark.parametrize("boundary", _SQL_OTHER_LINE_BOUNDARIES)
+def test_sqlfluff_sql_marker_after_other_line_boundary_still_refused(tmp_path, boundary):
+    """BOM-less UTF-16-LE (undecodable by any candidate here -- no BOM to
+    match, and chardet is unavailable in this venv), so only the byte-level
+    backstop can catch this. `boundary` stands in for the newline as the
+    line separator directly before the directive -- every one of these must
+    anchor the backstop exactly as `str.splitlines()` (and so
+    `_sql_inline_directive`, and so real sqlfluff) would."""
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = ("select 1;" + boundary + "-- sqlfluff:library_path:lib\nselect 2;\n").encode(
+        "utf-16-le"
+    )
+    path.write_bytes(body)
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None, f"boundary {boundary!r} not recognised as a line start"
+
+
+def test_sqlfluff_sql_utf8_bom_directive_on_line_one_trips_the_guard(tmp_path):
+    """`_SQL_BOMS` gains a UTF-8 (`EF BB BF`) entry: real sqlfluff reads the
+    same bytes via chardet's `UTF-8-SIG` guess, which Python's
+    `open(..., encoding="UTF-8-SIG")` strips before `process_raw_file_for_
+    config` ever sees the text -- confirmed against the built image. Before
+    the fix, the plain-UTF-8 decode kept the BOM as a literal U+FEFF
+    character (which `line.lstrip()` does not strip), so line 1 never
+    started with the marker under either the decode-based check or the
+    byte backstop's bare `\\A`."""
+    path = tmp_path / "db" / "new.sql"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xef\xbb\xbf" + b"-- sqlfluff:library_path:pwn\nSELECT 1 FROM t;\n")
+    reason = guards.sqlfluff(tmp_path, [path])
+    assert reason is not None
+    assert "db/new.sql" in reason
+    assert "library_path" in reason
+
+
 # --- sqlfluff: B3, unbounded `_walk` recursion ---------------------------
 
 

@@ -157,6 +157,39 @@ def test_both_pipes_full_at_once_does_not_deadlock(tmp_path, monkeypatch):
     assert len(proc.stdout) == len(chunk)
 
 
+def test_invalid_utf8_stdout_is_not_silently_dropped(tmp_path, monkeypatch):
+    """B2 (inherited from main): the stdout drain thread runs `stream.read()`
+    on a TEXT-mode pipe with no `errors=` override, so a tool that writes a
+    single invalid UTF-8 byte raises UnicodeDecodeError INSIDE the drain
+    thread -- nothing catches it there, so the thread dies mid-read with
+    `stdout_chunks` still empty and `stdout_state` never populated.
+    `stdout_state.get("over")` then reads as falsy (never set, not merely
+    False), so `ctx.run` returns the tool's real returncode with stdout=''
+    -- a silent empty result, exactly the shape errors.py's own docstring
+    says must never happen. `subprocess.run(text=True)` (the previous
+    implementation) raised here instead; this is a behaviour change ctx.run
+    introduced. `after` -- written strictly after the bad byte -- proves
+    the drain did not merely lose a fragment: it must never be readable at
+    all until this is fixed, regardless of how the pipe happens to chunk."""
+    bin_dir = _stub(
+        tmp_path,
+        "tool",
+        "import sys\n"
+        "sys.stdout.buffer.write(b'before\\n')\n"
+        "sys.stdout.buffer.write(b'\\xff\\xfe bad utf8 \\xff')\n"
+        "sys.stdout.buffer.write(b'after\\n')\n"
+        "sys.stdout.buffer.flush()\n"
+        "sys.exit(7)\n",
+    )
+    _prepend_path(monkeypatch, bin_dir)
+
+    ctx = _ctx(tmp_path)
+    proc = ctx.run(["tool"])
+
+    assert proc.returncode == 7
+    assert "after" in proc.stdout, "stdout after the bad byte must not be silently lost"
+
+
 def test_timeout_still_raises_timeout_expired(tmp_path, monkeypatch):
     """Unchanged behaviour: DEFAULT_RUN_TIMEOUT (or an explicit `timeout`)
     still raises subprocess.TimeoutExpired, not OutputTooLargeError or

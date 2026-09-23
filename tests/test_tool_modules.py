@@ -9,10 +9,11 @@ satisfy this or the suite fails.
 
 from __future__ import annotations
 
+import dis
 import importlib
 import pkgutil
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -79,7 +80,7 @@ def test_policy_closes_over_the_declared_severity_map(name):
     # `severity.constant()` extracts its map's one value up front rather
     # than keeping the whole (single-entry) dict alive -- there is nothing
     # left to look up. Accept either shape: the map itself in the closure
-    # (from_level/by_rule_prefix/by_cvss), or the map's own single value
+    # (from_level/by_rule_prefix), or the map's own single value
     # (constant).
     closes_over_map = any(v is mod.SEVERITY for v in cell_values)
     closes_over_constant = len(mod.SEVERITY) == 1 and any(
@@ -88,48 +89,6 @@ def test_policy_closes_over_the_declared_severity_map(name):
     assert closes_over_map or closes_over_constant, (
         f"{name}._POLICY does not close over {name}.SEVERITY"
     )
-
-
-@pytest.mark.parametrize("name", tool_modules())
-def test_declares_the_applicability_contract(name):
-    mod = load(name)
-    assert isinstance(getattr(mod, "FILES", None), tuple), f"{name}.FILES must be a tuple"
-    assert getattr(mod, "CONFIG", None) in VALID_CONFIG, (
-        f"{name}.CONFIG must be one of {VALID_CONFIG}"
-    )
-    ci = getattr(mod, "CI_BINARY", "<missing>")
-    assert ci is None or isinstance(ci, str), f"{name}.CI_BINARY must be a str or None"
-    guard = getattr(mod, "GUARD", "<missing>")
-    assert guard is None or callable(guard), f"{name}.GUARD must be callable or None"
-
-
-@pytest.mark.parametrize("name", tool_modules())
-def test_defines_detect_and_check(name):
-    mod = load(name)
-    assert callable(getattr(mod, "detect", None)), f"{name} defines no detect()"
-    assert callable(getattr(mod, "check", None)), f"{name} defines no check()"
-
-
-@pytest.mark.parametrize("name", tool_modules())
-def test_detect_returns_paths_on_an_empty_tree(tmp_path, name):
-    """detect() runs during applicability, before any tool is invoked, so it
-    must never raise on a repository that does not use the tool."""
-    result = load(name).detect(tmp_path)
-    assert isinstance(result, list)
-    assert all(isinstance(p, Path) for p in result)
-
-
-def test_config_required_tools_skip_an_unconfigured_repo(tmp_path):
-    """A `required` tool must not run without the repo's own config -- an
-    opinionated linter run on defaults reports findings nobody asked for."""
-    from tools import _common
-
-    (tmp_path / "a.py").write_text("import os\n")
-    for name in tool_modules():
-        mod = load(name)
-        if getattr(mod, "CONFIG", "optional") != "required":
-            continue
-        assert _common.gate(tmp_path, mod), f"{name} is CONFIG=required but did not skip"
 
 
 # --- the inventory must agree in three places -------------------------------
@@ -172,8 +131,8 @@ def test_tool_modules_manifest_and_registry_all_agree():
 
 
 def test_every_task_declares_both_inputs():
-    """Every task takes both `tree` and `changed`: findings are scoped to
-    the diff (`_common.scoped`), so every module needs the diff to scope to.
+    """Every task takes both `tree` and `changed`: `_plan.plan` scopes every
+    invocation to the diff, so every module needs `changed` to scope to.
     """
     import yaml
 
@@ -184,77 +143,73 @@ def test_every_task_declares_both_inputs():
         )
 
 
-def test_every_module_scopes_its_findings_to_the_diff():
-    """Every check reports on the CHANGE, security scanners included.
+@pytest.mark.parametrize("name", tool_modules())
+def test_diff_scoped_contract(name):
+    mod = load(name)
+    for attr in (
+        "NAME",
+        "KIND",
+        "FILES",
+        "CONFIG",
+        "CONFIG_NAMES",
+        "CI_BINARY",
+        "LANE",
+        "EXPECT_EXIT",
+        "GUARD",
+        "applicable",
+        "check",
+    ):
+        assert hasattr(mod, attr), f"{name} lacks {attr}"
+    assert mod.CONFIG in VALID_CONFIG
+    assert mod.LANE in {"A", "B", "C", "D"}
+    assert mod.LANE != "D" or hasattr(mod, "group"), f"{name}: lane D needs group()"
+    import inspect
 
-    A tool that returns `ctx.sarif.parse(...)` or `ctx.findings.from_records(...)`
-    straight out of `check()` reports the whole repository, which on a
-    three-line pull request buries the review under a backlog the author did
-    not create. `_common.scoped` (and `_common.emit`, which wraps it) is the
-    single place that policy lives; this asserts nothing bypasses it.
-
-    Source-level on purpose: the behavioural version needs the real tool
-    binaries, which only exist inside the built image.
-    """
-    import re
-
-    offenders = {}
-    for name in tool_modules():
-        src = (TOOLS / f"{name}.py").read_text()
-        body = src[src.index("def check(") :]
-        returns = [
-            ln.strip()
-            for ln in body.splitlines()
-            if re.match(r"\s*return (ctx\.sarif\.parse|ctx\.findings\.from_records)", ln)
-        ]
-        if returns:
-            offenders[name] = returns
-    assert not offenders, (
-        "these modules return unscoped findings instead of routing through "
-        f"_common.scoped/_common.emit: {offenders}"
-    )
+    assert list(inspect.signature(mod.check).parameters) == ["ctx", "tree", "inv"]
 
 
-def test_supersession_targets_exist_and_do_not_cycle():
-    """SUPERSEDED_BY must name a real module, and the graph must be acyclic.
+# --- CONFIG_NAMES and the guard must agree on which files matter ------------
 
-    `gate()` does not follow a superseder's own SUPERSEDED_BY, so a cycle
-    cannot hang it -- but a cycle would still mean two tools each waiting
-    for the other, and whichever ran would be an accident of order.
-    """
-    edges = {}
-    for name in tool_modules():
-        target = getattr(load(name), "SUPERSEDED_BY", None)
-        if target:
-            assert target in tool_modules(), f"{name}.SUPERSEDED_BY names unknown module {target!r}"
-            assert target != name, f"{name} supersedes itself"
-            edges[name] = target
-    for start in edges:
-        seen, node = [start], start
-        while node in edges:
-            node = edges[node]
-            assert node not in seen, f"supersession cycle: {' -> '.join(seen + [node])}"
-            seen.append(node)
+# Every guarded tool names its config files twice: once as `CONFIG_NAMES` on
+# the module, and again as the literal basenames passed to
+# `guards._selected(paths, ...)` inside its own guard function. Nothing
+# enforces that these agree -- add a name to CONFIG_NAMES and forget the
+# guard, and the guard silently stops covering that file. `regal` is excluded:
+# its guard never calls `_selected` at all (it globs a `.regal/rules/`
+# directory instead), so there is nothing here to extract.
+_NOT_BASENAME_DRIVEN = {"regal"}
 
 
-def test_superseded_tool_runs_when_its_superseder_does_not_apply():
-    """Dropping flake8 in favour of a ruff that is itself skipped would
-    silently check nothing -- the failure mode supersession must not have.
-    """
-    import tools._common as _common
+def _selected_literal_names(guard) -> set[str]:
+    """The string literals passed as `*names` to every `guards._selected(...)`
+    call inside `guard`'s own code object -- found by walking its
+    instructions and collecting the `LOAD_CONST` strings between each
+    `_selected` load and the `CALL` that follows it. Light introspection, not
+    a general-purpose call-argument extractor: it only has to hold for the
+    one call shape every guard here actually uses."""
+    names: set[str] = set()
+    instructions = list(dis.get_instructions(guard))
+    for i, instr in enumerate(instructions):
+        if instr.argval != "_selected" or not instr.opname.startswith("LOAD_"):
+            continue
+        for later in instructions[i + 1 :]:
+            if later.opname.startswith("CALL"):
+                break
+            if later.opname == "LOAD_CONST" and isinstance(later.argval, str):
+                names.add(later.argval)
+    return names
 
-    flake8, ruff = load("flake8"), load("ruff")
-    assert flake8.SUPERSEDED_BY == "ruff"
 
-    # ruff applies (repo has .py): flake8 is superseded.
-    tree = Path(__file__).parent / "fixtures" / "sample-repo"
-    skip = _common.supersession_skip(tree, flake8)
-    assert skip is not None and "superseded by ruff" in skip.reason
-
-    # A tree with no Python at all: ruff does not apply, so nothing is
-    # superseded and flake8's own gates decide.
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as empty:
-        assert _common.gate(Path(empty), ruff) is not None, "ruff should not apply to an empty tree"
-        assert _common.supersession_skip(Path(empty), flake8) is None
+@pytest.mark.parametrize("name", [n for n in tool_modules() if n not in _NOT_BASENAME_DRIVEN])
+def test_config_names_covered_by_the_guard(name):
+    mod = load(name)
+    guard = mod.GUARD
+    if guard is None:
+        pytest.skip(f"{name} has no guard")
+    selected = _selected_literal_names(guard)
+    for config_name in mod.CONFIG_NAMES:
+        basename = PurePosixPath(config_name.name).name
+        assert basename in selected, (
+            f"{name}.CONFIG_NAMES names {config_name.name!r}, but guards.{name}'s own "
+            f"_selected(...) calls never filter on {basename!r}: {sorted(selected)}"
+        )

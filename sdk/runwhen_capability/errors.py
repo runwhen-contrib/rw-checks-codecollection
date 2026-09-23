@@ -25,7 +25,7 @@ class OutputTooLargeError(ValueError):
     (sarif.py's SARIF_BYTE_BUDGET), before that output is fully read into
     memory or handed to a parser. Three call sites share this: Context.run()
     (context.py) bounds a subprocess's captured stdout while it is still
-    streaming in, tools/_common.py's run_to_file() stats a report FILE
+    streaming in, tools/_runner.py's run_to_file() stats a report FILE
     before reading it, and sarif.py's SarifClient.parse() (via its subclass
     SarifTooLargeError, see below) checks SARIF text already in hand before
     `json.loads`. All three exist for the same reason: whichever of these

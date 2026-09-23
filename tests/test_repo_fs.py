@@ -17,9 +17,11 @@ from runwhen_capability.repo_fs import (
     BinaryFileError,
     PathEscapesTreeError,
     TreeNotMaterializedError,
+    find_around,
     grep_tree,
     ls_tree,
     read_lines,
+    read_ranges,
 )
 
 # An unreadable directory is unreadable only for a non-root user; root
@@ -247,7 +249,7 @@ def test_grep_unreadable_tree_root_raises_instead_of_reporting_matches_empty(tmp
     tree itself is the one thing a caller has no way to not be asking
     about, so an unreadable root must raise, not render as `matches: []`
     (indistinguishable from "nothing matched"). In practice
-    _check_tree_materialized's own tree.iterdir() call already raises for
+    check_tree_materialized's own tree.iterdir() call already raises for
     this exact case before _walk_files ever runs; _walk_files' own
     _on_walk_error guard exists for defense in depth (e.g. a permissions
     change between that check and the walk itself) rather than being the
@@ -354,6 +356,18 @@ def test_grep_rejects_invalid_pattern(tmp_path):
 
     with pytest.raises(ValueError):
         grep_tree(tree, "(unclosed")
+
+
+def test_grep_exclude_drops_lines_before_they_count_toward_max_matches(tmp_path):
+    """`refs` (the query task) excludes definition lines through this: an
+    excluded line must not use up a match slot, and must be judged on the
+    full line rather than the 400-byte text snippet."""
+    long_skip = " " * 450 + "SKIP needle"
+    tree = make_tree(tmp_path, {"a.txt": f"{long_skip}\nSKIP needle\nneedle 1\nneedle 2\n"})
+
+    got = grep_tree(tree, "needle", max_matches=2, exclude=lambda line: "SKIP" in line)
+
+    assert [m.line for m in got.matches] == [3, 4]
 
 
 # --- glob-at-any-depth regression (runwhen-runner e0c9f16) ------------------
@@ -548,3 +562,216 @@ def test_ls_unreadable_subdirectory_encountered_while_recursing_is_disclosed(tmp
         assert got.unreadableTruncated is False
     finally:
         os.chmod(locked, 0o755)
+
+
+# --- grep: multi-glob OR and context lines ---------------------------------
+
+
+def test_grep_globs_list_ors_multiple_patterns(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "needle\n", "b.md": "needle\n", "c.txt": "needle\n"})
+
+    got = grep_tree(tree, "needle", globs=["*.py", "*.md"])
+
+    assert {m.path for m in got.matches} == {"a.py", "b.md"}
+
+
+def test_grep_glob_and_globs_combine_with_or(tmp_path):
+    """`glob` (singular, back-compat) and `globs` (new, plural) OR together
+    rather than one overriding the other."""
+    tree = make_tree(tmp_path, {"a.py": "needle\n", "b.md": "needle\n", "c.txt": "needle\n"})
+
+    got = grep_tree(tree, "needle", glob="*.py", globs=["*.md"])
+
+    assert {m.path for m in got.matches} == {"a.py", "b.md"}
+
+
+def test_grep_context_lines_before_and_after(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "one\ntwo\nneedle\nfour\nfive"})
+
+    got = grep_tree(tree, "needle", context=1)
+
+    assert got.matches[0].before == ["two"]
+    assert got.matches[0].after == ["four"]
+
+
+def test_grep_context_clipped_at_file_start_and_end(tmp_path):
+    """A context wider than the file must clip at both edges rather than
+    error or wrap -- the same honesty read_lines' byte-budget clipping
+    already gives a single range."""
+    tree = make_tree(tmp_path, {"a.py": "one\nneedle"})
+
+    got = grep_tree(tree, "needle", context=5)
+
+    assert got.matches[0].before == ["one"]  # clipped: only 1 line precedes it
+    assert got.matches[0].after == []  # clipped: nothing follows it
+
+
+def test_grep_context_defaults_to_no_context(tmp_path):
+    """Existing callers (context=0, the default) must see no before/after
+    fields materialize -- unchanged shape."""
+    tree = make_tree(tmp_path, {"a.py": "one\nneedle\nthree"})
+
+    got = grep_tree(tree, "needle")
+
+    assert got.matches[0].before == []
+    assert got.matches[0].after == []
+
+
+def test_grep_context_lines_are_capped_like_text(tmp_path):
+    """GrepMatch.text is cut at MAX_GREP_MATCH_TEXT_LEN, but a `before`/
+    `after` context line was never put through the same cut -- one long
+    line pulled in only as context (never itself matched by `pattern`)
+    could blow the same per-match budget `text` is already capped
+    against. Every context line must get the identical cut."""
+    long_line = "y" * 1000
+    tree = make_tree(tmp_path, {"a.py": f"{long_line}\nneedle\n{long_line}\n"})
+
+    got = grep_tree(tree, "needle", context=1)
+
+    assert len(got.matches[0].before[0]) == 400
+    assert len(got.matches[0].after[0]) == 400
+    assert got.matches[0].before[0] == long_line[:400]
+    assert got.matches[0].after[0] == long_line[:400]
+
+
+# --- bad patterns must not crash the whole call: re.compile can raise more
+# than re.error on adversarial input --
+# OverflowError on a huge {n} repetition, RecursionError on deep nesting --
+# and both must become the same InvalidPatternError grep_tree/find_around
+# already raise for an ordinary re.error. -----------------------------------
+
+
+def test_grep_rejects_pattern_with_overflow_repetition(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        grep_tree(tree, "a{4294967296}")
+
+
+def test_grep_rejects_deeply_nested_pattern(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        grep_tree(tree, "(" * 1000)
+
+
+# --- read_ranges: merged, multi-range reads ---------------------------------
+
+
+def test_read_ranges_merges_overlapping_and_adjacent(tmp_path):
+    body = "\n".join(f"line{i}" for i in range(1, 21))  # line1..line20
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    got = read_ranges(tree, "a.py", [(1, 5), (4, 8), (9, 10), (15, 16)])
+
+    assert got.path == "a.py"
+    assert got.totalLines == 20
+    assert [(r.start, r.end) for r in got.ranges] == [(1, 10), (15, 16)]
+    assert got.ranges[0].content == "\n".join(f"line{i}" for i in range(1, 11))
+    assert got.ranges[1].content == "line15\nline16"
+    assert got.truncated is False
+
+
+def test_read_ranges_keeps_an_empty_entry_for_a_range_starting_past_eof(tmp_path):
+    """A range entirely past EOF must not be silently dropped -- it gets a
+    ReadRange with empty content, the same honesty read_lines already gives
+    a single out-of-range request (empty content, not an error, not a
+    vanished result)."""
+    body = "\n".join(f"line{i}" for i in range(1, 11))  # line1..line10, no trailing newline
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    got = read_ranges(tree, "a.py", [(1, 3), (50, 60)])
+
+    assert got.totalLines == 10
+    assert [(r.start, r.end, r.content) for r in got.ranges] == [
+        (1, 3, "line1\nline2\nline3"),
+        (50, 10, ""),
+    ]
+
+
+def test_read_ranges_missing_tree_raises_typed_error(tmp_path):
+    tree = tmp_path / "never-checked-out"
+
+    with pytest.raises(TreeNotMaterializedError):
+        read_ranges(tree, "a.py", [(1, 1)])
+
+
+def test_read_ranges_rejects_path_escaping_the_tree(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(PathEscapesTreeError):
+        read_ranges(tree, "../outside.py", [(1, 1)])
+
+
+def test_read_ranges_binary_file_raises(tmp_path):
+    tree = make_tree(tmp_path, {"bin": b"\x00\x01\x02binary"})
+
+    with pytest.raises(BinaryFileError):
+        read_ranges(tree, "bin", [(1, 1)])
+
+
+# --- find_around: a context window around each match -----------------------
+
+
+def test_find_around_returns_window_around_each_match(tmp_path):
+    body = "\n".join(f"line{i}" for i in range(1, 21))
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    windows = find_around(tree, "a.py", "line10", context=2)
+
+    assert windows == [(8, 12)]
+
+
+def test_find_around_clips_at_file_start_and_end(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "one\nneedle\nthree"})
+
+    windows = find_around(tree, "a.py", "needle", context=5)
+
+    assert windows == [(1, 3)]
+
+
+def test_find_around_caps_at_max_windows(tmp_path):
+    body = "\n".join("needle" for _ in range(10))
+    tree = make_tree(tmp_path, {"a.py": body})
+
+    windows = find_around(tree, "a.py", "needle", context=0, max_windows=3)
+
+    assert windows == [(1, 1), (2, 2), (3, 3)]
+
+
+def test_find_around_rejects_path_escaping_the_tree(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(PathEscapesTreeError):
+        find_around(tree, "../outside.py", "x", context=1)
+
+
+def test_find_around_missing_tree_raises_typed_error(tmp_path):
+    tree = tmp_path / "never-checked-out"
+
+    with pytest.raises(TreeNotMaterializedError):
+        find_around(tree, "a.py", "x", context=1)
+
+
+def test_find_around_rejects_invalid_pattern_even_for_a_missing_file(tmp_path):
+    """The pattern is validated before the file itself is looked at -- same
+    order as grep_tree -- so an invalid pattern always surfaces as its own
+    ValueError, never masked by an unrelated FileNotFoundError."""
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError, match="invalid pattern"):
+        find_around(tree, "nope.py", "(unclosed", context=1)
+
+
+def test_find_around_rejects_pattern_with_overflow_repetition(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        find_around(tree, "a.py", "a{4294967296}", context=1)
+
+
+def test_find_around_rejects_deeply_nested_pattern(tmp_path):
+    tree = make_tree(tmp_path, {"a.py": "x\n"})
+
+    with pytest.raises(ValueError):
+        find_around(tree, "a.py", "(" * 1000, context=1)

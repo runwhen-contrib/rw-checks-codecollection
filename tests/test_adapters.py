@@ -13,7 +13,6 @@ plus whatever is specific to that tool's format.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -28,7 +27,6 @@ from tools import actionlint as _actionlint_tool  # noqa: E402
 from tools import ast_grep as _ast_grep_tool  # noqa: E402
 from tools import biome as _biome_tool  # noqa: E402
 from tools import buf as _buf_tool  # noqa: E402
-from tools import checkmake as _checkmake_tool  # noqa: E402
 from tools import dotenv_linter as _dotenv_linter_tool  # noqa: E402
 from tools import flake8 as _flake8_tool  # noqa: E402
 from tools import hadolint as _hadolint_tool  # noqa: E402
@@ -36,14 +34,13 @@ from tools import pylint as _pylint_tool  # noqa: E402
 from tools import regal as _regal_tool  # noqa: E402
 from tools import shellcheck as _shellcheck_tool  # noqa: E402
 from tools import sqlfluff as _sqlfluff_tool  # noqa: E402
-from tools import trufflehog as _trufflehog_tool  # noqa: E402
 from tools import vale as _vale_tool  # noqa: E402
 from tools import yamllint as _yamllint_tool  # noqa: E402
 
 VALID_SEVERITIES = {"error", "warning", "note"}
 
 # Every adapter takes its tool module's own SEVERITY as a parameter now (see
-# capabilities/rw-checks/tools/_common.py's module docstring) -- the map is
+# capabilities/rw-checks/tools/__init__.py's module docstring) -- the map is
 # never adapters.py's to own. Pulling each module's real map here, rather
 # than hand-writing a copy, is what makes these tests prove the map that
 # actually runs, not a map that merely looks similar.
@@ -59,10 +56,8 @@ SEVERITY = {
     "regal": _regal_tool.SEVERITY,
     "vale": _vale_tool.SEVERITY,
     "flake8": _flake8_tool.SEVERITY,
-    "checkmake": _checkmake_tool.SEVERITY,
     "dotenv_linter": _dotenv_linter_tool.SEVERITY,
     "buf": _buf_tool.SEVERITY,
-    "trufflehog": _trufflehog_tool.SEVERITY,
 }
 
 
@@ -98,10 +93,8 @@ ALL_ADAPTERS = [
     "regal",
     "vale",
     "flake8",
-    "checkmake",
     "dotenv_linter",
     "buf",
-    "trufflehog",
 ]
 
 
@@ -466,22 +459,6 @@ def test_flake8_carries_the_pinned_col_field():
     assert e711.get("end_column", 0) == 0
 
 
-# --- checkmake --------------------------------------------------------------
-
-
-def test_checkmake_parses_delimited_template():
-    records = adapters.checkmake(fixture("checkmake.txt"), SEVERITY["checkmake"])
-    assert_well_formed(records)
-    assert all(r["rule"] == "minphony" for r in records)
-
-
-def test_checkmake_zero_line_is_preserved():
-    """Whole-file rules report LineNumber 0, which is the contract's
-    "no location" value -- not a missing field to be defaulted elsewhere."""
-    records = adapters.checkmake(fixture("checkmake.txt"), SEVERITY["checkmake"])
-    assert all(r["line"] == 0 for r in records)
-
-
 # --- dotenv-linter ----------------------------------------------------------
 
 
@@ -527,39 +504,6 @@ def test_buf_carries_start_and_end_column():
     assert msg["end_column"] == 20
 
 
-# --- trufflehog -------------------------------------------------------------
-
-
-def test_trufflehog_parses_nested_path():
-    records = adapters.trufflehog(fixture("trufflehog.jsonl"), SEVERITY["trufflehog"])
-    assert_well_formed(records)
-    assert records[0]["path"] == "src/config.py"
-    assert records[0]["severity"] == "error"
-
-
-def test_trufflehog_never_emits_the_secret():
-    """`Raw` holds the detected credential. A finding is persisted, rendered
-    in a Check Run and handed to an LLM -- putting the secret in the message
-    leaks it into all three."""
-    raw_secrets = [
-        json.loads(line)["Raw"] for line in fixture("trufflehog.jsonl").splitlines() if line.strip()
-    ]
-    assert raw_secrets, "fixture should carry at least one raw secret"
-    records = adapters.trufflehog(fixture("trufflehog.jsonl"), SEVERITY["trufflehog"])
-    blob = json.dumps(records)
-    for secret in raw_secrets:
-        assert secret not in blob, "adapter leaked the detected credential"
-
-
-def test_trufflehog_drops_git_internals():
-    """trufflehog walks .git/objects, producing paths a reviewer cannot act
-    on and the diff filter cannot match."""
-    payload = fixture("trufflehog.jsonl")
-    assert ".git/objects" in payload, "fixture should include a .git hit"
-    records = adapters.trufflehog(payload, SEVERITY["trufflehog"])
-    assert not any(".git/" in r["path"] for r in records)
-
-
 # --- severity survives the SDK boundary -------------------------------------
 
 
@@ -569,7 +513,6 @@ def test_trufflehog_drops_git_internals():
         ("shellcheck", "shellcheck.json"),
         ("hadolint", "hadolint.json"),
         ("pylint", "pylint.json"),
-        ("trufflehog", "trufflehog.jsonl"),
         ("flake8", "flake8.txt"),
     ],
 )
@@ -577,9 +520,8 @@ def test_adapter_severity_survives_from_records(name, fx):
     """Regression: `from_records` used to look every severity up in a
     `severity_map` no task passes, so an adapter's already-mapped value missed
     the (empty) map and silently became `default_severity`. Every tool
-    flattened to `warning` -- trufflehog's committed credentials included, and
-    since a check run only fails on `error`, no adapter-based tool could fail
-    a build."""
+    flattened to `warning`, and since a check run only fails on `error`, no
+    adapter-based tool could fail a build."""
     from pathlib import Path as _Path
 
     from runwhen_capability import Context as _Context
@@ -632,22 +574,6 @@ def test_adapter_column_survives_from_records(name, fx):
         assert f.end_column == r.get("end_column", 0), (
             f"{name}: end_column dropped crossing the SDK boundary"
         )
-
-
-def test_trufflehog_secrets_are_errors_end_to_end():
-    """A committed credential must reach `error`: the check-run conclusion is
-    `failure` only when some finding is `error`, so a downgrade here means a
-    live secret does not fail the build."""
-    from pathlib import Path as _Path
-
-    from runwhen_capability import Context as _Context
-
-    records = adapters.trufflehog(fixture("trufflehog.jsonl"), SEVERITY["trufflehog"])
-    ctx = _Context(
-        capability="rw-checks", operation="trufflehog", workdir=_Path("."), credentials={}
-    )
-    findings = ctx.findings.from_records(records, root=FIXTURES.parent / "sample-repo")
-    assert findings and all(f.severity == "error" for f in findings)
 
 
 # --- column/end_line/end_column survive the SARIF path too ------------------

@@ -17,10 +17,16 @@ would let every review run, but ansi silently mis-parses the dialect-specific
 SQL most repositories actually write, so the findings would be confidently
 wrong rather than absent -- and a wrong finding on someone's pull request
 costs more than a skipped check. A repository that wants SQL linting says
-which dialect it speaks, in any of the three places `detect` already reads.
+which dialect it speaks, in one of the places CONFIG_NAMES below lists.
 
 Its own config is also an arbitrary-code-execution vector through the jinja
-templater's `library_path` -- see guards.py.
+templater's `library_path` -- see guards.py. GUARD_CHAIN below reflects that
+sqlfluff MERGES every ancestor config into one, so a root config's
+library_path is in effect even for a file linted under its own nested
+`.sqlfluff` -- the guard must see the whole chain, not just the nearest file.
+GUARD_FILES reflects a second config source: sqlfluff also scans the LINTED
+SQL FILE ITSELF for inline `-- sqlfluff:`/`--sqlfluff:` directives, so the
+guard must see the changed .sql files too, not only its config files.
 """
 
 from __future__ import annotations
@@ -32,43 +38,46 @@ import adapters
 import guards
 from runwhen_capability import Context
 
-from . import _common
+from . import _common, _plan, _runner
 
 # sqlfluff has no error/warning/info vocabulary of its own -- `warning` is a
 # bool distinguishing advisory formatting rules from ones that would fail a
 # build, so it is the whole map.
 SEVERITY = {True: "warning", False: "note"}
+NAME = "sqlfluff"
+KIND = "SQL"
 FILES = ("*.sql",)
 CONFIG = "required"
+CONFIG_NAMES = (
+    _plan.ConfigName(".sqlfluff"),
+    _plan.ConfigName("pyproject.toml", ("tool", "sqlfluff")),
+    _plan.ConfigName("setup.cfg", ("sqlfluff",)),
+    _plan.ConfigName("tox.ini", ("sqlfluff",)),
+)
 CI_BINARY = "sqlfluff"
 # `.sqlfluff`/pyproject.toml/setup.cfg/tox.ini may set the jinja templater's
-# library_path, which sqlfluff imports Python modules from.
+# library_path/loader_search_path/load_macros_from_path/exclude_macros_from_path.
 GUARD = guards.sqlfluff
+GUARD_CHAIN = True  # sqlfluff merges every config from the root down to the file's directory
+# sqlfluff's loader also merges pep8.ini, but it configures nothing else
+# sqlfluff cares about here, so it counts for the guard only, never eligibility.
+GUARD_EXTRA_NAMES = (_plan.ConfigName("pep8.ini"),)
+GUARD_FILES = True  # inline `-- sqlfluff:` directives in the linted .sql file are config too
+LANE = "A"  # per-file-nearest (verified); sqlfluff has no --config flag
 EXPECT_EXIT = (0, 1)
 
 
-def detect(tree: Path) -> list[Path]:
-    roots: set[Path] = set()
-    for p in _common.config_files(tree, ".sqlfluff"):
-        roots.add(p.parent)
-    for p in _common.config_files(tree, "pyproject.toml"):
-        if _common.toml_table(p, "tool", "sqlfluff") is not None:
-            roots.add(p.parent)
-    for p in _common.config_files(tree, "setup.cfg", "tox.ini"):
-        if _common.ini_section(p, "sqlfluff") is not None:
-            roots.add(p.parent)
-    return sorted(roots)
+def applicable(ctx: Context, tree: Path, changed: list[str] | None) -> _plan.Applicability:
+    return _plan.plan(ctx, tree, changed, sys.modules[__name__])
 
 
-def check(ctx: Context, tree: Path, changed: list[str] | None):
-    findings, stop = _common.gated(ctx, tree, sys.modules[__name__])
-    if stop:
-        return findings
-
-    # "." replaces capture.log's fixture-specific "db" dir; sqlfluff lint
-    # recurses into whatever path it is given.
-    proc = ctx.run(["sqlfluff", "lint", "--format", "json", "."], cwd=tree)
+def check(ctx: Context, tree: Path, inv: _plan.Invocation):
+    proc = _runner.run(
+        ctx,
+        ["sqlfluff", "lint", "--format", "json", *_runner.files_arg(inv)],
+        cwd=_runner.cwd_path(tree, inv),
+    )
     fail = _common.check_exit(ctx, tree, "sqlfluff", proc, sys.modules[__name__])
     if fail is not None:
         return fail
-    return _common.emit(ctx, adapters.sqlfluff(proc.stdout, SEVERITY), tree, changed)
+    return _runner.records_to_findings(ctx, tree, inv, adapters.sqlfluff(proc.stdout, SEVERITY))

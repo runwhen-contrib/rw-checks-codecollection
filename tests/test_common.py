@@ -1,12 +1,10 @@
-"""tools/_common.py unit tests: the `Skip`/`gate()`/`gated()` contract
-(rw-1416 finding 1), the never-empty `unsafe_config_finding` (finding 3),
-the CI-skip regex/comment-strip (finding 4), the check-failed wiring
-(finding 2), and the single-walk-per-tree cache (finding 6).
+"""tools/_common.py unit tests: the never-empty `unsafe_config_finding`
+(rw-1416 finding 3), the CI-skip regex/comment-strip (finding 4), and the
+check-failed/check_exit wiring (finding 2).
 """
 
 from __future__ import annotations
 
-import pathlib
 import subprocess
 import sys
 from pathlib import Path
@@ -46,98 +44,6 @@ class _FakeContext(Context):
 
 def _ctx(tmp_path: Path, **kwargs) -> _FakeContext:
     return _FakeContext(capability="rw-checks", operation="x", workdir=tmp_path, **kwargs)
-
-
-# --- Skip / gate() / gated() -------------------------------------------------
-
-
-class _Mod:
-    """A minimal stand-in for a tool module -- only the attributes gate()
-    reads."""
-
-    FILES: tuple[str, ...] = ()
-    CONFIG = "optional"
-    CI_BINARY: str | None = None
-    GUARD = None
-
-    @staticmethod
-    def detect(tree: Path) -> list[Path]:
-        return []
-
-
-def test_gate_returns_none_when_nothing_skips(tmp_path):
-    assert _common.gate(tmp_path, _Mod) is None
-
-
-def test_gate_skips_on_missing_files(tmp_path):
-    class Mod(_Mod):
-        FILES = ("*.py",)
-
-    skip = _common.gate(tmp_path, Mod)
-    assert skip == _common.Skip("no matching files")
-    assert skip.unsafe is False
-
-
-def test_gate_skips_when_config_required_and_absent(tmp_path):
-    class Mod(_Mod):
-        CONFIG = "required"
-
-    skip = _common.gate(tmp_path, Mod)
-    assert skip is not None
-    assert skip.reason == "not configured in this repository"
-    assert skip.unsafe is False
-
-
-def test_gate_skips_when_ci_already_runs(tmp_path):
-    write(tmp_path, ".github/workflows/ci.yml", "- run: ruff check .\n")
-
-    class Mod(_Mod):
-        CI_BINARY = "ruff"
-
-    skip = _common.gate(tmp_path, Mod)
-    assert skip is not None
-    assert "ruff" in skip.reason
-    assert skip.unsafe is False
-
-
-def test_gate_guard_refusal_is_unsafe_and_checked_first(tmp_path):
-    """The guard runs BEFORE the files gate -- a refusal must win even when
-    FILES would also have skipped the tool."""
-
-    class Mod(_Mod):
-        FILES = ("*.py",)  # would also skip -- no .py files in tmp_path
-        GUARD = staticmethod(lambda tree: "config.yaml: sets something dangerous")
-
-    skip = _common.gate(tmp_path, Mod)
-    assert skip == _common.Skip("config.yaml: sets something dangerous", unsafe=True)
-
-
-def test_gated_runs_when_gate_is_none(tmp_path):
-    findings, stop = _common.gated(_ctx(tmp_path), tmp_path, _Mod)
-    assert findings == []
-    assert stop is False
-
-
-def test_gated_stops_silently_on_an_ordinary_skip(tmp_path):
-    class Mod(_Mod):
-        FILES = ("*.py",)
-
-    findings, stop = _common.gated(_ctx(tmp_path), tmp_path, Mod)
-    assert findings == []
-    assert stop is True
-
-
-def test_gated_surfaces_a_finding_on_a_guard_refusal(tmp_path):
-    class Mod(_Mod):
-        GUARD = staticmethod(
-            lambda tree: ".pylintrc: sets init-hook, which executes arbitrary Python"
-        )
-
-    findings, stop = _common.gated(_ctx(tmp_path), tmp_path, Mod)
-    assert stop is True
-    assert len(findings) == 1
-    assert findings[0].rule == "rw-checks/unsafe-config"
-    assert findings[0].severity == "warning"
 
 
 # --- unsafe_config_finding never returns empty -------------------------------
@@ -209,7 +115,7 @@ def test_ci_already_runs_comment_after_real_code_is_stripped(tmp_path):
     assert _common.ci_already_runs(tmp_path, "ruff") is None
 
 
-# --- check_exit / run_to_file / check_failed_finding -------------------------
+# --- check_exit / check_failed_finding ---------------------------------------
 
 
 def test_check_failed_finding_is_never_empty_and_well_formed(tmp_path):
@@ -245,86 +151,23 @@ def test_check_exit_outside_expect_exit_returns_a_finding(tmp_path):
     assert findings[0].rule == "rw-checks/check-failed"
 
 
-def test_run_to_file_raises_on_unexpected_exit_code(tmp_path):
-    class Mod:
-        EXPECT_EXIT = (0,)
-
-    report = tmp_path / "out.sarif"
-    report.write_text('{"runs": []}')
-    ctx = _ctx(tmp_path, returncode=1, stderr="boom")
-
-    with pytest.raises(_common.ToolFailed) as excinfo:
-        _common.run_to_file(ctx, ["tool"], tmp_path, report, Mod)
-    assert excinfo.value.exit_code == 1
+# --- toml_table never raises (H6) --------------------------------------------
 
 
-def test_run_to_file_raises_on_missing_report(tmp_path):
-    class Mod:
-        EXPECT_EXIT = (0,)
-
-    report = tmp_path / "never-written.sarif"
-    ctx = _ctx(tmp_path, returncode=0)
-
-    with pytest.raises(_common.ToolFailed):
-        _common.run_to_file(ctx, ["tool"], tmp_path, report, Mod)
-
-
-def test_run_to_file_raises_on_empty_report(tmp_path):
-    """An empty report used to be silently read as 'the tool found nothing'
-    -- exactly as wrong when the tool never ran at all."""
-
-    class Mod:
-        EXPECT_EXIT = (0,)
-
-    report = tmp_path / "empty.sarif"
-    report.write_text("   \n")
-    ctx = _ctx(tmp_path, returncode=0)
-
-    with pytest.raises(_common.ToolFailed):
-        _common.run_to_file(ctx, ["tool"], tmp_path, report, Mod)
+def test_toml_table_recursion_error_returns_none_not_raise(tmp_path):
+    """`toml_table` is called during ELIGIBILITY (`_plan._counts`), before any
+    guard runs -- a config that blows tomllib's own parser recursion must
+    come back as "not a config" (None), not escape as a RecursionError and
+    crash the whole task."""
+    n = 5000
+    path = write(tmp_path, "pyproject.toml", "x = " + "[" * n + "1" + "]" * n + "\n")
+    assert _common.toml_table(path, "tool", "sqlfluff") is None
 
 
-def test_run_to_file_succeeds_and_returns_the_report_text(tmp_path):
-    class Mod:
-        EXPECT_EXIT = (0,)
-
-    report = tmp_path / "ok.sarif"
-    report.write_text('{"runs": []}')
-    ctx = _ctx(tmp_path, returncode=0)
-
-    assert _common.run_to_file(ctx, ["tool"], tmp_path, report, Mod) == '{"runs": []}'
+def test_toml_table_missing_file_returns_none(tmp_path):
+    assert _common.toml_table(tmp_path / "nope.toml", "tool") is None
 
 
-# --- the tree is walked once, not once per glob per tool ---------------------
-
-
-def test_the_tree_is_walked_once_across_many_gate_calls(tmp_path, monkeypatch):
-    write(tmp_path, "a.py", "x = 1\n")
-    write(tmp_path, "conf.yaml", "key: value\n")
-
-    calls = {"n": 0}
-    original_rglob = pathlib.Path.rglob
-
-    def counting_rglob(self, pattern):
-        calls["n"] += 1
-        return original_rglob(self, pattern)
-
-    monkeypatch.setattr(pathlib.Path, "rglob", counting_rglob)
-
-    class ModA(_Mod):
-        FILES = ("*.py",)
-
-    class ModB(_Mod):
-        FILES = ("*.md",)
-        CONFIG = "required"
-
-        @staticmethod
-        def detect(tree):
-            return _common.config_files(tree, "conf.yaml")
-
-    # 22 tools' worth of gate() calls against the SAME tree, mixing
-    # find_files (FILES) and config_files (detect()) callers.
-    for mod in (ModA, ModB, ModA, ModB, ModA):
-        _common.gate(tmp_path, mod)
-
-    assert calls["n"] == 1, f"expected exactly one walk of {tmp_path}, got {calls['n']}"
+def test_toml_table_malformed_returns_none(tmp_path):
+    path = write(tmp_path, "pyproject.toml", "not [[[ valid toml\n===\n")
+    assert _common.toml_table(path, "tool") is None

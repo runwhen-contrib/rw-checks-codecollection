@@ -185,36 +185,6 @@
     },
     {
       "type": "application",
-      "name": "checkmake",
-      "version": "0.2.2",
-      "purl": "pkg:github/mrtazz/checkmake@0.2.2",
-      "scope": "required",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/mrtazz/checkmake/releases/download/0.2.2/checkmake-0.2.2.linux.amd64",
-          "comment": "linux/amd64",
-          "hashes": [
-            {
-              "alg": "SHA-256",
-              "content": "bedd033b06f2563809855ec2a9950c7a81acea6cd82937fd2f124e2c1c5fc3d5"
-            }
-          ]
-        }
-      ],
-      "properties": [
-        {
-          "name": "rw:archive-kind",
-          "value": "binary"
-        },
-        {
-          "name": "rw:binary-name",
-          "value": "checkmake"
-        }
-      ]
-    },
-    {
-      "type": "application",
       "name": "dotenv-linter",
       "version": "3.3.0",
       "purl": "pkg:github/dotenv-linter/dotenv-linter@v3.3.0",
@@ -497,88 +467,6 @@
         {
           "name": "rw:binary-name",
           "value": "tflint"
-        }
-      ]
-    },
-    {
-      "type": "application",
-      "name": "trivy",
-      "version": "0.74.0",
-      "purl": "pkg:github/aquasecurity/trivy@v0.74.0",
-      "scope": "required",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz",
-          "comment": "linux/amd64",
-          "hashes": [
-            {
-              "alg": "SHA-256",
-              "content": "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
-            }
-          ]
-        },
-        {
-          "type": "distribution",
-          "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz",
-          "comment": "linux/arm64",
-          "hashes": [
-            {
-              "alg": "SHA-256",
-              "content": "b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5"
-            }
-          ]
-        }
-      ],
-      "properties": [
-        {
-          "name": "rw:archive-kind",
-          "value": "tar.gz"
-        },
-        {
-          "name": "rw:binary-name",
-          "value": "trivy"
-        }
-      ]
-    },
-    {
-      "type": "application",
-      "name": "trufflehog",
-      "version": "3.90.8",
-      "purl": "pkg:github/trufflesecurity/trufflehog@v3.90.8",
-      "scope": "required",
-      "externalReferences": [
-        {
-          "type": "distribution",
-          "url": "https://github.com/trufflesecurity/trufflehog/releases/download/v3.90.8/trufflehog_3.90.8_linux_amd64.tar.gz",
-          "comment": "linux/amd64",
-          "hashes": [
-            {
-              "alg": "SHA-256",
-              "content": "aa2258dc4e76d93518730331e69ca01a638c365ab862a828c566e025f6c8150c"
-            }
-          ]
-        },
-        {
-          "type": "distribution",
-          "url": "https://github.com/trufflesecurity/trufflehog/releases/download/v3.90.8/trufflehog_3.90.8_linux_arm64.tar.gz",
-          "comment": "linux/arm64",
-          "hashes": [
-            {
-              "alg": "SHA-256",
-              "content": "f49e1e795b349198a026f6e56622eb227c73f8038edddc1c48d5e8c244bebe71"
-            }
-          ]
-        }
-      ],
-      "properties": [
-        {
-          "name": "rw:archive-kind",
-          "value": "tar.gz"
-        },
-        {
-          "name": "rw:binary-name",
-          "value": "trufflehog"
         }
       ]
     },

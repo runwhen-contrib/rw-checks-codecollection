@@ -58,10 +58,6 @@ cap() {
 echo "--- SARIF-native ---"
 cap ruff        sarif ruff check --output-format=sarif .
 cap gitleaks    sarif sh -c 'gitleaks dir . --report-format sarif --report-path /tmp/gl.sarif --no-banner --exit-code 0 >/dev/null 2>&1; cat /tmp/gl.sarif'
-# Must mirror tools/trivy.py exactly: it is narrowed to --scanners vuln so
-# hadolint/checkov/gitleaks own their own families. A fixture captured with
-# the wider argv would be evidence for code paths that no longer run.
-cap trivy       sarif trivy fs --format sarif --quiet --scanners vuln .
 cap osv-scanner sarif osv-scanner --format sarif -r .
 # Must mirror tools/checkov.py exactly, --skip-framework dockerfile included.
 cap checkov     sarif sh -c 'd=$(mktemp -d); checkov -d . --skip-framework dockerfile --output sarif --output-file-path "$d" >/dev/null 2>&1; cat "$d/results_sarif.sarif"'
@@ -74,7 +70,6 @@ cap hadolint    json hadolint -f json Dockerfile
 cap actionlint  json actionlint -format '{{json .}}' -no-color .github/workflows/ci.yml
 cap pylint      json pylint --output-format=json --exit-zero src
 cap sqlfluff    json sqlfluff lint --format json db
-cap trufflehog  jsonl trufflehog filesystem . --json --no-update --no-verification
 cap biome       json biome lint --reporter=json src
 cap ast-grep    json ast-grep scan --json
 cap regal       json regal lint --format json policy
@@ -84,8 +79,6 @@ cap vale        json vale --output=JSON docs
 echo "--- text ---"
 cap yamllint    txt yamllint -f parsable .
 cap flake8      txt flake8 '--format=%(path)s:%(row)d:%(col)d:%(code)s:%(text)s' src
-cap checkmake   txt checkmake --format="{{.Rule}}|{{.FileName}}|{{.LineNumber}}|{{.Violation}}
-" Makefile
 cap dotenv      txt dotenv-linter .env
 
 echo

@@ -2,15 +2,17 @@
 capability's `ruff` (stdout path) and `gitleaks` (report-file path) tasks,
 all the way to host.run_request's TaskResult -- not a synthetic fixture
 capability, so this proves the actual wiring a pod hits: OutputTooLargeError
-(ctx.run's stdout cap, tools/_common.py's run_to_file stat guard) surfaces
+(ctx.run's stdout cap, tools/_runner.py's run_to_file stat guard) surfaces
 as a disclosed `TaskResult(status="failed")`, per FAILURE-POLICY.md, and a
 sibling task in the same request is unaffected.
 
-Both tasks are chosen because their gate() never skips regardless of
-`tree`'s contents (ruff needs one *.py file present; gitleaks needs
-nothing at all -- FILES=(), CONFIG="optional", CI_BINARY=None, GUARD=None),
-so a bare tmp_path tree plus a stubbed binary on PATH is enough to reach
-ctx.run without any real git checkout.
+Both tasks are reached with an explicit `changed` list, because checks are
+diff-scoped: `changed: None` means no diff and every check skips without
+running. ruff additionally needs a config present (CONFIG="required"), so
+the tree carries a ruff.toml; gitleaks takes every changed file
+(FILES=(), CONFIG="optional", CI_BINARY=None, GUARD=None). A tmp_path tree
+plus a stubbed binary on PATH is then enough to reach ctx.run without any
+real git checkout.
 """
 
 from __future__ import annotations
@@ -49,6 +51,7 @@ def test_ruff_stdout_overflow_fails_only_that_task(tmp_path, monkeypatch):
     `status: ok`, empty findings), proving one task's refusal does not cost
     the rest of the request."""
     (tmp_path / "a.py").write_text("import os\n")  # satisfies ruff's FILES=("*.py",) gate
+    (tmp_path / "ruff.toml").write_text("line-length = 100\n")  # ruff's CONFIG is "required"
     over_budget = SARIF_BYTE_BUDGET + (5 * 1024 * 1024)
     bin_dir = _stub(
         tmp_path,
@@ -62,8 +65,8 @@ def test_ruff_stdout_overflow_fails_only_that_task(tmp_path, monkeypatch):
         {
             "version": 1,
             "tasks": [
-                {"task": "ruff", "inputs": {"tree": tmp_path, "changed": None}},
-                {"task": "actionlint", "inputs": {"tree": tmp_path, "changed": None}},
+                {"task": "ruff", "inputs": {"tree": tmp_path, "changed": ["a.py"]}},
+                {"task": "actionlint", "inputs": {"tree": tmp_path, "changed": ["a.py"]}},
             ],
         }
     )
@@ -73,16 +76,25 @@ def test_ruff_stdout_overflow_fails_only_that_task(tmp_path, monkeypatch):
     by_task = {t.task: t for t in result.tasks}
     assert by_task["ruff"].status == "failed"
     assert "check output too large to process" in by_task["ruff"].error
+    # B3: ">N bytes" (a lower bound) is the shape ONLY ctx.run's incremental
+    # stdout cap produces (context.py:318) -- sarif.py's own post-
+    # materialisation guard reports an exact count instead, with no ">",
+    # so this line alone tells the two apart. Deleting ctx.run's cap would
+    # still leave this task "failed" with the same message PREFIX (ruff's
+    # full stdout would reach ctx.sarif.parse, which raises on it too) --
+    # only this ">" proves it was caught while still streaming in.
+    assert ">" in by_task["ruff"].error
 
     assert by_task["actionlint"].status == "ok"
 
 
 def test_gitleaks_report_file_overflow_fails_only_that_task(tmp_path, monkeypatch):
     """gitleaks writes its SARIF to a report FILE, read back by
-    tools/_common.py's run_to_file() -- the stat-before-read guard is what
+    tools/_runner.py's run_to_file() -- the stat-before-read guard is what
     has to catch this, not ctx.run's stdout cap (the stub writes almost
     nothing to stdout). The stub locates the report path the same way the
     real gitleaks argv does: the argument right after `--report-path`."""
+    (tmp_path / "a.txt").write_text("hello\n")
     over_budget = SARIF_BYTE_BUDGET + (5 * 1024 * 1024)
     bin_dir = _stub(
         tmp_path,
@@ -95,13 +107,31 @@ def test_gitleaks_report_file_overflow_fails_only_that_task(tmp_path, monkeypatc
     )
     _prepend_path(monkeypatch, bin_dir)
 
+    # B3: the message text alone does not tell this guard apart from
+    # sarif.py's own post-materialisation size check (SarifClient.parse
+    # raises the SAME "check output too large to process: N bytes" once a
+    # fully-read, over-budget report reaches it) -- deleting _runner.py's
+    # `report.stat()` guard left the suite green for exactly that reason.
+    # Tracking Path.read_text on the report file specifically proves the
+    # stat guard refused BEFORE the file was ever read into memory, which
+    # is the property that guard exists for.
+    report_reads: list[Path] = []
+    real_read_text = Path.read_text
+
+    def tracking_read_text(self, *args, **kwargs):
+        if self.name == "gitleaks.sarif":
+            report_reads.append(self)
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", tracking_read_text)
+
     capability = load_capability(CAPABILITY_DIR)
     request = RequestEnvelope.model_validate(
         {
             "version": 1,
             "tasks": [
-                {"task": "gitleaks", "inputs": {"tree": tmp_path, "changed": None}},
-                {"task": "actionlint", "inputs": {"tree": tmp_path, "changed": None}},
+                {"task": "gitleaks", "inputs": {"tree": tmp_path, "changed": ["a.txt"]}},
+                {"task": "actionlint", "inputs": {"tree": tmp_path, "changed": ["a.txt"]}},
             ],
         }
     )
@@ -111,5 +141,6 @@ def test_gitleaks_report_file_overflow_fails_only_that_task(tmp_path, monkeypatc
     by_task = {t.task: t for t in result.tasks}
     assert by_task["gitleaks"].status == "failed"
     assert "check output too large to process" in by_task["gitleaks"].error
+    assert report_reads == [], "the oversized report was read into memory before being refused"
 
     assert by_task["actionlint"].status == "ok"

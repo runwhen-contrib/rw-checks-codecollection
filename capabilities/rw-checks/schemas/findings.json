@@ -83,6 +83,23 @@
       "default": false,
       "title": "Truncated",
       "type": "boolean"
+    },
+    "skipped": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Skipped"
+    },
+    "files_checked": {
+      "default": 0,
+      "title": "Files Checked",
+      "type": "integer"
     }
   },
   "title": "FindingsResult",

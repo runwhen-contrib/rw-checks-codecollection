@@ -52,8 +52,8 @@ def _loads(text: str) -> Any:
 
 
 def _jsonl(text: str) -> list[dict]:
-    """One JSON object per line (buf, trufflehog). Blank lines are skipped;
-    a malformed line raises rather than being silently dropped."""
+    """One JSON object per line (buf). Blank lines are skipped; a malformed
+    line raises rather than being silently dropped."""
     return [json.loads(line) for line in (text or "").splitlines() if line.strip()]
 
 
@@ -401,38 +401,6 @@ def flake8(text: str, severity: Mapping[str, str]) -> list[dict]:
     return out
 
 
-# --- checkmake --------------------------------------------------------------
-# checkmake's default output is a whitespace-aligned TABLE whose columns can
-# only be recovered by guessing at run boundaries. It accepts a Go
-# text/template applied PER ITEM (`range` errors -- it is not given a list),
-# so the task pins a delimited template:
-#   "{{.Rule}}|{{.FileName}}|{{.LineNumber}}|{{.Violation}}\n"
-# LineNumber is 0 for whole-file rules like minphony; 0 is the contract's
-# "no location" value and passes through unchanged. checkmake has no
-# severity vocabulary at all -- every rule is a style convention about
-# Makefile structure -- so tools/checkmake.py's SEVERITY is the degenerate
-# `{"": "note"}`, looked up by the empty-string key documenting that.
-def checkmake(text: str, severity: Mapping[str, str]) -> list[dict]:
-    out = []
-    for line in (text or "").splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("|", 3)
-        if len(parts) != 4:
-            continue
-        rule, path, line_no, message = parts
-        out.append(
-            {
-                "path": path,
-                "rule": rule,
-                "line": int(line_no) if line_no.strip().isdigit() else 0,
-                "severity": severity.get("", "note"),
-                "message": message.strip(),
-            }
-        )
-    return out
-
-
 # --- dotenv-linter ----------------------------------------------------------
 # "path:line RuleName: message", preceded by a "Checking <file>" header and
 # followed by a "Found N problems" summary -- both must be skipped or they
@@ -484,43 +452,3 @@ def buf(text: str, severity: Mapping[str, str]) -> list[dict]:
         }
         for d in _jsonl(text)
     ]
-
-
-# --- trufflehog -------------------------------------------------------------
-# `trufflehog filesystem --json` emits JSON LINES. The path is nested at
-# SourceMetadata.Data.Filesystem.file.
-#
-# TWO THINGS THIS ADAPTER MUST GET RIGHT:
-#
-# 1. `Raw` holds the DETECTED SECRET ITSELF. It never goes into `message` or
-#    `snippet`: a finding is persisted, rendered in a Check Run and handed to
-#    an LLM, so copying the credential there would leak it into all three.
-#    The rule id and location are enough to act on.
-# 2. trufflehog walks .git/objects, so a scan of a checkout reports paths like
-#    ".git/objects/30/030dd1..." which are useless to a reviewer and cannot be
-#    diff-filtered. Those are dropped here; the task also passes an exclusion,
-#    but the adapter must not depend on the argv being right.
-# A verified credential is known-live; an unverified one is a strong
-# candidate. Both are errors -- the distinction belongs in the message, not
-# in a downgrade to `warning` -- so tools/trufflehog.py's SEVERITY is the
-# degenerate `{"": "error"}`.
-def trufflehog(text: str, severity: Mapping[str, str]) -> list[dict]:
-    out = []
-    for d in _jsonl(text):
-        meta = ((d.get("SourceMetadata") or {}).get("Data") or {}).get("Filesystem") or {}
-        path = meta.get("file", "")
-        if not path or path.startswith(".git/") or "/.git/" in path:
-            continue
-        out.append(
-            {
-                "path": path,
-                "rule": d.get("DetectorName", ""),
-                "line": meta.get("line", 0),
-                "severity": severity.get("", "error"),
-                "message": (
-                    f"{d.get('DetectorName', 'unknown')} credential detected"
-                    f"{' (verified live)' if d.get('Verified') else ''}"
-                ),
-            }
-        )
-    return out

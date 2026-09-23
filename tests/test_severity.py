@@ -8,8 +8,8 @@ carries the ORIGINAL capture machine's absolute file:// paths, which never
 resolve under any local worktree, and that is a path-normalisation concern
 (sdk/runwhen_capability/sarif.py), not a severity one.
 
-severity.py itself is only BUILDERS now (from_level/by_rule_prefix/by_cvss/
-constant) that close over a tool module's own SEVERITY map -- the map is the
+severity.py itself is only BUILDERS now (from_level/by_rule_prefix/constant)
+that close over a tool module's own SEVERITY map -- the map is the
 module's, not this file's. Every test below goes through each tool module's
 own `_POLICY` (`tools.<name>._POLICY`), the exact callable `check()` passes
 to `ctx.sarif.parse`, so a test failure here means the map that actually
@@ -38,7 +38,6 @@ from tools import gitleaks as gitleaks_tool  # noqa: E402
 from tools import osv_scanner as osv_scanner_tool  # noqa: E402
 from tools import ruff as ruff_tool  # noqa: E402
 from tools import tflint as tflint_tool  # noqa: E402
-from tools import trivy as trivy_tool  # noqa: E402
 from tools import zizmor as zizmor_tool  # noqa: E402
 
 TOOLS_FIXTURES = Path(__file__).parent / "fixtures" / "tools"
@@ -109,42 +108,6 @@ def test_constant_ignores_rule_id_and_level():
     purpose; this proves the mechanism generically."""
     policy = severity.constant({"": "note"})
     assert policy("anything", "error", {"whatever": True}) == "note"
-
-
-# --- trivy ----------------------------------------------------------------
-
-
-def test_trivy_uses_security_severity_when_present():
-    by_rule = {rid: props for rid, _, props in _results("trivy.sarif")}
-    cve = by_rule["CVE-2018-18074"]
-    assert cve["security-severity"] == "7.5"
-    assert trivy_tool._POLICY("CVE-2018-18074", "warning", cve) == "error"
-
-
-def test_trivy_bands_follow_github_security_severity_convention():
-    assert trivy_tool._POLICY("x", "note", {"security-severity": "9.8"}) == "error"
-    assert trivy_tool._POLICY("x", "note", {"security-severity": "7.0"}) == "error"
-    assert trivy_tool._POLICY("x", "note", {"security-severity": "5.6"}) == "warning"
-    assert trivy_tool._POLICY("x", "note", {"security-severity": "2.0"}) == "note"
-
-
-def test_trivy_every_captured_rule_carries_security_severity():
-    """Every rule in the captured fixture -- CVEs and misconfig/secret rules
-    (KSV-*, AWS-*, DS-*) alike -- carries `security-severity`, so the
-    fallback path below is never exercised by real trivy output as
-    captured. Pinning that here means the fallback test stays honestly
-    synthetic instead of silently claiming fixture coverage it doesn't
-    have."""
-    assert all("security-severity" in props for _, _, props in _results("trivy.sarif"))
-
-
-def test_trivy_falls_back_to_level_without_security_severity():
-    # No captured trivy.sarif result lacks security-severity (see above) --
-    # this exercises the fallback branch directly rather than claiming
-    # fixture coverage the real capture doesn't have.
-    assert trivy_tool._POLICY("SOME-RULE", "error", {}) == sarif_level_severity("error")
-    assert trivy_tool._POLICY("SOME-RULE", "warning", {}) == sarif_level_severity("warning")
-    assert trivy_tool._POLICY("SOME-RULE", "note", {}) == sarif_level_severity("note")
 
 
 # --- osv-scanner ------------------------------------------------------------

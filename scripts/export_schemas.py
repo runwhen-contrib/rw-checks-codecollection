@@ -21,6 +21,7 @@ from runwhen_capability.models import (  # noqa: E402
     FindingsResult,
     GrepResult,
     LsResult,
+    QueryResult,
     ReadResult,
 )
 
@@ -30,7 +31,7 @@ from runwhen_capability.models import (  # noqa: E402
 # ./schemas/findings.json` -- the output is a FindingsResult envelope
 # ({findings, truncated}), not a bare list of Finding, so a capped result
 # can say so. rw-worktree's read/grep/ls each declare a single `result`
-# output with their own kind and schema file.
+# output with their own kind and schema file, and so does `query`.
 CAPABILITY_SCHEMAS: dict[str, dict[str, object]] = {
     "rw-checks": {
         "findings.json": TypeAdapter(FindingsResult).json_schema(),
@@ -39,6 +40,7 @@ CAPABILITY_SCHEMAS: dict[str, dict[str, object]] = {
         "read.json": TypeAdapter(ReadResult).json_schema(),
         "grep.json": TypeAdapter(GrepResult).json_schema(),
         "ls.json": TypeAdapter(LsResult).json_schema(),
+        "query.json": TypeAdapter(QueryResult).json_schema(),
     },
 }
 

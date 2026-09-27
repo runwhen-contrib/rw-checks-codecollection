@@ -133,10 +133,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth: 0 (full history, all branches) -- not just this repo's
+      # own commits: the schema immutability check below needs to diff the
+      # working tree's capabilities/*/schemas against a base ref (the PR's
+      # target branch, or the commit before this push), which a shallow
+      # checkout would not have.
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -154,6 +159,54 @@ jobs:
 
       - name: ruff format --check
         run: ruff format --check .
+
+      # Guards docs/static-checks/CAPABILITY-CONTRACT.md Part 1's "schema is
+      # exported, not hand-written -- generated from the SDK's models at
+      # build time so it cannot drift from the code": every
+      # capabilities/*/schemas/*.json file must be exactly what
+      # scripts/export_schemas.py generates from the models right now, and
+      # the run must not have produced a file the repo doesn't already
+      # track. `git diff --exit-code` alone misses a brand new (untracked)
+      # file -- there is nothing to diff it against -- so `git status
+      # --porcelain` is checked too.
+      - name: Check schemas are up to date with the models
+        run: |
+          set -euo pipefail
+          python3 scripts/export_schemas.py
+          if ! git diff --exit-code -- capabilities/*/schemas \
+             || [ -n "$(git status --porcelain -- capabilities/*/schemas)" ]; then
+            echo "::error::capabilities/*/schemas is out of date with the SDK's models."
+            echo "If a model changed, bump its schema version (the matching" \
+                 "*_SCHEMA_VERSION constant in scripts/export_schemas.py) and commit the" \
+                 "new <name>.v<N+1>.json this produces -- never edit a published schema file."
+            git status --porcelain -- capabilities/*/schemas
+            exit 1
+          fi
+
+      # Which commit to compare capabilities/*/schemas against for the
+      # immutability check below. A tag push has no cheap "previous commit"
+      # here (Contract 2's canonical release tag) and is built from an
+      # already-tested branch commit anyway, so it is skipped rather than
+      # looking up the previous tag.
+      - name: Determine schema immutability base
+        id: immutability_base
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "base=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "base=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check schema immutability
+        if: steps.immutability_base.outputs.skip != 'true'
+        run: |
+          python3 scripts/check_schema_immutability.py --base "${{ steps.immutability_base.outputs.base }}"
 
   # ===========================================================================
   # prepare — single source of truth for the tag suffixes and push flag so
@@ -311,6 +364,20 @@ jobs:
               print(f"{path}: has all required top-level keys, capability={expected_id}, mode={expected_mode}")
           PY
 
+      # Same collection scripts/manifest_label.py --schemas does for the
+      # com.runwhen.capability.schemas.v1 label, run here too so a manifest
+      # `schema:` ref that is missing, absolute, escapes the capability
+      # directory, or points at invalid/non-object JSON fails once, up
+      # front -- rather than once per (capability, arch) leg in the build
+      # matrix below.
+      - name: Validate capability schemas
+        run: |
+          set -euo pipefail
+          for capability in rw-checks rw-worktree; do
+            python3 scripts/manifest_label.py --schemas "capabilities/${capability}" > /dev/null
+            echo "capabilities/${capability}: schemas label OK"
+          done
+
   # ===========================================================================
   # build — parallel native builds, one leg per (capability, platform), so
   # each runs on a runner whose architecture matches the platform it is
@@ -369,15 +436,19 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Base64 of this leg's capability manifest, for the
-      # com.runwhen.capability.manifest.v1 label (Contract 1) -- computed
-      # once here and passed as a build-arg to both docker builds below so
-      # the smoke-test image and the pushed image carry the same label.
+      # com.runwhen.capability.manifest.v1 label (Contract 1), and of every
+      # file under this leg's capabilities/<capability>/schemas/, for the
+      # com.runwhen.capability.schemas.v1 label -- both computed once here
+      # and passed as build-args to both docker builds below so the
+      # smoke-test image and the pushed image carry the same labels.
       - name: Compute capability manifest label
         id: manifest_label
         run: |
           set -euo pipefail
           b64="$(python3 scripts/manifest_label.py capabilities/${{ matrix.capability }})"
           echo "b64=${b64}" >> "$GITHUB_OUTPUT"
+          schemas_b64="$(python3 scripts/manifest_label.py --schemas capabilities/${{ matrix.capability }})"
+          echo "schemas_b64=${schemas_b64}" >> "$GITHUB_OUTPUT"
 
       # ----------------------------------------------------------------
       # Phase 1: build natively + load locally so we can exec the smoke
@@ -394,6 +465,7 @@ jobs:
           tags: ${{ matrix.image_name }}:smoke
           build-args: |
             CAPABILITY_MANIFEST_B64=${{ steps.manifest_label.outputs.b64 }}
+            CAPABILITY_SCHEMAS_B64=${{ steps.manifest_label.outputs.schemas_b64 }}
           cache-from: type=gha,scope=${{ matrix.image_name }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image_name }}-${{ matrix.arch }}
 
@@ -476,6 +548,7 @@ jobs:
           outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.prepare.outputs.owner_lc }}/${{ matrix.image_name }},push-by-digest=true,name-canonical=true,push=true
           build-args: |
             CAPABILITY_MANIFEST_B64=${{ steps.manifest_label.outputs.b64 }}
+            CAPABILITY_SCHEMAS_B64=${{ steps.manifest_label.outputs.schemas_b64 }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

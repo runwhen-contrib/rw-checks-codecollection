@@ -520,7 +520,7 @@ def test_the_deadline_can_hit_before_the_first_op_too(tmp_path, monkeypatch):
 
 
 def test_query_schema_is_valid_json_and_matches_a_sample_output(tmp_path):
-    schema = json.loads((WORKTREE_CAPABILITY / "schemas" / "query.json").read_text())
+    schema = json.loads((WORKTREE_CAPABILITY / "schemas" / "query.v1.json").read_text())
     assert schema["title"] == "QueryResult"
     assert {"results", "truncated"} <= set(schema["properties"])
 
@@ -538,7 +538,7 @@ def test_manifest_declares_the_query_task():
 
     assert task["inputs"] == {"tree": {"from": "${setup.tree}"}, "ops": {"from": "request"}}
     assert task["outputs"] == {
-        "result": {"kind": "rw.repo_query.v1", "schema": "./schemas/query.json"}
+        "result": {"kind": "rw.repo_query.v1", "schema": "./schemas/query.v1.json"}
     }
 
 

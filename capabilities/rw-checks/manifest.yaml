@@ -76,7 +76,7 @@ tasks:
     outputs:
       findings:
         kind: rw.findings.v1             # semantic kind -- how papi consumes it
-        schema: ./schemas/findings.json  # JSON Schema -- how papi validates it
+        schema: ./schemas/findings.v1.json  # JSON Schema -- how papi validates it
 
   - name: gitleaks
     description: Secret scanning
@@ -84,7 +84,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: osv_scanner                    # must equal the tasks.py function name: the host
                                           # looks up registry.tasks by this exact string
@@ -93,7 +93,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: checkov
     description: Infrastructure-as-code static analysis
@@ -101,7 +101,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: zizmor
     description: GitHub Actions workflow security scanning
@@ -109,7 +109,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: tflint
     description: Terraform lint and static analysis
@@ -117,7 +117,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: shellcheck
     description: Shell script lint and static analysis
@@ -125,7 +125,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: hadolint
     description: Dockerfile lint and best-practice analysis
@@ -133,7 +133,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: yamllint
     description: YAML lint
@@ -141,7 +141,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: actionlint
     description: GitHub Actions workflow lint
@@ -149,7 +149,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: pylint
     description: Python lint and static analysis
@@ -157,7 +157,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: sqlfluff
     description: SQL lint
@@ -165,7 +165,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: biome
     description: JavaScript/TypeScript lint
@@ -173,7 +173,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: ast_grep                       # must equal the tasks.py function name: the host
                                           # looks up registry.tasks by this exact string
@@ -182,7 +182,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: regal
     description: Rego (OPA policy) lint
@@ -190,7 +190,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: vale
     description: Prose style lint for documentation
@@ -198,7 +198,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: flake8
     description: Python lint and style checking
@@ -206,7 +206,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: dotenv_linter                  # must equal the tasks.py function name: the host
                                           # looks up registry.tasks by this exact string
@@ -215,7 +215,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
   - name: buf
     description: Protocol Buffers lint
@@ -223,7 +223,7 @@ tasks:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
     outputs:
-      findings: { kind: rw.findings.v1, schema: ./schemas/findings.json }
+      findings: { kind: rw.findings.v1, schema: ./schemas/findings.v1.json }
 
 retention:
   pod: on_failure                        # all | on_failure | none

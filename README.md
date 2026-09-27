@@ -18,7 +18,7 @@ This repository ships:
   `gitleaks`, `osv_scanner`, `checkov`, `zizmor`, `tflint`, `shellcheck`, `hadolint`,
   `yamllint`, `actionlint`, `pylint`, `sqlfluff`, `biome`, `ast_grep`, `regal`, `vale`,
   `flake8`, `dotenv_linter`, `buf`), and the JSON Schema exported from the SDK's models
-  (`schemas/findings.json`).
+  (`schemas/findings.v1.json`).
 
 See `docs/static-checks/CAPABILITY-CONTRACT.md` and `docs/static-checks/EXECUTOR-CONTRACT.md`
 in `runwhen-auto` for the binding contracts this package implements -- the manifest shape, the
@@ -131,11 +131,42 @@ docker buildx imagetools inspect <ref> --format '{{ json (index .Image "linux/am
   | jq -r '.config.Labels["com.runwhen.capability.manifest.v1"]' | base64 -d
 ```
 
+## Schemas label
+
+Each image also carries a second OCI label, `com.runwhen.capability.schemas.v1`: base64 of a
+compact, sorted-key JSON object holding **every** file under that capability's `schemas/`
+directory -- not only the ones the current manifest references -- keyed `schemas/<filename>`. CI
+computes it with `scripts/manifest_label.py --schemas` and bakes it in via the
+`CAPABILITY_SCHEMAS_B64` build arg, right next to the manifest label above. Publishing the whole
+directory, rather than only the referenced files, means an image always carries every schema
+version it has ever shipped, so the catalog (cc-catalog-svc) can keep resolving an old run's
+schema forever, even after the manifest moves its `schema:` ref on to a newer file.
+
+Schema filenames are `<name>.v<N>.json` (`N` >= 1, e.g. `findings.v1.json`), and **a published one
+never changes or is deleted**. A shape change is a new file at the next version -- bump the
+matching `*_SCHEMA_VERSION` constant in `scripts/export_schemas.py`, run `make schemas`, and the
+manifest's `schema:` ref moves to the new file; the old file stays exactly as it was, forever.
+`scripts/check_schema_immutability.py --base <ref>` enforces this in CI (on every pull request and
+push): it fails if any `<name>.v<N>.json` that existed at `<ref>` changed or disappeared --
+compared as canonical JSON, so a whitespace-only reformat is fine -- or if any file under a
+capability's `schemas/` doesn't match that versioned naming pattern.
+
+A schema shape change is not automatically a consumer-facing break, and nothing enforces this
+mechanically: bump the output `kind` a task declares (e.g. `rw.findings.v1` -> `rw.findings.v2`)
+only when a platform consumer must handle the new shape differently.
+
+To inspect this label on a published image, the same two commands as above work, with
+`com.runwhen.capability.schemas.v1` in place of `com.runwhen.capability.manifest.v1`.
+
 ## Tests
 
 ```
 make test        # python -m pytest -q
 make lint         # ruff check .
 make fmt-check    # ruff format --check .
-make schemas      # regenerate capabilities/*/schemas/findings.json from the SDK's models
+make schemas      # regenerate capabilities/*/schemas/*.v<N>.json from the SDK's models
+```
+
+```
+python3 scripts/check_schema_immutability.py --base origin/main   # or any other git ref
 ```

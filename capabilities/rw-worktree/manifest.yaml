@@ -108,7 +108,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_read.v1
-        schema: ./schemas/read.json
+        schema: ./schemas/read.v1.json
 
   - name: grep
     description: Search the checked-out tree for a pattern
@@ -121,7 +121,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_grep.v1
-        schema: ./schemas/grep.json
+        schema: ./schemas/grep.v1.json
 
   - name: ls
     description: List a directory in the checked-out tree
@@ -132,7 +132,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_ls.v1
-        schema: ./schemas/ls.json
+        schema: ./schemas/ls.v1.json
 
   - name: query
     description: Run a batch of grep/read/ls/defs/refs operations against the checked-out tree
@@ -142,7 +142,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_query.v1
-        schema: ./schemas/query.json
+        schema: ./schemas/query.v1.json
 
 retention:
   pod: on_failure                        # all | on_failure | none

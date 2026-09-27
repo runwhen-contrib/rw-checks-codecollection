@@ -190,14 +190,19 @@ jobs:
       # looking up the previous tag.
       - name: Determine schema immutability base
         id: immutability_base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "base=origin/${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "base=origin/${BASE_REF}" >> "$GITHUB_OUTPUT"
+          elif [ "${EVENT_NAME}" = "push" ] && [ "${REF_TYPE}" != "tag" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "base=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+            echo "base=${BEFORE_SHA}" >> "$GITHUB_OUTPUT"
           else
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "base=" >> "$GITHUB_OUTPUT"
@@ -205,8 +210,10 @@ jobs:
 
       - name: Check schema immutability
         if: steps.immutability_base.outputs.skip != 'true'
+        env:
+          IMMUTABILITY_BASE: ${{ steps.immutability_base.outputs.base }}
         run: |
-          python3 scripts/check_schema_immutability.py --base "${{ steps.immutability_base.outputs.base }}"
+          python3 scripts/check_schema_immutability.py --base "${IMMUTABILITY_BASE}"
 
   # ===========================================================================
   # prepare — single source of truth for the tag suffixes and push flag so

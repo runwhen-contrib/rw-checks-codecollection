@@ -22,16 +22,12 @@ from __future__ import annotations
 import logging
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
+from runwhen_capability import Context
+from runwhen_capability.loader import load_capability
 from runwhen_capability.models import FindingsResult
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "sdk"))
-
-from runwhen_capability import Context  # noqa: E402
-from runwhen_capability.loader import load_capability  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = ROOT / "tests" / "fixtures" / "sample-repo"

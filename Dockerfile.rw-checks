@@ -1,7 +1,7 @@
 # rw-checks-codecollection: the rw-checks capability image, not a Robot
 # codebundle image.
 #
-# Image == capability, 1:1 (sdk/runwhen_capability/loader.py's
+# Image == capability, 1:1 (runwhen_capability/loader.py's
 # discover_capability_dir docstring). This repo ships two capabilities
 # (rw-checks, rw-worktree) that must run as separate executor pools -- see
 # Dockerfile.rw-worktree for the other one -- so each gets its own
@@ -9,7 +9,8 @@
 # The two share nothing at build time except the SDK layer below.
 #
 # It ships:
-#   - the runwhen_capability SDK and its rwtask task host (sdk/)
+#   - the runwhen_capability SDK and its rwtask task host (the
+#     runwhen-capability release pyproject.toml pins)
 #   - the rw-checks capability's tasks (capabilities/rw-checks/)
 #   - the pinned static-check tools rw-checks's tasks' argv invokes
 #     (rw-worktree needs none of them -- see the other Dockerfile)
@@ -46,10 +47,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # git: ctx.git.checkout()/changed_files() shell out to the git CLI (see
-# sdk/runwhen_capability/git.py). ca-certificates: TLS for git fetches
-# against real remotes. curl: fetching the pinned gitleaks release tarball
-# below (build-time only; not needed at runtime, but the slim base has no
-# apt cache to prune around it either way).
+# runwhen_capability/git.py), and pip needs it to install the SDK's pinned
+# release. ca-certificates: TLS for git fetches against real remotes. curl:
+# fetching the pinned gitleaks release tarball below (build-time only; not
+# needed at runtime, but the slim base has no apt cache to prune around it
+# either way).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         ca-certificates \
@@ -106,21 +108,21 @@ LABEL org.opencontainers.image.title="rw-checks" \
 # dpkg or pip record. This is the file that makes them visible.
 COPY sbom/tools.cdx.json /usr/share/rw-checks/tools.cdx.json
 
-# Install the SDK (and its rwtask console script) as a real package, then
-# lay THIS capability on top -- only capabilities/rw-checks/, never
-# capabilities/rw-worktree/, so this image ships exactly one manifest.yaml
-# and rwtask's own single-capability auto-discovery (loader.py,
-# discover_capability_dir) is unambiguous by construction, not by luck.
-# Copying pyproject.toml + sdk/ before capabilities/rw-checks/ keeps the
+# Install the SDK (and its rwtask console script) at the release
+# pyproject.toml pins -- installing this project installs only its
+# dependencies -- then lay THIS capability on top: only
+# capabilities/rw-checks/, never capabilities/rw-worktree/, so this image
+# ships exactly one manifest.yaml and rwtask's own single-capability
+# auto-discovery (loader.py, discover_capability_dir) is unambiguous by
+# construction, not by luck.
+# Copying pyproject.toml before capabilities/rw-checks/ keeps the
 # pip-install layer cacheable across capability-only edits.
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE /app/
-COPY sdk /app/sdk
 RUN pip install --no-cache-dir /app
 
 # Base64 of capabilities/rw-checks/manifest.yaml, produced at build time by
-# scripts/manifest_label.py -- see Contract 1 (docs/ccv-capability-catalog
-# PLAN.md in runwhen-auto). This is how the catalog discovers this
+# `rwtask label capabilities/rw-checks`. This is how the catalog discovers this
 # capability's manifest without a platform release: it reads the label off
 # the pushed image, never a repo checkout. Declared after the pip-install
 # layer, not with the labels above: every RUN after an ARG is a cache miss
@@ -131,7 +133,7 @@ LABEL com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
 # Base64 of a JSON object holding EVERY file under
 # capabilities/rw-checks/schemas/ -- not only the ones the current manifest
 # references, so an image always publishes its full schema history -- keyed
-# "schemas/<filename>", produced by `scripts/manifest_label.py --schemas`
+# "schemas/<filename>", produced by `rwtask label --schemas`
 # (see README.md's "Schemas label"). This is how the catalog (cc-catalog-svc)
 # resolves an old run's schema forever, even after the manifest moves a
 # `schema:` ref to a newer version. Same cache reasoning as

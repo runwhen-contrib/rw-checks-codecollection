@@ -3,30 +3,28 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "runwhen-capability"
-version = "0.1.0"
-description = "SDK and task host (rwtask) for RunWhen capability images"
+name = "rw-checks-codecollection"
+# Not published. Each capability's own version lives in its manifest.yaml.
+version = "0.0.0"
+description = "Static-check (rw-checks) and repository tree (rw-worktree) capabilities for RunWhen"
 requires-python = ">=3.12"
 readme = "README.md"
 license = { file = "LICENSE" }
 dependencies = [
-    "pydantic>=2,<3",
-    "PyYAML>=6",
-    "requests>=2.31",
+    # The capability SDK and its rwtask task host, pinned to a release tag.
+    "runwhen-capability @ git+https://github.com/runwhen-contrib/runwhen-capability@v0.1.0",
 ]
-
-[project.scripts]
-rwtask = "runwhen_capability.cli:main"
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
-    "responses>=0.25",
     "ruff>=0.16",
 ]
 
-[tool.setuptools.packages.find]
-where = ["sdk"]
+[tool.setuptools]
+# Nothing to package: each capability directory is loaded by path at run
+# time. Installing this project installs its dependencies, the SDK first.
+packages = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

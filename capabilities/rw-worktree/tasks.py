@@ -2,10 +2,10 @@
 into the scope exactly like rw-checks's `checkout`; `read`, `grep`, `ls`
 are read-only operations against that tree, ported from
 internal/rwcheck/serve/{read,grep,ls}.go in runwhen-runner (the v1
-worktree host) via sdk/runwhen_capability/repo_fs.py -- see that module's
+worktree host) via runwhen_capability/repo_fs.py -- see that module's
 docstring for the containment and glob-depth-fix details. `query` batches
 grep/read/ls/defs/refs ops over the same tree in one request, via
-sdk/runwhen_capability/repo_query.py.
+runwhen_capability/repo_query.py.
 
 Per docs/static-checks/EXECUTOR-CONTRACT.md "Addressing and caching": the
 tree is a cache entry keyed by (repoUrl, sha), not a leased handle.

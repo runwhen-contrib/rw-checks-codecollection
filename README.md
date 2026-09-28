@@ -6,13 +6,15 @@ codebundle collection.
 
 ## What this is
 
+This repository's capabilities are built on
+[runwhen-capability](https://github.com/runwhen-contrib/runwhen-capability) -- a small,
+Robot-free Python SDK (`runwhen_capability`) and its `rwtask` task host, pinned to a release in
+`pyproject.toml`. Tasks are plain Python functions; the SDK owns every boundary (inputs, outputs,
+credentials, subprocesses, SARIF parsing). `rwtask serve` long-polls a runner over plain
+HTTP/JSON, and `rwtask run` is the same code path against the local filesystem, for development.
+
 This repository ships:
 
-- **`sdk/runwhen_capability/`** -- a small, Robot-free Python SDK. Tasks are plain Python
-  functions; the SDK owns every boundary (inputs, outputs, credentials, subprocesses, SARIF
-  parsing). It also provides `rwtask`, the task host: `rwtask serve` long-polls
-  a runner over plain HTTP/JSON, and `rwtask run` is the same code path against the local
-  filesystem, for development.
 - **`capabilities/rw-checks/`** -- the `rw-checks` capability: a manifest
   (`manifest.yaml`), its tasks (`tasks.py`: `checkout` setup plus 19 check tasks -- `ruff`,
   `gitleaks`, `osv_scanner`, `checkov`, `zizmor`, `tflint`, `shellcheck`, `hadolint`,
@@ -89,7 +91,7 @@ needs none -- `ctx.git.checkout()` degrades to an anonymous fetch when no creden
 
 ## Running the image directly
 
-Image == capability, 1:1 (`sdk/runwhen_capability/loader.py`'s `discover_capability_dir`
+Image == capability, 1:1 (`runwhen_capability/loader.py`'s `discover_capability_dir`
 docstring): `rw-checks` and `rw-worktree` are different execution modes (stateless vs.
 stateful) and must be separate executor pools, so each gets its own Dockerfile, built from
 the same SDK layer.

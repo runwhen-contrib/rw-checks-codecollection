@@ -1,7 +1,7 @@
 # rw-worktree-codecollection: the rw-worktree capability image, not a
 # Robot codebundle image.
 #
-# Image == capability, 1:1 (sdk/runwhen_capability/loader.py's
+# Image == capability, 1:1 (runwhen_capability/loader.py's
 # discover_capability_dir docstring). rw-worktree is the ONE stateful
 # capability (see capabilities/rw-worktree/manifest.yaml's header) and must
 # run as its own executor pool, separate from rw-checks's stateless pool --
@@ -9,7 +9,8 @@
 # time except the SDK layer below.
 #
 # It ships:
-#   - the runwhen_capability SDK and its rwtask task host (sdk/)
+#   - the runwhen_capability SDK and its rwtask task host (the
+#     runwhen-capability release pyproject.toml pins)
 #   - the rw-worktree capability's tasks (capabilities/rw-worktree/)
 #   - git, for ctx.git.checkout() -- and NOTHING else. read/grep/ls
 #     (repo_fs.py) and query (repo_query.py, built on repo_fs.py) are pure
@@ -26,23 +27,24 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
 # git: ctx.git.checkout() (the `open` setup) shells out to the git CLI (see
-# sdk/runwhen_capability/git.py). ca-certificates: TLS for git fetches
-# against real remotes.
+# runwhen_capability/git.py), and pip needs it to install the SDK's pinned
+# release. ca-certificates: TLS for git fetches against real remotes.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install the SDK (and its rwtask console script) as a real package, then
-# lay THIS capability on top -- only capabilities/rw-worktree/, never
-# capabilities/rw-checks/, so this image ships exactly one manifest.yaml
-# and rwtask's own single-capability auto-discovery (loader.py,
-# discover_capability_dir) is unambiguous by construction, not by luck.
-# Copying pyproject.toml + sdk/ before capabilities/rw-worktree/ keeps the
+# Install the SDK (and its rwtask console script) at the release
+# pyproject.toml pins -- installing this project installs only its
+# dependencies -- then lay THIS capability on top: only
+# capabilities/rw-worktree/, never capabilities/rw-checks/, so this image
+# ships exactly one manifest.yaml and rwtask's own single-capability
+# auto-discovery (loader.py, discover_capability_dir) is unambiguous by
+# construction, not by luck.
+# Copying pyproject.toml before capabilities/rw-worktree/ keeps the
 # pip-install layer cacheable across capability-only edits.
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE /app/
-COPY sdk /app/sdk
 RUN pip install --no-cache-dir /app
 
 # --- OCI image annotations (opencontainers.org/image-spec) -------------------

@@ -122,8 +122,7 @@ COPY pyproject.toml README.md LICENSE /app/
 RUN pip install --no-cache-dir /app
 
 # Base64 of capabilities/rw-checks/manifest.yaml, produced at build time by
-# scripts/manifest_label.py -- see Contract 1 (docs/ccv-capability-catalog
-# PLAN.md in runwhen-auto). This is how the catalog discovers this
+# `rwtask label capabilities/rw-checks`. This is how the catalog discovers this
 # capability's manifest without a platform release: it reads the label off
 # the pushed image, never a repo checkout. Declared after the pip-install
 # layer, not with the labels above: every RUN after an ARG is a cache miss
@@ -134,7 +133,7 @@ LABEL com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
 # Base64 of a JSON object holding EVERY file under
 # capabilities/rw-checks/schemas/ -- not only the ones the current manifest
 # references, so an image always publishes its full schema history -- keyed
-# "schemas/<filename>", produced by `scripts/manifest_label.py --schemas`
+# "schemas/<filename>", produced by `rwtask label --schemas`
 # (see README.md's "Schemas label"). This is how the catalog (cc-catalog-svc)
 # resolves an old run's schema forever, even after the manifest moves a
 # `schema:` ref to a newer version. Same cache reasoning as

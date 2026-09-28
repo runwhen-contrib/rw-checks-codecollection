@@ -117,7 +117,7 @@ bakes in its own `--capability-dir` so it never has to guess which capability it
 Neither `manifest.yaml` declares an `image:` key -- an image cannot know its own digest. Instead
 each image carries its own manifest as an OCI label, `com.runwhen.capability.manifest.v1`: the
 base64 (no line breaks) of that capability's `manifest.yaml`, verbatim. CI computes it at build
-time with `scripts/manifest_label.py` and bakes it in via the `CAPABILITY_MANIFEST_B64` build
+time with `rwtask label capabilities/<name>` and bakes it in via the `CAPABILITY_MANIFEST_B64` build
 arg, so the codecollection catalog can discover a capability's manifest straight off the pushed
 image, without a platform release.
 
@@ -138,16 +138,18 @@ docker buildx imagetools inspect <ref> --format '{{ json (index .Image "linux/am
 Each image also carries a second OCI label, `com.runwhen.capability.schemas.v1`: base64 of a
 compact, sorted-key JSON object holding **every** file under that capability's `schemas/`
 directory -- not only the ones the current manifest references -- keyed `schemas/<filename>`. CI
-computes it with `scripts/manifest_label.py --schemas` and bakes it in via the
+computes it with `rwtask label --schemas capabilities/<name>` and bakes it in via the
 `CAPABILITY_SCHEMAS_B64` build arg, right next to the manifest label above. Publishing the whole
 directory, rather than only the referenced files, means an image always carries every schema
 version it has ever shipped, so the catalog (cc-catalog-svc) can keep resolving an old run's
 schema forever, even after the manifest moves its `schema:` ref on to a newer file.
 
 Schema filenames are `<name>.v<N>.json` (`N` >= 1, e.g. `findings.v1.json`), and **a published one
-never changes or is deleted**. A shape change is a new file at the next version -- bump the
-matching `*_SCHEMA_VERSION` constant in `scripts/export_schemas.py`, run `make schemas`, and the
-manifest's `schema:` ref moves to the new file; the old file stays exactly as it was, forever.
+never changes or is deleted**. Every schema file is generated from an SDK model by `rwtask
+schemas`, which reads the list under `[tool.rwtask.schemas]` in `pyproject.toml`; CI runs
+`rwtask schemas --check`. A shape change is a new file at the next version -- replace the model's
+entry there with `<name>.v<N+1>.json`, run `make schemas`, and the manifest's `schema:` ref moves
+to the new file; the old file stays exactly as it was, forever.
 `scripts/check_schema_immutability.py --base <ref>` enforces this in CI (on every pull request and
 push): it fails if any `<name>.v<N>.json` that existed at `<ref>` changed or disappeared --
 compared as canonical JSON, so a whitespace-only reformat is fine -- or if any file under a
@@ -166,7 +168,7 @@ To inspect this label on a published image, the same two commands as above work,
 make test        # python -m pytest -q
 make lint         # ruff check .
 make fmt-check    # ruff format --check .
-make schemas      # regenerate capabilities/*/schemas/*.v<N>.json from the SDK's models
+make schemas      # rwtask schemas: regenerate capabilities/*/schemas/*.v<N>.json from the SDK's models
 ```
 
 ```

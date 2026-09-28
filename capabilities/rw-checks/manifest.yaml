@@ -6,7 +6,7 @@
 # There is no `image` key here: an image cannot know its own digest. This
 # manifest instead rides the image itself, as the OCI label
 # com.runwhen.capability.manifest.v1 (base64 of this file, verbatim) --
-# scripts/manifest_label.py produces that value at build time. The digest is
+# `rwtask label` produces that value at build time. The digest is
 # owned by the registry/catalog, not this file.
 #
 # 0.3.0: every task runs only on changed files; results carry `skipped` and

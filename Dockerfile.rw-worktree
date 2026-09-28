@@ -55,8 +55,7 @@ RUN pip install --no-cache-dir /app
 ARG REVISION=unknown
 ARG CREATED=unknown
 # Base64 of capabilities/rw-worktree/manifest.yaml, produced at build time by
-# scripts/manifest_label.py -- see Contract 1 (docs/ccv-capability-catalog
-# PLAN.md in runwhen-auto). This is how the catalog discovers this
+# `rwtask label capabilities/rw-worktree`. This is how the catalog discovers this
 # capability's manifest without a platform release: it reads the label off
 # the pushed image, never a repo checkout.
 ARG CAPABILITY_MANIFEST_B64=""
@@ -64,7 +63,7 @@ ARG CAPABILITY_MANIFEST_B64=""
 # capabilities/rw-worktree/schemas/ -- not only the ones the current
 # manifest references, so an image always publishes its full schema
 # history -- keyed "schemas/<filename>", produced by
-# `scripts/manifest_label.py --schemas` (see README.md's "Schemas label").
+# `rwtask label --schemas` (see README.md's "Schemas label").
 # Grouped into the same LABEL instruction as CAPABILITY_MANIFEST_B64 above,
 # for the same cache reason.
 ARG CAPABILITY_SCHEMAS_B64=""

@@ -54,7 +54,7 @@ name: Build And Push
 #                     manifest under every tag prepare computed. There is no
 #                     rendered-manifest artifact any more: the manifest rides
 #                     each image itself, as the com.runwhen.capability.manifest.v1
-#                     label the `build` job sets from scripts/manifest_label.py
+#                     label the `build` job sets from `rwtask label`
 #                     (Contract 1) -- the catalog reads it straight off the
 #                     pushed image, never a build artifact.
 #
@@ -160,28 +160,14 @@ jobs:
       - name: ruff format --check
         run: ruff format --check .
 
-      # Guards docs/static-checks/CAPABILITY-CONTRACT.md Part 1's "schema is
-      # exported, not hand-written -- generated from the SDK's models at
-      # build time so it cannot drift from the code": every
-      # capabilities/*/schemas/*.json file must be exactly what
-      # scripts/export_schemas.py generates from the models right now, and
-      # the run must not have produced a file the repo doesn't already
-      # track. `git diff --exit-code` alone misses a brand new (untracked)
-      # file -- there is nothing to diff it against -- so `git status
-      # --porcelain` is checked too.
+      # A schema is exported, not hand-written: every file listed under
+      # [tool.rwtask.schemas] in pyproject.toml must be exactly what
+      # `rwtask schemas` writes from the SDK's models right now, and must
+      # exist. If a model changed, replace its entry there with the next
+      # <name>.v<N+1>.json and commit what `make schemas` writes -- never
+      # edit a published schema file.
       - name: Check schemas are up to date with the models
-        run: |
-          set -euo pipefail
-          python3 scripts/export_schemas.py
-          if ! git diff --exit-code -- capabilities/*/schemas \
-             || [ -n "$(git status --porcelain -- capabilities/*/schemas)" ]; then
-            echo "::error::capabilities/*/schemas is out of date with the SDK's models."
-            echo "If a model changed, bump its schema version (the matching" \
-                 "*_SCHEMA_VERSION constant in scripts/export_schemas.py) and commit the" \
-                 "new <name>.v<N+1>.json this produces -- never edit a published schema file."
-            git status --porcelain -- capabilities/*/schemas
-            exit 1
-          fi
+        run: rwtask schemas --check
 
       # Which commit to compare capabilities/*/schemas against for the
       # immutability check below. A tag push has no cheap "previous commit"
@@ -371,7 +357,7 @@ jobs:
               print(f"{path}: has all required top-level keys, capability={expected_id}, mode={expected_mode}")
           PY
 
-      # Same collection scripts/manifest_label.py --schemas does for the
+      # Same collection `rwtask label --schemas` does for the
       # com.runwhen.capability.schemas.v1 label, run here too so a manifest
       # `schema:` ref that is missing, absolute, escapes the capability
       # directory, or points at invalid/non-object JSON fails once, up
@@ -380,8 +366,9 @@ jobs:
       - name: Validate capability schemas
         run: |
           set -euo pipefail
+          python3 -m pip install --quiet .
           for capability in rw-checks rw-worktree; do
-            python3 scripts/manifest_label.py --schemas "capabilities/${capability}" > /dev/null
+            rwtask label --schemas "capabilities/${capability}" > /dev/null
             echo "capabilities/${capability}: schemas label OK"
           done
 
@@ -452,9 +439,10 @@ jobs:
         id: manifest_label
         run: |
           set -euo pipefail
-          b64="$(python3 scripts/manifest_label.py capabilities/${{ matrix.capability }})"
+          python3 -m pip install --quiet .
+          b64="$(rwtask label capabilities/${{ matrix.capability }})"
           echo "b64=${b64}" >> "$GITHUB_OUTPUT"
-          schemas_b64="$(python3 scripts/manifest_label.py --schemas capabilities/${{ matrix.capability }})"
+          schemas_b64="$(rwtask label --schemas capabilities/${{ matrix.capability }})"
           echo "schemas_b64=${schemas_b64}" >> "$GITHUB_OUTPUT"
 
       # ----------------------------------------------------------------

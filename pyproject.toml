@@ -38,3 +38,22 @@ extend-exclude = ["tests/fixtures/repo", "tests/fixtures/sample-repo"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+# Output schemas, exported from the SDK's models by `rwtask schemas` (`make
+# schemas`); CI runs `rwtask schemas --check`. One entry per
+# `tasks[].outputs.<name>.schema` a manifest declares.
+#
+# A file is named <name>.v<N>.json, and N is the schema version. Once
+# published, a file is never edited or deleted
+# (scripts/check_schema_immutability.py enforces that in CI). When a model's
+# shape changes in a way a schema consumer must handle differently, replace
+# its entry here with <name>.v<N+1>.json, run `make schemas`, and move the
+# manifest's `schema:` ref to the new file; the old file stays on disk.
+[tool.rwtask.schemas."capabilities/rw-checks"]
+"findings.v1.json" = "runwhen_capability.models:FindingsResult"
+
+[tool.rwtask.schemas."capabilities/rw-worktree"]
+"read.v1.json" = "runwhen_capability.models:ReadResult"
+"grep.v1.json" = "runwhen_capability.models:GrepResult"
+"ls.v1.json" = "runwhen_capability.models:LsResult"
+"query.v1.json" = "runwhen_capability.models:QueryResult"

@@ -25,22 +25,39 @@ from runwhen_capability.models import (  # noqa: E402
     ReadResult,
 )
 
+# Schema version for each exported model -- the number in the file's own
+# name (`<name>.v<N>.json`) and in the manifest's `schema:` ref that points
+# at it. Bump the constant for a model whose shape changed in a way a
+# schema consumer must handle differently; the export below then writes a
+# NEW file at the next version, and the manifest's `schema:` ref moves to
+# it. The old `<name>.v<N>.json` is never edited or deleted once published
+# -- see scripts/check_schema_immutability.py, which enforces exactly that
+# in CI. This is also where a developer changing one of these models sees
+# the version they need to consider bumping.
+FINDINGS_RESULT_SCHEMA_VERSION = 1
+READ_RESULT_SCHEMA_VERSION = 1
+GREP_RESULT_SCHEMA_VERSION = 1
+LS_RESULT_SCHEMA_VERSION = 1
+QUERY_RESULT_SCHEMA_VERSION = 1
+
 # Which schema files each capability needs, by capability id -- one entry
 # per `tasks[].outputs.<name>.schema` the manifest declares. Every task in
 # rw-checks declares `outputs.findings.kind: rw.findings.v1, schema:
-# ./schemas/findings.json` -- the output is a FindingsResult envelope
+# ./schemas/findings.v1.json` -- the output is a FindingsResult envelope
 # ({findings, truncated}), not a bare list of Finding, so a capped result
 # can say so. rw-worktree's read/grep/ls each declare a single `result`
 # output with their own kind and schema file, and so does `query`.
 CAPABILITY_SCHEMAS: dict[str, dict[str, object]] = {
     "rw-checks": {
-        "findings.json": TypeAdapter(FindingsResult).json_schema(),
+        f"findings.v{FINDINGS_RESULT_SCHEMA_VERSION}.json": TypeAdapter(
+            FindingsResult
+        ).json_schema(),
     },
     "rw-worktree": {
-        "read.json": TypeAdapter(ReadResult).json_schema(),
-        "grep.json": TypeAdapter(GrepResult).json_schema(),
-        "ls.json": TypeAdapter(LsResult).json_schema(),
-        "query.json": TypeAdapter(QueryResult).json_schema(),
+        f"read.v{READ_RESULT_SCHEMA_VERSION}.json": TypeAdapter(ReadResult).json_schema(),
+        f"grep.v{GREP_RESULT_SCHEMA_VERSION}.json": TypeAdapter(GrepResult).json_schema(),
+        f"ls.v{LS_RESULT_SCHEMA_VERSION}.json": TypeAdapter(LsResult).json_schema(),
+        f"query.v{QUERY_RESULT_SCHEMA_VERSION}.json": TypeAdapter(QueryResult).json_schema(),
     },
 }
 

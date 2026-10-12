@@ -10,6 +10,7 @@ ship without the `make schemas` re-run it requires.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from export_schemas import CAPABILITY_SCHEMAS  # noqa: E402
+
+VERSIONED_SCHEMA_NAME = re.compile(r"^[a-z0-9_]+\.v[1-9][0-9]*\.json$")
+
+
+def test_export_schemas_writes_versioned_filenames():
+    """scripts/export_schemas.py must write <name>.v<N>.json -- the naming
+    scripts/check_schema_immutability.py enforces never changes once
+    published (see README.md's "Schemas label")."""
+    for capability, schemas in CAPABILITY_SCHEMAS.items():
+        for filename in schemas:
+            assert VERSIONED_SCHEMA_NAME.match(filename), (
+                f"{capability}: {filename!r} is not a versioned schema filename"
+            )
 
 
 def test_checked_in_schemas_match_the_current_models():

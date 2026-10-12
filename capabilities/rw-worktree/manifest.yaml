@@ -14,13 +14,13 @@
 # expiry error, and nothing here may surface a "handle expired" condition
 # to a caller.
 #
-# `image` below is a build-time placeholder -- see rw-checks/manifest.yaml's
-# comment; CI rewrites it to the published digest. Do not hand-edit it.
+# There is no `image` key here -- see rw-checks/manifest.yaml's comment: an
+# image cannot know its own digest, so this manifest rides the image itself,
+# as the OCI label com.runwhen.capability.manifest.v1.
 apiVersion: capability/v1
 capability: rw-worktree
 version: "0.1.0"
 description: Read-only repository tree cache for deep PR review (agent reads)
-image: ghcr.io/runwhen-contrib/rw-worktree-codecollection@sha256:INJECTED_BY_CI
 
 # --- generic scheduling knobs; papi forwards these to the runner verbatim -------------
 execution:
@@ -61,6 +61,13 @@ execution:
   # flight can still overrun it -- either way this stays comfortably under
   # this 300s request timeout.
   requestTimeoutSeconds: 300
+  resources:
+    cpuRequest: "250m"
+    cpuLimit: "1"
+    memoryRequest: "512Mi"
+    memoryLimit: "1Gi"
+  # Holds materialised checkouts across requests.
+  workSizeLimit: "4Gi"
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------
 appliesTo:
@@ -101,7 +108,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_read.v1
-        schema: ./schemas/read.json
+        schema: ./schemas/read.v1.json
 
   - name: grep
     description: Search the checked-out tree for a pattern
@@ -114,7 +121,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_grep.v1
-        schema: ./schemas/grep.json
+        schema: ./schemas/grep.v1.json
 
   - name: ls
     description: List a directory in the checked-out tree
@@ -125,7 +132,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_ls.v1
-        schema: ./schemas/ls.json
+        schema: ./schemas/ls.v1.json
 
   - name: query
     description: Run a batch of grep/read/ls/defs/refs operations against the checked-out tree
@@ -135,7 +142,7 @@ tasks:
     outputs:
       result:
         kind: rw.repo_query.v1
-        schema: ./schemas/query.json
+        schema: ./schemas/query.v1.json
 
 retention:
   pod: on_failure                        # all | on_failure | none

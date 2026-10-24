@@ -13,17 +13,22 @@
 #   - DuckDB (the sql task), ripgrep (grep) and jq (jq)
 # and NOTHING else: no git, no curl, no apt jq, no lint tooling.
 #
-# Every dependency is pinned AND hash-verified, by the mechanism standard for
-# its ecosystem:
+# Every dependency that ends up in the final image is pinned, and all but the
+# SDK's own source are also hash-verified, by the mechanism standard for each
+# ecosystem:
 #
 #   PyPI -> requirements-artifact-tools.txt, installed with
 #     `pip --require-hashes --only-binary=:all:`, which refuses anything whose
 #     artifact hash is not listed, requires the full transitive closure to be
 #     pinned, and never builds an sdist.
-#   The SDK -> requirements-artifact-tools-sdk.txt, a git commit pin. A git
-#     requirement cannot be installed under --require-hashes, so it goes in
-#     separately with --no-deps; its own dependencies are in the lock above,
-#     and `pip check` below fails the build if the two ever disagree.
+#   The SDK -> requirements-artifact-tools-sdk.txt, a git commit pin: pinned,
+#     but not checked against a sha256. A git requirement cannot be installed
+#     under --require-hashes, so it goes in separately with --no-deps; its own
+#     dependencies are in the lock above, and `pip check` below fails the build
+#     if the two ever disagree. Building it uses pip's build isolation, which
+#     fetches the SDK's build backend (setuptools, wheel) from PyPI unpinned
+#     and unhashed. That happens in the build stage only, and none of it is
+#     copied into the final image.
 #   GitHub release binaries -> sbom/artifact-tools.cdx.json (CycloneDX 1.6),
 #     installed by scripts/install_tools.sh, which verifies each download's
 #     sha256 against the SBOM. It is a file of its own, not sbom/tools.cdx.json,

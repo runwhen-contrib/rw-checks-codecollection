@@ -1,0 +1,44 @@
+# Declarative source of truth for every binary the artifact-tools image
+# installs from a GitHub release.
+#
+# Same shape and same rules as tools/tools.yaml: this file is HAND-EDITED;
+# sbom/artifact-tools.cdx.json is GENERATED from it by scripts/gen_tool_sbom.py,
+# which downloads each artifact and records its sha256:
+#
+#     python3 scripts/gen_tool_sbom.py \
+#         --tools tools/artifact-tools.yaml --sbom sbom/artifact-tools.cdx.json
+#
+# Dockerfile.artifact-tools installs from the SBOM, never from this file, so a
+# version bump that has not been re-hashed cannot reach an image.
+#
+# This is a separate file from tools/tools.yaml because scripts/install_tools.sh
+# installs EVERY component of the SBOM it is given. Listing these two tools in
+# tools.yaml would ship them in the rw-checks image as well.
+#
+# `purl` follows the package-url spec's `github` type; `binary` is the file
+# name inside the archive (or the downloaded file itself, for `kind: binary`).
+
+# Names the SBOM's own subject (metadata.component); without it the generator
+# falls back to the rw-checks strings.
+component:
+  name: artifact-tools-codecollection
+  description: Search tools bundled into the artifact-tools capability image
+
+tools:
+  - name: ripgrep
+    version: "15.2.0"
+    purl: pkg:github/BurntSushi/ripgrep@15.2.0
+    kind: tar.gz
+    binary: rg
+    urls:
+      amd64: https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz
+      arm64: https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz
+
+  - name: jq
+    version: "1.8.2"
+    purl: pkg:github/jqlang/jq@jq-1.8.2
+    kind: binary
+    binary: jq
+    urls:
+      amd64: https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64
+      arm64: https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-arm64

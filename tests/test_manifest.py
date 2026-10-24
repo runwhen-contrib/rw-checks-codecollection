@@ -231,6 +231,7 @@ def test_manifest_label_script_schemas_real_manifests_produce_expected_keys(
     [
         ("Dockerfile.rw-checks", "rw-checks"),
         ("Dockerfile.rw-worktree", "rw-worktree"),
+        ("Dockerfile.artifact-tools", "artifact-tools"),
     ],
 )
 def test_dockerfile_carries_schemas_label(dockerfile, capability_dir):

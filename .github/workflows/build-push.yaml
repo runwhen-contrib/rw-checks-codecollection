@@ -1,9 +1,9 @@
 name: Build And Push
 
-# Builds this repo's TWO capability images -- rw-checks (stateless) and
-# rw-worktree (stateful) -- and pushes a multi-arch manifest for each to
-# GHCR under its own name, with the tag schema the cc-registry-v2 image
-# catalog expects:
+# Builds this repo's THREE capability images -- rw-checks (stateless),
+# rw-worktree (stateful) and artifact-tools (stateless) -- and pushes a
+# multi-arch manifest for each to GHCR under its own name, with the tag
+# schema the cc-registry-v2 image catalog expects:
 #
 #     <sanitized-ref>-<cc_sha7>
 #
@@ -17,23 +17,25 @@ name: Build And Push
 # `execution.mode`) and the runner keys an executor pool per image digest,
 # so they can never be merged into one image even though they live in one
 # repo. Each capability gets its own Dockerfile (Dockerfile.rw-checks,
-# Dockerfile.rw-worktree) and its own published image name
-# (rw-checks-codecollection, rw-worktree-codecollection); both share the
-# SDK layer and this workflow.
+# Dockerfile.rw-worktree, Dockerfile.artifact-tools) and its own published
+# image name (rw-checks-codecollection, rw-worktree-codecollection,
+# artifact-tools-codecollection); all share this workflow. The first two
+# share the vendored SDK layer; artifact-tools runs on the standalone SDK
+# (installed from a pinned commit) and has a test job of its own.
 #
-# Unlike this org's Robot codecollections, neither image is built FROM
+# Unlike this org's Robot codecollections, none of the images is built FROM
 # rw-base-runtime -- there is no runtime sha to embed in the tag, and no
 # BYO-base build-arg to plumb through.
 #
 # Architecture
 # ------------
 # The build is split across three jobs so each platform is built natively
-# rather than under QEMU emulation, and both capabilities' images are built
-# independently of each other:
+# rather than under QEMU emulation, and every capability's image is built
+# independently of the others:
 #
 #   prepare        -- compute the shared tag suffixes + push flag ONCE, share
 #                     with downstream jobs so they can't drift; also
-#                     validates both capability manifests' shape once
+#                     validates every capability manifest's shape once
 #   build (matrix) -- one job per (capability, platform), each on its own
 #                     native runner:
 #                       linux/amd64 -> ubuntu-latest
@@ -58,9 +60,9 @@ name: Build And Push
 #                     (Contract 1) -- the catalog reads it straight off the
 #                     pushed image, never a build artifact.
 #
-# `test` runs independently and gates `build`: the SDK's own pytest/ruff
-# suite is cheap and fast, and a broken task host should never reach an
-# image push -- for either capability.
+# `test` and `test-artifact-tools` run independently and gate `build`: the
+# SDK's own pytest/ruff suite and artifact-tools' behaviour tests are cheap
+# and fast, and a broken task host or task should never reach an image push.
 #
 # Build triggers:
 #   - push to ANY branch  -> produces a CodeCollectionVersion image for that branch
@@ -128,7 +130,7 @@ jobs:
   # ===========================================================================
   # test — the SDK's own suite. Independent of prepare/build so it starts
   # immediately; `build` depends on it so a broken task host never reaches
-  # an image push, for either capability.
+  # an image push, for any capability.
   # ===========================================================================
   test:
     runs-on: ubuntu-latest
@@ -216,12 +218,56 @@ jobs:
           python3 scripts/check_schema_immutability.py --base "${IMMUTABILITY_BASE}"
 
   # ===========================================================================
+  # test-artifact-tools — the artifact-tools capability's behaviour tests. They
+  # run the real tasks against the real rg, jq and DuckDB, on the standalone
+  # capability SDK. That SDK has the same distribution name as the one
+  # vendored under sdk/ and cannot share `test`'s environment, so this job
+  # builds a venv of its own (`make artifact-tools-venv`). The tests fail, not
+  # skip, when rg or jq is missing, so the pinned binaries -- the ones the
+  # image ships -- are put on PATH first. Gates `build`, like `test`.
+  # ===========================================================================
+  test-artifact-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Installed from the same SBOM, with the same sha256 verification, as in
+      # the image build. Prepended to PATH, so these shadow whatever rg and jq
+      # the runner image carries.
+      - name: Install the pinned rg and jq
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          TARGETARCH=amd64 SBOM=sbom/artifact-tools.cdx.json DEST="$RUNNER_TEMP/bin" sh scripts/install_tools.sh
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Tool versions
+        run: |
+          set -euo pipefail
+          rg --version
+          jq --version
+
+      - name: Build the test venv
+        run: make artifact-tools-venv PYTHON=python
+
+      - name: pytest
+        run: make test-artifact-tools
+
+  # ===========================================================================
   # prepare — single source of truth for the tag suffixes and push flag so
-  # the matrix builds and the merge jobs don't drift. Also validates both
-  # capability manifests' shape once, up front. Tag suffixes are computed
+  # the matrix builds and the merge jobs don't drift. Also validates every
+  # capability manifest's shape once, up front. Tag suffixes are computed
   # WITHOUT a repo name baked in -- each capability's own image name is
-  # prefixed on in the build/merge jobs, since the two publish under
-  # different GHCR paths despite sharing this one repo.
+  # prefixed on in the build/merge jobs, since each publishes under its own
+  # GHCR path despite sharing this one repo.
   # ===========================================================================
   prepare:
     runs-on: ubuntu-latest
@@ -335,15 +381,17 @@ jobs:
           # No "image": an image cannot know its own digest -- see each
           # manifest's own header comment; it rides the image as the
           # com.runwhen.capability.manifest.v1 label instead (Contract 1).
+          # "setup" is not required: a capability with no packaged setup omits it.
           REQUIRED_KEYS = {
               "apiVersion", "capability", "version", "description",
-              "execution", "appliesTo", "needs", "setup", "tasks", "retention",
+              "execution", "appliesTo", "needs", "tasks", "retention",
           }
 
           # (manifest path, expected capability id, expected execution mode)
           MANIFESTS = [
               ("capabilities/rw-checks/manifest.yaml", "rw-checks", "stateless"),
               ("capabilities/rw-worktree/manifest.yaml", "rw-worktree", "stateful"),
+              ("capabilities/artifact-tools/manifest.yaml", "artifact-tools", "stateless"),
           ]
 
           for path, expected_id, expected_mode in MANIFESTS:
@@ -380,7 +428,7 @@ jobs:
       - name: Validate capability schemas
         run: |
           set -euo pipefail
-          for capability in rw-checks rw-worktree; do
+          for capability in rw-checks rw-worktree artifact-tools; do
             python3 scripts/manifest_label.py --schemas "capabilities/${capability}" > /dev/null
             echo "capabilities/${capability}: schemas label OK"
           done
@@ -391,7 +439,7 @@ jobs:
   # building, with no QEMU emulation cost.
   # ===========================================================================
   build:
-    needs: [prepare, test]
+    needs: [prepare, test, test-artifact-tools]
     strategy:
       fail-fast: false
       matrix:
@@ -420,6 +468,20 @@ jobs:
           - capability: rw-worktree
             dockerfile: Dockerfile.rw-worktree
             image_name: rw-worktree-codecollection
+            has_linters: false
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - capability: artifact-tools
+            dockerfile: Dockerfile.artifact-tools
+            image_name: artifact-tools-codecollection
+            has_linters: false
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - capability: artifact-tools
+            dockerfile: Dockerfile.artifact-tools
+            image_name: artifact-tools-codecollection
             has_linters: false
             platform: linux/arm64
             arch: arm64
@@ -496,6 +558,23 @@ jobs:
           if [ "${{ matrix.has_linters }}" = "true" ]; then
             docker run --rm "${IMG}" ruff --version
             docker run --rm "${IMG}" gitleaks version
+          elif [ "${{ matrix.capability }}" = "artifact-tools" ]; then
+            # artifact-tools ships rg, jq and DuckDB -- and no git, curl or
+            # lint/secret-scan tooling. Assert absence so a future Dockerfile
+            # edit that lets a build tool through to the final stage gets
+            # caught.
+            docker run --rm "${IMG}" rg --version
+            docker run --rm "${IMG}" jq --version
+            docker run --rm "${IMG}" python3 -c "import duckdb; print(duckdb.__version__)"
+            for tool in git curl ruff gitleaks; do
+              if docker run --rm "${IMG}" sh -c "command -v ${tool}" >/dev/null 2>&1; then
+                echo "artifact-tools image must not ship ${tool}" >&2
+                exit 1
+              fi
+            done
+            # Every task once, as the image's own non-root user, plus a query
+            # that must not be able to read a file outside the artifact.
+            sh scripts/smoke_artifact_tools.sh "${IMG}"
           else
             # rw-worktree ships no lint/secret-scan tooling -- it cannot run
             # tasks that would need it. Assert absence so a future Dockerfile
@@ -602,6 +681,8 @@ jobs:
             image_name: rw-checks-codecollection
           - capability: rw-worktree
             image_name: rw-worktree-codecollection
+          - capability: artifact-tools
+            image_name: artifact-tools-codecollection
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

@@ -61,6 +61,7 @@ sys.path.insert(0, str(CAP_DIR))
 from artifact_tools import grep as grep_mod  # noqa: E402
 from artifact_tools import jq as jq_mod  # noqa: E402
 from artifact_tools import slice as slice_mod  # noqa: E402
+from artifact_tools import sql as sql_mod  # noqa: E402
 
 CAP = load_capability(CAP_DIR)
 
@@ -846,7 +847,8 @@ def test_sql_values_are_made_json_safe(tmp_path):
         "uuid '12345678-1234-5678-1234-567812345678' as u, interval 3 day as iv, "
         "'ab'::blob as bl, 'nan'::double as nan, 'inf'::double as inf, '-inf'::double as ninf, "
         "[1, 2, null] as lst, {'k': 'v', 'n': [1]} as st, null as nul, true as flag, "
-        "12345678901234567890123::hugeint as huge, ['2024-02-03 04:05:06+00'::timestamptz] as tzs"
+        "12345678901234567890123::hugeint as huge, ['2024-02-03 04:05:06+00'::timestamptz] as tzs, "
+        "['nan'::double, 'inf'::double] as lnan"
     )
     result = run_ok(tmp_path, "sql", {"query": query}, csv_rows(1))["result"]
     names = [c["name"] for c in result["columns"]]
@@ -864,7 +866,8 @@ def test_sql_values_are_made_json_safe(tmp_path):
     assert row["st"] == {"k": "v", "n": [1]}
     assert row["nul"] is None and row["flag"] is True
     assert row["huge"] == 12345678901234567890123
-    assert "2024-02-03 04:05:06" in row["tzs"]
+    assert row["tzs"] == ["2024-02-03 04:05:06+00"]
+    assert row["lnan"] == ["nan", "inf"]
     types = {c["name"]: c["type"] for c in result["columns"]}
     assert types["tstz"] == "TIMESTAMP WITH TIME ZONE"
     json.dumps(result, allow_nan=False)
@@ -893,7 +896,102 @@ def test_sql_long_cells_are_capped_at_16_kib(tmp_path):
     row = run_ok(tmp_path, "sql", {"query": query}, csv_rows(1))["result"]["rows"][0]
     assert row[0] == "x" * 16384 + "…"
     assert row[1].endswith("…") and len(row[1]) == len(base64.b64encode(b"y" * 16384)) + 1
-    assert row[2][0] == "z" * 16384 + "…"
+    # A list is bounded as its JSON text: cut, and marked like any other long cell.
+    assert isinstance(row[2], str) and row[2].startswith('["zzz')
+    assert len(row[2]) == 16384 + 1 and row[2].endswith("…")
+
+
+# DuckDB hands a result to Python whole, so a cell is bounded where it is produced, in the
+# query's projection, and the rows are fetched in batches sized by bytes.
+BOUNDED_CELL_QUERIES = {
+    "megabyte text on every row": (
+        "select repeat('x', 1000000) || id as s from t",
+        {},
+        "csv",
+    ),
+    "one huge text cell per row": (
+        "select repeat('x', 4000000) as s from t",
+        {"maxRows": 5},
+        "csv",
+    ),
+    "string_agg over the whole input": (
+        "select string_agg(name || repeat('z', 100), ',') as s from t",
+        {},
+        "big",
+    ),
+    "a huge blob": ("select repeat('y', 4000000)::blob as b from t", {"maxRows": 5}, "csv"),
+    "a list of the whole input": ("select list(name || repeat('z', 100)) as l from t", {}, "big"),
+    "a struct holding a huge text": (
+        "select {'k': repeat('x', 4000000)} as s from t",
+        {"maxRows": 5},
+        "csv",
+    ),
+    "a long text beside a time-zone cell": (
+        "select repeat('x', 1000000) || id as s, now() as n from t",
+        {},
+        "csv",
+    ),
+    "thirty wide text columns": (
+        "select " + ", ".join(f"repeat('a', 100000) as c{i}" for i in range(30)) + " from t",
+        {"maxRows": 50},
+        "csv",
+    ),
+}
+
+
+@pytest.mark.parametrize("name", list(BOUNDED_CELL_QUERIES))
+def test_sql_python_memory_stays_bounded_for_wide_cells(tmp_path, name):
+    query, extra, source = BOUNDED_CELL_QUERIES[name]
+    data = csv_rows(3000) if source == "csv" else csv_rows(200_000)
+    scope = stage(tmp_path, data)
+    holder = {}
+    peak = python_peak_bytes(
+        lambda: holder.update(tr=invoke(scope, "sql", {"query": query, **extra}))
+    )
+    task_result = holder["tr"]
+    assert task_result.status == "ok", task_result.error
+    result = task_result.outputs["result"]
+    validate("sql", result)
+    assert peak < 8 * MIB, f"python peak {peak / MIB:.1f} MiB"
+    cells = [cell for row in result["rows"] for cell in row if isinstance(cell, str)]
+    long_cells = [cell for cell in cells if len(cell) > 100]
+    assert long_cells, "the query should have produced long cells"
+    # Every long cell was cut at 16 KiB and says so.
+    assert all(cell.endswith("\u2026") for cell in long_cells)
+    blob_cell = len(base64.b64encode(b"y" * sql_mod.CELL_MAX_BYTES)) + 1
+    assert all(len(cell) <= max(sql_mod.CELL_MAX_CHARS + 1, blob_cell) for cell in long_cells)
+
+
+def test_sql_wide_table_is_cut_by_the_row_budget_not_by_memory(tmp_path):
+    query = "select " + ", ".join(f"repeat('a', 100000) as c{i}" for i in range(30)) + " from t"
+    result = run_ok(tmp_path, "sql", {"query": query, "maxRows": 50}, csv_rows(100))["result"]
+    assert result["truncated"] is True
+    assert 1 <= result["rowCount"] < 50
+    assert all(cell == "a" * 16384 + "\u2026" for cell in result["rows"][0])
+
+
+def test_sql_cell_bound_keeps_blob_and_nested_values_readable(tmp_path):
+    query = "select 'abc'::blob as b, [1, 2] as l, {'k': 'v'} as s, map {'a': 1} as m, 'text' as v"
+    row = run_ok(tmp_path, "sql", {"query": query}, csv_rows(1))["result"]["rows"][0]
+    assert row == [base64.b64encode(b"abc").decode(), [1, 2], {"k": "v"}, {"a": 1}, "text"]
+
+
+def test_sql_fetch_batches_are_sized_by_bytes_from_the_column_count():
+    worst_cell = sql_mod.CELL_MAX_CHARS * 4  # a cell of astral characters, in Python's memory
+    for columns in (1, 2, 7, 30, 64, 65, 500, 10_000):
+        batch = sql_mod._batch_rows(columns)
+        assert batch >= 1
+        assert batch == 1 or batch * columns * worst_cell <= 4 * MIB
+    assert sql_mod._batch_rows(1) > sql_mod._batch_rows(30) >= 1
+    assert sql_mod._batch_rows(10_000) == 1
+
+
+def test_sql_query_beyond_the_memory_limit_fails_cleanly(tmp_path):
+    # 201 rows of 4 MB is more than the 640 MB session limit: DuckDB refuses, the pod is safe.
+    error = run_fails(
+        tmp_path, "sql", {"query": "select repeat('x', 4000000) || id as s from t"}, csv_rows(3000)
+    )
+    assert "Out of Memory" in error
 
 
 def test_sql_stops_at_the_row_byte_budget(tmp_path):
@@ -938,7 +1036,7 @@ def test_sql_session_is_configured_and_locked(tmp_path):
     )
     result = run_ok(tmp_path, "sql", {"query": query}, csv_rows(1))["result"]
     row = dict(zip([c["name"] for c in result["columns"]], result["rows"][0], strict=True))
-    assert row["mem"].startswith("953.6 MiB")
+    assert row["mem"].startswith("610.3 MiB")
     assert row["threads"] == 2
     assert row["external"] is False and row["locked"] is True
     assert row["spill"].startswith("4.0 GiB")

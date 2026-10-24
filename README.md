@@ -113,13 +113,14 @@ docker run --rm artifact-tools:dev jq --version
 
 `artifact-tools` is four read-only tasks -- `grep`, `jq`, `sql` and `slice` -- that each run over
 one stored artifact, with no target. It runs on the standalone `runwhen_capability` SDK (the
-vendored `sdk/` has no artifact API), installed from its pinned v0.4.0 release tag into a virtualenv in the
-image, with DuckDB and the SDK's dependencies hash-locked in `requirements-artifact-tools.txt`.
-Its `rg` and `jq` are pinned release binaries: `tools/artifact-tools.yaml` lists them, and
-`sbom/artifact-tools.cdx.json` records their sha256, which `scripts/install_tools.sh` verifies at
-build time. That pair of files is separate from `tools/tools.yaml` because `install_tools.sh`
-installs every component of the SBOM it is given, so listing them there would ship them in the
-`rw-checks` image too. After editing the yaml, regenerate the SBOM:
+vendored `sdk/` has no artifact API), installed from its pinned v0.4.0 release tag into a
+virtualenv in the image, with DuckDB and the SDK's dependencies hash-locked in
+`requirements-artifact-tools.txt`. Its `rg` and `jq` are pinned release binaries:
+`tools/artifact-tools.yaml` lists them, and `sbom/artifact-tools.cdx.json` records their sha256,
+which `scripts/install_tools.sh` verifies at build time. That pair of files is separate from
+`tools/tools.yaml` because `install_tools.sh` installs every component of the SBOM it is given, so
+listing them there would ship them in the `rw-checks` image too. After editing the yaml, regenerate
+the SBOM:
 
 ```
 python3 scripts/gen_tool_sbom.py --tools tools/artifact-tools.yaml --sbom sbom/artifact-tools.cdx.json

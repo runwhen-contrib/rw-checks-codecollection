@@ -21,7 +21,7 @@ name: Build And Push
 # image name (rw-checks-codecollection, rw-worktree-codecollection,
 # artifact-tools-codecollection); all share this workflow. The first two
 # share the vendored SDK layer; artifact-tools runs on the standalone SDK
-# (installed from a pinned commit) and has a test job of its own.
+# (installed from its pinned v0.4.0 release tag) and has a test job of its own.
 #
 # Unlike this org's Robot codecollections, none of the images is built FROM
 # rw-base-runtime -- there is no runtime sha to embed in the tag, and no

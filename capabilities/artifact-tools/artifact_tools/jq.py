@@ -78,22 +78,74 @@ def _too_large(size: int | None, *, out_of_memory: bool = False) -> ToolError:
     )
 
 
-# What jq says on stderr, before it aborts, when an allocation fails (jq 1.6 to 1.8).
-_OUT_OF_MEMORY = ("cannot allocate memory", "out of memory")
+# What jq prints, on a line of its own, before it aborts when an allocation fails (jq 1.6 to
+# 1.8). Matched as a whole line: a filter can write what it likes to stderr (`error`, `debug`),
+# but its own errors read "jq: error (at <stdin>:N): ...".
+_OUT_OF_MEMORY = re.compile(r"^jq: error: (?:cannot allocate memory|out of memory)$", re.MULTILINE)
 
-_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|#[^\n]*|[A-Za-z_][A-Za-z0-9_]*|\S', re.DOTALL)
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _code_tokens(program: str) -> list[str]:
+    """The words and punctuation of the jq `program` outside string literals and comments, as
+    a list of tokens. The code inside a string's interpolation (`"a \\(.b)"`) is code, with
+    its own strings in it, so strings are tracked as a stack. Wrong only in ways that show a
+    string's contents as code, never the reverse (a comment is taken to end at a newline,
+    where jq may carry it on)."""
+    tokens: list[str] = []
+    depths: list[int] = []  # open parentheses in each interpolation we are inside
+    in_string = False
+    i = 0
+    while i < len(program):
+        char = program[i]
+        if in_string:
+            if char == "\\":
+                if program[i + 1 : i + 2] == "(":
+                    depths.append(1)
+                    in_string = False
+                i += 2
+                continue
+            if char == '"':
+                in_string = False
+            i += 1
+        elif char == '"':
+            in_string = True
+            i += 1
+        elif char == "#":
+            newline = program.find("\n", i)
+            i = len(program) if newline < 0 else newline
+        elif char.isspace():
+            i += 1
+        elif depths and char == ")":
+            depths[-1] -= 1
+            if depths[-1] == 0:
+                depths.pop()
+                in_string = True  # back in the string whose interpolation this was
+            i += 1
+        else:
+            if depths and char == "(":
+                depths[-1] += 1
+            match = _WORD.match(program, i)
+            token = match.group() if match else char
+            tokens.append(token)
+            i += len(token)
+    return tokens
 
 
 def check_program(program: str) -> None:
     """Refuses a filter that imports or includes a module, which would read files from a
-    directory the caller names. Strings, comments, object keys (`{import: 1}`) and field
-    names (`.import`) are not module directives: a directive is `import` or `include` followed
-    by a string. Tokenised just enough to tell those apart; anything unclear is refused."""
-    tokens = [t for t in _TOKEN.findall(program) if not t.startswith("#")]
-    for index, token in enumerate(tokens[:-1]):
-        if token in ("import", "include") and tokens[index + 1].startswith('"'):
-            if index == 0 or tokens[index - 1] not in (".", "$"):
-                raise ValueError("jq filters may not import or include modules")
+    directory the caller names (`import "m" as $x {search: "/dir"}`, and the `import @text "m"`
+    forms). `import` and `include` are reserved words in jq, so a bare one outside a string or a
+    comment is a directive, except as an object key (`{import: 1}`, followed by a colon) or a
+    field or variable name (`.import`, `$import`). Anything unclear is refused."""
+    tokens = _code_tokens(program)
+    for index, token in enumerate(tokens):
+        if token not in ("import", "include"):
+            continue
+        after_dot_or_dollar = index > 0 and tokens[index - 1] in (".", "$")
+        is_object_key = index + 1 < len(tokens) and tokens[index + 1] == ":"
+        if not (after_dot_or_dollar or is_object_key):
+            raise ValueError("jq filters may not import or include modules")
 
 
 def _pieces(head: bytes, source: Any, *, lines: bool) -> Iterator[bytes]:
@@ -170,7 +222,7 @@ def run_jq(ctx: Any, *, program: str, lines: bool | None) -> JqResult:
                 raise feeder.error
             if returncode != 0 and not truncated:
                 tail = stderr.text()
-                if any(message in tail.lower() for message in _OUT_OF_MEMORY):
+                if _OUT_OF_MEMORY.search(tail):
                     raise _too_large(_declared_size(ctx), out_of_memory=True)
                 raise RuntimeError(f"jq exited with status {returncode}: {tail}")
         finally:

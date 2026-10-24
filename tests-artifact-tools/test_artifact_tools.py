@@ -572,6 +572,22 @@ def test_jq_running_out_of_memory_is_reported_as_too_large(tmp_path, monkeypatch
     assert "use sql with format=json" in error
 
 
+def test_jq_allows_the_words_as_field_names(tmp_path):
+    data = b'{"import": 5, "include": 6}\n'
+    result = run_ok(tmp_path, "jq", {"filter": ".import + .include"}, data)["result"]
+    assert result["output"] == "11"
+
+
+def test_jq_user_errors_are_not_mistaken_for_running_out_of_memory(tmp_path):
+    # `error` and `debug` write to stderr, and the filter chooses the text; only jq's own
+    # allocator message, on a line of its own, counts.
+    for filter_ in (".msg | error", ".msg | debug | error", '"jq: error: out of memory" | error'):
+        data = b'{"msg": "out of memory"}\n'
+        error = run_fails(tmp_path / str(abs(hash(filter_))), "jq", {"filter": filter_}, data)
+        assert not error.startswith("E_TOO_LARGE_FOR_JQ"), (filter_, error)
+        assert "out of memory" in error
+
+
 def test_jq_other_failures_are_still_plain_errors(tmp_path):
     error = run_fails(tmp_path, "jq", {"filter": ".a.b"}, b'{"a": 1}\n')
     assert not error.startswith("E_TOO_LARGE_FOR_JQ")
@@ -582,6 +598,10 @@ def test_jq_other_failures_are_still_plain_errors(tmp_path):
     [
         'import "a" as $x {search: "/etc"}; $x',
         'include "a"; .',
+        'import @text "creds" as $c {search: "/d"}; $c',
+        'import @json "creds" as $c {search: "/d"}; $c',
+        'include @base64 "m" {search: "/d"}; f',
+        "import $x; 1",
         'import "a" as $x; $x',
         '# a comment first\nimport "a" as $x; 1',
         'import\n  "a" as $x;\n.',
@@ -603,6 +623,16 @@ def test_jq_refuses_to_import_or_include_modules(tmp_path, program):
         ('"include"', '"include"'),
         ('[{"name": "include"}] | map(select(.name == "include")) | length', "1"),
         ('{"a": 1} | .a as $import | $import', "1"),
+        (". as $include | $include | .a", "1"),
+        ("{a: 1} | .a", "1"),
+        # the words inside a string's interpolation, where strings nest
+        (r'"\(if .a then "include" else "x" end)"', '"include"'),
+        (r'"\("import")"', '"import"'),
+        (r'"\(.a) \("include") \("y")"', '"1 include y"'),
+        (r'"a \("b \("import") c") d"', '"a b import c d"'),
+        ("[$__loc__ | .line]", "[1]"),
+        ('{"x": $__loc__} | .x.file', '"<top-level>"'),
+        ("{import: 1, include: 2} | .import + .include", "3"),
         ('# import "x" as $y;\n.a', "1"),
     ],
 )
@@ -1049,11 +1079,19 @@ def test_sql_long_cells_are_capped_at_16_kib(tmp_path):
         "['z' || repeat('z', 20000)] as l"
     )
     row = run_ok(tmp_path, "sql", {"query": query}, csv_rows(1))["result"]["rows"][0]
-    assert row[0] == "x" * 16384 + "…"
-    assert row[1].endswith("…") and len(row[1]) == len(base64.b64encode(b"y" * 16384)) + 1
+    cap = sql_mod._cell_cap(3)  # three cut columns share the row's 16 Ki characters
+    assert cap == 16384 // 3
+    assert row[0] == "x" * cap + "…"
+    assert row[1].endswith("…") and len(row[1]) == len(base64.b64encode(b"y" * cap)) + 1
     # A list is bounded as its JSON text: cut, and marked like any other long cell.
     assert isinstance(row[2], str) and row[2].startswith('["zzz')
-    assert len(row[2]) == 16384 + 1 and row[2].endswith("…")
+    assert len(row[2]) == cap + 1 and row[2].endswith("…")
+
+
+def test_sql_a_single_text_column_keeps_the_full_cell_size(tmp_path):
+    query = "select repeat('x', 100000) as s from t"
+    cell = run_ok(tmp_path, "sql", {"query": query}, csv_rows(1))["result"]["rows"][0][0]
+    assert cell == "x" * 16384 + "…"
 
 
 # DuckDB hands a result to Python whole, so a cell is bounded where it is produced, in the
@@ -1123,10 +1161,10 @@ def test_sql_python_memory_stays_bounded_for_wide_cells(tmp_path, name):
 
 def test_sql_wide_table_is_cut_by_the_row_budget_not_by_memory(tmp_path):
     query = "select " + ", ".join(f"repeat('a', 100000) as c{i}" for i in range(30)) + " from t"
-    result = run_ok(tmp_path, "sql", {"query": query, "maxRows": 50}, csv_rows(100))["result"]
+    result = run_ok(tmp_path, "sql", {"query": query, "maxRows": 2000}, csv_rows(300))["result"]
     assert result["truncated"] is True
-    assert 1 <= result["rowCount"] < 50
-    # 30 text columns share one row of 64 KiB characters.
+    assert 1 <= result["rowCount"] < 300
+    # 30 text columns share one row of 16 Ki characters.
     cap = sql_mod.ROW_MAX_CHARS // 30
     assert all(cell == "a" * cap + "\u2026" for cell in result["rows"][0])
     assert "narrower columns" in result["hint"] and "raise maxRows" not in result["hint"]
@@ -1140,8 +1178,8 @@ def test_sql_cell_bound_keeps_blob_and_nested_values_readable(tmp_path):
 
 @pytest.mark.parametrize(
     ("cut_columns", "cap"),
-    [(0, 16384), (1, 16384), (3, 16384), (4, 16384), (5, 13107), (30, 2184), (12, 5461), (4096, 16)]
-    + [(100_000, 16)],
+    [(0, 16384), (1, 16384), (2, 8192), (3, 5461), (4, 4096), (5, 3276), (12, 1365), (30, 546)]
+    + [(1024, 16), (4096, 16), (100_000, 16)],
 )
 def test_sql_cell_cap_shares_one_row_budget_between_the_cut_columns(cut_columns, cap):
     assert sql_mod._cell_cap(cut_columns) == cap
@@ -1156,10 +1194,10 @@ def test_sql_projection_counts_only_the_columns_it_cuts():
     projection = sql_mod._projection(list(relation.columns), list(relation.types))
     assert projection.nested == [False, False, False, True, False, False]
     assert projection.cut_columns == 4  # s, b, l and the time-zone cast
-    assert projection.cell_cap == 16384
+    assert projection.cell_cap == 4096
     wide = connection.sql("select " + ", ".join(f"'x' as c{i}" for i in range(40)))
     projection = sql_mod._projection(list(wide.columns), list(wide.types))
-    assert projection.cut_columns == 40 and projection.cell_cap == 65536 // 40
+    assert projection.cut_columns == 40 and projection.cell_cap == 16384 // 40
     assert projection.sql.count("left(") == 40
 
 
@@ -1186,17 +1224,57 @@ def test_sql_query_beyond_the_memory_limit_fails_cleanly(tmp_path):
     ("statement", "expected"),
     [
         ("select * from t order by id desc", True),
-        ("SELECT a FROM t ORDER\n  BY a LIMIT 3", True),
-        ("with s as (select * from t order by id) select * from s", True),
+        ("SELECT id AS a FROM t ORDER\n  BY a LIMIT 3", True),
+        ("select * from t union all select * from t order by 1", True),
+        ("from t order by id", True),
+        ("(select * from t order by id)", True),
+        ("values (2), (1) order by 1", True),
         ("select * from t", False),
+        ("select * from t -- order by id", False),
+        ("select * from t /* order by id */", False),
         ("select 'order by' as s from t", False),
         ('select "order by" from t', False),
-        ("select * from t where name = 'x''order by y'", False),
         ("select order_by_col from t", False),
+        ("select * from t where id in (select id from t order by id desc limit 3000)", False),
+        ("with s as (select * from t order by id) select * from s", False),
+        ("select id, row_number() over (order by id) as n from t", False),
+        ("describe t", False),
+        ("summarize t", False),
+        ("pivot t on id", False),  # DuckDB cannot serialise it: treated as "no ORDER BY"
+        ("select * from", False),  # nor can it serialise what it cannot parse
     ],
 )
-def test_sql_asks_duckdb_for_a_limit_only_when_the_query_sorts(statement, expected):
-    assert sql_mod._wants_limit(statement) is expected
+def test_sql_finds_a_top_level_order_by_with_the_duckdb_parser(statement, expected):
+    connection = duckdb.connect(":memory:")
+    connection.execute("create table t as select range as id, 1 as order_by_col from range(3)")
+    assert sql_mod._sorts_at_the_top(connection, statement) is expected
+
+
+def test_sql_a_sorted_result_stays_sorted_without_insertion_order(tmp_path):
+    # A query that sorts is run with DuckDB's insertion-order preservation off (it needs the
+    # limit pushed down, and that is what makes the limit cheap). The sort must not suffer.
+    rows = run_ok(
+        tmp_path / "all",
+        "sql",
+        {"query": "select id from t order by id desc", "maxRows": 2000},
+        csv_rows(100_000),
+    )["result"]["rows"]
+    assert rows == [[i] for i in range(99_999, 97_999, -1)]
+    ties = run_ok(
+        tmp_path / "ties",
+        "sql",
+        {"query": "select id % 7 as k, id from t order by k", "maxRows": 1500},
+        csv_rows(50_000),
+    )["result"]["rows"]
+    keys = [row[0] for row in ties]
+    assert keys == sorted(keys) and set(keys) == {0}  # 7143 rows have k = 0: all ties
+
+
+def test_sql_a_plain_scan_keeps_insertion_order(tmp_path):
+    rows = run_ok(
+        tmp_path, "sql", {"query": "select id from t", "maxRows": 2000}, csv_rows(60_000)
+    )["result"]["rows"]
+    assert rows == [[i] for i in range(2000)]
 
 
 def test_sql_rows_come_back_in_file_order_across_batches(tmp_path):
@@ -1269,7 +1347,8 @@ def test_sql_session_is_configured_and_locked(tmp_path):
         "current_setting('lock_configuration') as locked, "
         "current_setting('max_temp_directory_size') as spill, "
         "current_setting('autoload_known_extensions') as autoload, "
-        "current_setting('python_enable_replacements') as replacements"
+        "current_setting('python_enable_replacements') as replacements, "
+        "current_setting('streaming_buffer_size') as stream_buffer"
     )
     result = run_ok(tmp_path, "sql", {"query": query}, csv_rows(1))["result"]
     row = dict(zip([c["name"] for c in result["columns"]], result["rows"][0], strict=True))
@@ -1278,6 +1357,9 @@ def test_sql_session_is_configured_and_locked(tmp_path):
     assert row["external"] is False and row["locked"] is True
     assert row["spill"].startswith("4.0 GiB")
     assert row["autoload"] is False and row["replacements"] is False
+    # DuckDB sizes this by the vectors, not the strings in them: at its default it lets the scan
+    # run thousands of wide rows ahead of the reader.
+    assert row["stream_buffer"] == "8.0 KiB"
 
 
 # tracemalloc cannot see DuckDB, which keeps the rows it has produced until they are fetched. So
@@ -1306,11 +1388,11 @@ print(json.dumps({
 
 
 def make_wide_parquet(path: Path, columns: int, unit: str, *, cells=17_000, rows=2_100) -> None:
-    """`rows` rows of `columns` text cells, each `cells` characters of `unit`, in row groups of 50
-    (so reading it never needs a giant vector). Compresses to almost nothing."""
+    """`rows` rows of `columns` text cells, each `cells` characters of `unit`, and an `id`, in row
+    groups of 50 (so reading it never needs a giant vector). Compresses to almost nothing."""
     cols = ", ".join(f"repeat('{unit}', {cells}) || id::varchar AS c{i}" for i in range(columns))
     batches = " UNION ALL ".join(
-        f"SELECT {cols} FROM range({start}, {min(start + 50, rows)}) t(id)"
+        f"SELECT {cols}, id FROM range({start}, {min(start + 50, rows)}) t(id)"
         for start in range(0, rows, 50)
     )
     connection = duckdb.connect(":memory:")
@@ -1320,16 +1402,39 @@ def make_wide_parquet(path: Path, columns: int, unit: str, *, cells=17_000, rows
     connection.close()
 
 
+# The query shapes include two that fooled a text search for "order by": a comment, and an ORDER BY
+# inside a subquery. Neither sorts at the top, so neither may reach DuckDB as a LIMIT (which made
+# it hold 1.5 to 2.3 GiB). A subquery that DuckDB joins to the wide table is another matter: that
+# join costs 1.4 GiB or more by itself, LIMIT or not (see the report), so the subquery here is a
+# scalar one.
+RSS_QUERIES = {
+    "plain": "select * from t",
+    "order-by-in-a-comment": "select * from t -- order by id",
+    "order-by-in-a-subquery": (
+        "select * from t where id >= (select id from t order by id desc limit 1 offset 1999)"
+    ),
+}
+
+
+@pytest.mark.parametrize("query_name", list(RSS_QUERIES))
 @pytest.mark.parametrize(
     ("columns", "unit"),
     [(30, "x"), (12, "\U0001f600")],
     ids=["30-ascii-columns", "12-emoji-columns"],
 )
-def test_sql_peak_rss_stays_under_a_gibibyte_for_wide_rows(tmp_path, columns, unit):
+def test_sql_peak_rss_stays_under_a_gibibyte_for_wide_rows(tmp_path, columns, unit, query_name):
     scope = stage(tmp_path, None)
     make_wide_parquet(scope / ".rw-artifacts" / "inputs" / "source", columns, unit)
     child = subprocess.run(
-        [sys.executable, "-c", RSS_CHILD, str(CAP_DIR), str(scope), "select * from t", "2000"],
+        [
+            sys.executable,
+            "-c",
+            RSS_CHILD,
+            str(CAP_DIR),
+            str(scope),
+            RSS_QUERIES[query_name],
+            "2000",
+        ],
         capture_output=True,
         text=True,
         timeout=300,
@@ -1505,9 +1610,12 @@ def test_sql_interrupts_a_runaway_query_at_the_deadline(tmp_path, no_margin):
 class SlowSource(io.RawIOBase):
     """An input that trickles: a small chunk every `pause` seconds, for a long time."""
 
-    def __init__(self, pause: float, chunks: int = 1000) -> None:
+    def __init__(
+        self, pause: float, chunks: int = 1000, payload: bytes = b"nothing to see here\n" * 50
+    ) -> None:
         self.pause = pause
         self.left = chunks
+        self.payload = payload
 
     def readable(self) -> bool:
         return True
@@ -1517,7 +1625,7 @@ class SlowSource(io.RawIOBase):
             return b""
         self.left -= 1
         time.sleep(self.pause)
-        return b"nothing to see here\n" * 50
+        return self.payload
 
     def readline(self, size: int = -1) -> bytes:
         return self.read(size)
@@ -1527,8 +1635,9 @@ class DiscardingOutput(io.BytesIO):
     ref = "discarded"
 
 
-def slow_ctx(deadline_in: float | None, pause: float = 0.2):
-    ctx = fake_ctx(SlowSource(pause))
+def slow_ctx(deadline_in: float | None, pause: float = 0.2, payload: bytes | None = None):
+    source = SlowSource(pause) if payload is None else SlowSource(pause, payload=payload)
+    ctx = fake_ctx(source)
     ctx.artifacts.open = lambda name, content_type=None: DiscardingOutput()
     ctx.deadline_at = None if deadline_in is None else time.monotonic() + deadline_in
     ctx.workdir = Path(".")
@@ -1546,7 +1655,9 @@ def test_grep_stops_a_slow_search_at_the_deadline(no_margin):
 
 
 def test_jq_stops_a_slow_input_at_the_deadline(no_margin):
-    ctx = slow_ctx(2)
+    # Valid JSON lines, so jq is still waiting for more when the deadline comes (text that is
+    # not JSON makes it fail at once on some platforms, before the deadline means anything).
+    ctx = slow_ctx(2, payload=b'{"a": 1}\n' * 100)
     started = time.monotonic()
     with pytest.raises(deadline_mod.ToolError, match="^E_DEADLINE:"):
         jq_mod.run_jq(ctx, program=".", lines=True)
@@ -1601,6 +1712,27 @@ def test_a_finished_task_is_not_failed_by_a_late_deadline(tmp_path, no_margin):
     scope = stage(tmp_path, b"hit\n")
     result = invoke(scope, "grep", {"pattern": "hit"}, deadline_seconds=30)
     assert result.status == "ok"
+
+
+def test_grep_cut_off_in_the_middle_of_an_event_is_a_deadline_error(
+    tmp_path, monkeypatch, no_margin
+):
+    # ripgrep killed at the deadline can leave half an event on its output; that must not be
+    # parsed. (A stand-in `rg` that writes half an event and waits to be killed.)
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "rg"
+    stub.write_text('#!/bin/sh\nprintf \'{"type":"match","data":{"lin\'\nexec sleep 30\n')
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
+    ctx = fake_ctx(io.BytesIO(b"needle\n"))
+    ctx.deadline_at = time.monotonic() + 1
+    started = time.monotonic()
+    with pytest.raises(deadline_mod.ToolError, match="^E_DEADLINE:"):
+        grep_mod.run_grep(
+            ctx, pattern="needle", ignore_case=False, context=0, max_matches=5, save_all=False
+        )
+    assert time.monotonic() - started < 5
 
 
 def test_grep_reaps_ripgrep_when_setup_after_the_spawn_fails(monkeypatch):

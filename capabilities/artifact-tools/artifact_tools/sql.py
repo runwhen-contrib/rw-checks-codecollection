@@ -30,7 +30,6 @@ import datetime
 import decimal
 import json
 import math
-import re
 import shutil
 import sys
 import uuid
@@ -47,8 +46,11 @@ from .models import SqlColumn, SqlResult
 CELL_MAX_CHARS = 16 * 1024
 CELL_MAX_BYTES = 16 * 1024
 # The cut columns of a row share this many characters (so each gets at most CELL_MAX_CHARS, and
-# at least MIN_CELL_CHARS however many there are).
-ROW_MAX_CHARS = 64 * 1024
+# at least MIN_CELL_CHARS however many there are). This is what bounds the memory of a request
+# over wide rows, because DuckDB holds the cut rows it has produced ahead of the reader: peak RSS
+# for 2000 rows of 12 columns of 4-byte characters was 840 MiB (1331 MiB on Linux) at 64 Ki, 560
+# at 32 Ki and 400 at 16 Ki, with two scan threads racing (the higher figure is the unlucky run).
+ROW_MAX_CHARS = 16 * 1024
 MIN_CELL_CHARS = 16
 ROW_BUDGET_BYTES = 4 * 1024 * 1024
 FETCH_BYTES = 4 * 1024 * 1024
@@ -65,8 +67,10 @@ _SPILL_MIN_BYTES = 256 * 1024**2
 
 _UTF8_BOM = b"\xef\xbb\xbf"
 
-_QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
-_ORDER_BY = re.compile(r"\border\s+by\b", re.IGNORECASE)
+# DuckDB sizes the buffer between a running query and the reader by the vectors, not the strings
+# in them, so at its default (about 1 MiB) the scan runs thousands of wide rows ahead of the
+# reader and everything it has produced sits in memory. The buffer then holds about one chunk.
+_STREAMING_BUFFER = "8KiB"
 
 # Python holds up to 4 bytes per character of a str; a batch is sized for text of that kind.
 _WORST_BYTES_PER_CHAR = 4
@@ -133,6 +137,7 @@ def _configure(con: duckdb.DuckDBPyConnection, temp_dir: Path, max_temp_bytes: i
         "threads=2",
         f"temp_directory={_sql_literal(str(temp_dir))}",
         f"max_temp_directory_size='{max_temp_bytes}B'",
+        f"streaming_buffer_size='{_STREAMING_BUFFER}'",
         "autoinstall_known_extensions=false",
         "autoload_known_extensions=false",
         "allow_community_extensions=false",
@@ -244,14 +249,26 @@ def _projection(columns: list[str], types: list[Any]) -> _Projection:
     return _Projection(", ".join(items), [kind in _NESTED for kind in kinds], cut_columns, cap)
 
 
-def _wants_limit(statement: str) -> bool:
-    """Whether to ask DuckDB itself for just `max_rows + 1` rows: for a query that sorts, since
-    then it keeps the best few instead of sorting everything (top-N). Not otherwise: with rows
-    that are wide, a LIMIT makes DuckDB hold far more than it returns (it keeps the rows in
-    order until it knows which to drop: 1.5 GiB of RSS for 2001 wide Parquet rows, against 315
-    MiB streaming without it). A false answer either way is harmless: a sort without the LIMIT
-    is slower, and a LIMIT where it was not needed only costs that memory."""
-    return _ORDER_BY.search(_QUOTED.sub("", statement)) is not None
+def _sorts_at_the_top(con: duckdb.DuckDBPyConnection, statement: str) -> bool:
+    """Whether `statement` has an ORDER BY of its own (not in a subquery, a CTE, a window or a
+    comment), by asking DuckDB's parser for its syntax tree: then it is worth telling DuckDB to
+    stop at `max_rows + 1` rows, so that it keeps just the best few instead of sorting everything
+    (top-N). Otherwise the rows are streamed and counted here: with rows that are wide, a LIMIT
+    makes DuckDB hold far more than it returns (1.5 GiB of RSS for 2001 wide Parquet rows,
+    against 315 MiB streaming without it).
+
+    The statement is a bound parameter of a function that only parses, and it has already been
+    accepted as one SELECT. If the parser cannot serialise it (a PIVOT, say) the answer is no,
+    which only costs the top-N speed-up."""
+    try:
+        document = con.execute("SELECT json_serialize_sql(?)", [statement]).fetchone()[0]
+        parsed = json.loads(document)
+        if parsed.get("error"):
+            return False
+        modifiers = parsed["statements"][0]["node"].get("modifiers", [])
+        return any(modifier.get("type") == "ORDER_MODIFIER" for modifier in modifiers)
+    except (duckdb.Error, ValueError, KeyError, IndexError, TypeError):
+        return False
 
 
 def _row_cost(cells: list[Any]) -> int:
@@ -298,6 +315,11 @@ def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
         _configure(con, temp_dir, _max_temp_bytes(path.stat().st_size))
         watch.check()
         con.execute(f"CREATE VIEW t AS SELECT * FROM {reader}")
+        sorts = _sorts_at_the_top(con, statement)
+        if sorts:
+            # The LIMIT given to DuckDB below only stays cheap when it need not keep the rows in
+            # file order; the query's own ORDER BY decides the order of what comes back.
+            con.execute("SET preserve_insertion_order=false")
         _lock_down(con, path)
 
         rel = con.sql(statement)
@@ -306,9 +328,9 @@ def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
         projection = _projection(names, types)
         # Streamed, with no `.execute()` (which holds every row the query produces). The row
         # limit is applied below as rows arrive, and closing the connection stops the query;
-        # DuckDB is only told the limit when the query sorts (see `_wants_limit`).
+        # DuckDB is only told the limit when the query sorts (see `_sorts_at_the_top`).
         stream = rel.project(projection.sql)
-        if _wants_limit(statement):
+        if sorts:
             stream = stream.limit(max_rows + 1)
         batch_rows = _batch_rows(projection.row_chars)
 

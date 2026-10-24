@@ -294,6 +294,8 @@ def run_grep(
             watch.arm(lambda: kill(proc))
             try:
                 for raw in bounded_lines(proc.stdout, EVENT_MAX_BYTES):
+                    if not raw.endswith(b"\n"):
+                        break  # ripgrep was cut off in the middle of an event: not parseable
                     collector.feed(raw)
             except LineTooLong:
                 kill(proc)

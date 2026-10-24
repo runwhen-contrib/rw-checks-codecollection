@@ -21,8 +21,8 @@
 #     `pip --require-hashes --only-binary=:all:`, which refuses anything whose
 #     artifact hash is not listed, requires the full transitive closure to be
 #     pinned, and never builds an sdist.
-#   The SDK -> requirements-artifact-tools-sdk.txt, a git commit pin: pinned,
-#     but not checked against a sha256. A git requirement cannot be installed
+#   The SDK -> requirements-artifact-tools-sdk.txt, pinned to the SDK's v0.4.0 release
+#     tag, but not checked against a sha256. A git requirement cannot be installed
 #     under --require-hashes, so it goes in separately with --no-deps; its own
 #     dependencies are in the lock above, and `pip check` below fails the build
 #     if the two ever disagree. Building it uses pip's build isolation, which

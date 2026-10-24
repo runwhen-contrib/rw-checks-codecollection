@@ -113,7 +113,7 @@ docker run --rm artifact-tools:dev jq --version
 
 `artifact-tools` is four read-only tasks -- `grep`, `jq`, `sql` and `slice` -- that each run over
 one stored artifact, with no target. It runs on the standalone `runwhen_capability` SDK (the
-vendored `sdk/` has no artifact API), installed from a pinned commit into a virtualenv in the
+vendored `sdk/` has no artifact API), installed from its pinned v0.4.0 release tag into a virtualenv in the
 image, with DuckDB and the SDK's dependencies hash-locked in `requirements-artifact-tools.txt`.
 Its `rg` and `jq` are pinned release binaries: `tools/artifact-tools.yaml` lists them, and
 `sbom/artifact-tools.cdx.json` records their sha256, which `scripts/install_tools.sh` verifies at

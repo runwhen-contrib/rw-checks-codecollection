@@ -1,3 +1,3 @@
-# The capability SDK for the artifact-tools image, pinned to the commit of its 0.4.0 release.
+# The capability SDK for the artifact-tools image, pinned to its v0.4.0 release tag.
 # Installed with --no-deps; its dependencies come hash-checked from requirements-artifact-tools.txt.
-runwhen-capability @ git+https://github.com/runwhen-contrib/runwhen-capability@4317cc671a84b0c7a1a452a1695e9d0baadb9aa9
+runwhen-capability @ git+https://github.com/runwhen-contrib/runwhen-capability@v0.4.0

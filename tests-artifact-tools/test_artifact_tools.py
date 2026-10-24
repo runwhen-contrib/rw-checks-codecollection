@@ -22,6 +22,7 @@ import json
 import logging
 import random
 import shutil
+import subprocess
 import sys
 import tracemalloc
 from pathlib import Path
@@ -744,41 +745,100 @@ def test_sql_can_still_read_the_artifact_through_its_view_after_lockdown(tmp_pat
     assert result["rows"] == [[7]]
 
 
+def test_the_duckdb_lockdown_holds_without_the_single_select_gate(tmp_path):
+    # The task only lets one SELECT through, but the lockdown must hold on its own: drive the
+    # session it builds with statements the gate would have refused.
+    source = tmp_path / "data.csv"
+    source.write_bytes(csv_rows(3))
+    temp_dir = tmp_path / "duck-tmp"
+    temp_dir.mkdir()
+    con = duckdb.connect(":memory:")
+    sql_mod._configure(con, temp_dir, 256 * MIB)
+    con.execute(f"CREATE VIEW t AS SELECT * FROM {sql_mod._reader('csv', source)[0]}")
+    sql_mod._lock_down(con, source)
+    attempts = [
+        (duckdb.PermissionException, f"COPY t TO '{tmp_path}/out.csv'"),
+        (duckdb.PermissionException, f"ATTACH '{tmp_path}/other.db' AS other"),
+        (duckdb.PermissionException, f"EXPORT DATABASE '{tmp_path}/export'"),
+        (duckdb.PermissionException, "INSTALL httpfs"),
+        (duckdb.PermissionException, "LOAD httpfs"),
+        (duckdb.PermissionException, "SELECT * FROM read_text('/etc/passwd')"),
+        (duckdb.InvalidInputException, "SET enable_external_access=true"),
+        (duckdb.InvalidInputException, "SET lock_configuration=false"),
+        (duckdb.InvalidInputException, f"SET allowed_paths=['{tmp_path}']"),
+        (duckdb.InvalidInputException, "SET memory_limit='64GB'"),
+    ]
+    for error_type, statement in attempts:
+        with pytest.raises(error_type, match="configuration|locked"):
+            con.execute(statement)
+    assert not list(tmp_path.glob("out.csv")) and not (tmp_path / "other.db").exists()
+    assert con.execute("select count(*) from t").fetchall() == [(3,)]
+    con.close()
+
+
 @pytest.mark.parametrize(
-    "query",
+    ("input_bytes", "expected"),
     [
-        "SET enable_external_access=true",
-        "SET lock_configuration=false",
-        "SET allowed_paths=['/etc/passwd']",
-        "COPY t TO '{tmp}/exfil.csv'",
-        "COPY (select 1) TO '{tmp}/exfil2.csv'",
-        "EXPORT DATABASE '{tmp}/exfil_db'",
-        "ATTACH '{tmp}/other.db' AS other",
-        "INSTALL httpfs",
-        "LOAD httpfs",
-        "select * from read_text('/etc/passwd')",
-        "select * from read_blob('/etc/hosts')",
-        "select * from glob('/etc/*')",
-        "select * from '/etc/passwd'",
-        "select * from read_csv('/etc/passwd')",
-        "select * from read_json('/etc/passwd')",
-        "select * from read_parquet('/etc/passwd')",
-        "select * from sniff_csv('/etc/passwd')",
-        "select 1; select 2",
-        "select 1; copy t to '{tmp}/exfil3.csv'",
-        "CREATE TABLE x AS SELECT 1",
-        "CREATE VIEW v AS SELECT 1",
-        "INSERT INTO t VALUES (1, 'a', 1.0)",
-        "UPDATE t SET id = 1",
-        "DROP VIEW t",
-        "DELETE FROM t",
-        "CALL pragma_version()",
-        "EXPLAIN SELECT 1",
-        "CREATE SECRET s (TYPE s3)",
+        (0, 4 * 1024**3),
+        (1024**2, 4 * 1024**3),
+        (3 * 1024**3, 4 * 1024**3),
+        (4 * 1024**3, 3 * 1024**3),
+        (6 * 1024**3, 1 * 1024**3),
+        (6 * 1024**3 + 512 * MIB, 512 * MIB),
+        (7 * 1024**3, 256 * MIB),
+        (50 * 1024**3, 256 * MIB),
     ],
 )
-def test_sql_escapes_fail(tmp_path, query):
-    run_fails(tmp_path, "sql", {"query": query.format(tmp=tmp_path)}, csv_rows(3))
+def test_sql_spill_allowance_leaves_room_for_the_spooled_input(input_bytes, expected):
+    # workSizeLimit (8 GiB) holds the spooled input, a GiB of other files, and the spill.
+    assert sql_mod._max_temp_bytes(input_bytes) == expected
+
+
+def test_sql_spill_allowance_is_what_the_session_gets(tmp_path):
+    data = csv_rows(10)
+    query = "select current_setting('max_temp_directory_size') as spill"
+    result = run_ok(tmp_path, "sql", {"query": query}, data)["result"]
+    assert result["rows"][0][0].startswith("4.0 GiB")
+
+
+# (query, the reason it fails). A statement that is not one SELECT is stopped by the task before
+# DuckDB sees it; a SELECT that reaches for a file is stopped by DuckDB's own lockdown.
+ESCAPES = [
+    ("SET enable_external_access=true", "single SELECT statement"),
+    ("SET lock_configuration=false", "single SELECT statement"),
+    ("SET allowed_paths=['/etc/passwd']", "single SELECT statement"),
+    ("COPY t TO '{tmp}/exfil.csv'", "single SELECT statement"),
+    ("COPY (select 1) TO '{tmp}/exfil2.csv'", "single SELECT statement"),
+    ("EXPORT DATABASE '{tmp}/exfil_db'", "single SELECT statement"),
+    ("ATTACH '{tmp}/other.db' AS other", "single SELECT statement"),
+    ("INSTALL httpfs", "single SELECT statement"),
+    ("LOAD httpfs", "single SELECT statement"),
+    ("select * from read_text('/etc/passwd')", "disabled by configuration"),
+    ("select * from read_blob('/etc/hosts')", "disabled by configuration"),
+    ("select * from glob('/etc/*')", "disabled by configuration"),
+    ("select * from '/etc/passwd'", "does not exist"),
+    ("select * from read_csv('/etc/passwd')", "disabled by configuration"),
+    ("select * from read_json('/etc/passwd')", "disabled by configuration"),
+    ("select * from read_parquet('/etc/passwd')", "disabled by configuration"),
+    ("select * from sniff_csv('/etc/passwd')", "disabled by configuration"),
+    ("select 1; select 2", "single SELECT statement"),
+    ("select 1; copy t to '{tmp}/exfil3.csv'", "single SELECT statement"),
+    ("CREATE TABLE x AS SELECT 1", "single SELECT statement"),
+    ("CREATE VIEW v AS SELECT 1", "single SELECT statement"),
+    ("INSERT INTO t VALUES (1, 'a', 1.0)", "single SELECT statement"),
+    ("UPDATE t SET id = 1", "single SELECT statement"),
+    ("DROP VIEW t", "single SELECT statement"),
+    ("DELETE FROM t", "single SELECT statement"),
+    ("CALL pragma_version()", "single SELECT statement"),
+    ("EXPLAIN SELECT 1", "single SELECT statement"),
+    ("CREATE SECRET s (TYPE s3)", "single SELECT statement"),
+]
+
+
+@pytest.mark.parametrize(("query", "reason"), ESCAPES)
+def test_sql_escapes_fail(tmp_path, query, reason):
+    error = run_fails(tmp_path, "sql", {"query": query.format(tmp=tmp_path)}, csv_rows(3))
+    assert reason in error, error
     assert not list(tmp_path.glob("exfil*")), "a query wrote outside the sandbox"
     assert not (tmp_path / "other.db").exists()
 
@@ -828,6 +888,21 @@ def test_sql_json_jsonl_parquet_and_auto_formats(tmp_path):
             )["result"]
             assert result["rows"] == [[i, f"n{i}"] for i in range(4)], (fmt, requested)
             assert result["format"] == reader, (fmt, requested)
+
+
+@pytest.mark.parametrize(
+    ("body", "reader", "query", "rows"),
+    [
+        (b'{"a": 1}\n{"a": 2}\n', "json", "select a from t order by a", [[1], [2]]),
+        (b'[{"a": 1}, {"a": 2}]', "json", "select count(*) from t", None),
+        (b"id,name\n1,x\n2,y\n", "csv", "select id, name from t order by id", [[1, "x"], [2, "y"]]),
+    ],
+)
+def test_sql_auto_sniff_ignores_a_byte_order_mark(tmp_path, body, reader, query, rows):
+    result = run_ok(tmp_path, "sql", {"query": query}, b"\xef\xbb\xbf" + body)["result"]
+    assert result["format"] == reader
+    if rows is not None:
+        assert result["rows"] == rows
 
 
 def test_sql_auto_skips_leading_whitespace_when_sniffing(tmp_path):
@@ -905,7 +980,7 @@ def test_sql_long_cells_are_capped_at_16_kib(tmp_path):
 # query's projection, and the rows are fetched in batches sized by bytes.
 BOUNDED_CELL_QUERIES = {
     "megabyte text on every row": (
-        "select repeat('x', 1000000) || id as s from t",
+        "select repeat('x', 1000000) || id as s from t limit 250",
         {},
         "csv",
     ),
@@ -919,15 +994,19 @@ BOUNDED_CELL_QUERIES = {
         {},
         "big",
     ),
-    "a huge blob": ("select repeat('y', 4000000)::blob as b from t", {"maxRows": 5}, "csv"),
+    "a huge blob": (
+        "select repeat('y', 4000000)::blob as b from t limit 6",
+        {"maxRows": 5},
+        "csv",
+    ),
     "a list of the whole input": ("select list(name || repeat('z', 100)) as l from t", {}, "big"),
     "a struct holding a huge text": (
-        "select {'k': repeat('x', 4000000)} as s from t",
+        "select {'k': repeat('x', 4000000)} as s from t limit 6",
         {"maxRows": 5},
         "csv",
     ),
     "a long text beside a time-zone cell": (
-        "select repeat('x', 1000000) || id as s, now() as n from t",
+        "select repeat('x', 1000000) || id as s, now() as n from t limit 250",
         {},
         "csv",
     ),
@@ -967,7 +1046,10 @@ def test_sql_wide_table_is_cut_by_the_row_budget_not_by_memory(tmp_path):
     result = run_ok(tmp_path, "sql", {"query": query, "maxRows": 50}, csv_rows(100))["result"]
     assert result["truncated"] is True
     assert 1 <= result["rowCount"] < 50
-    assert all(cell == "a" * 16384 + "\u2026" for cell in result["rows"][0])
+    # 30 text columns share one row of 64 KiB characters.
+    cap = sql_mod.ROW_MAX_CHARS // 30
+    assert all(cell == "a" * cap + "\u2026" for cell in result["rows"][0])
+    assert "narrower columns" in result["hint"] and "raise maxRows" not in result["hint"]
 
 
 def test_sql_cell_bound_keeps_blob_and_nested_values_readable(tmp_path):
@@ -976,14 +1058,40 @@ def test_sql_cell_bound_keeps_blob_and_nested_values_readable(tmp_path):
     assert row == [base64.b64encode(b"abc").decode(), [1, 2], {"k": "v"}, {"a": 1}, "text"]
 
 
-def test_sql_fetch_batches_are_sized_by_bytes_from_the_column_count():
-    worst_cell = sql_mod.CELL_MAX_CHARS * 4  # a cell of astral characters, in Python's memory
-    for columns in (1, 2, 7, 30, 64, 65, 500, 10_000):
-        batch = sql_mod._batch_rows(columns)
+@pytest.mark.parametrize(
+    ("cut_columns", "cap"),
+    [(0, 16384), (1, 16384), (3, 16384), (4, 16384), (5, 13107), (30, 2184), (12, 5461), (4096, 16)]
+    + [(100_000, 16)],
+)
+def test_sql_cell_cap_shares_one_row_budget_between_the_cut_columns(cut_columns, cap):
+    assert sql_mod._cell_cap(cut_columns) == cap
+    assert cut_columns * cap <= max(sql_mod.ROW_MAX_CHARS, cut_columns * sql_mod.MIN_CELL_CHARS)
+
+
+def test_sql_projection_counts_only_the_columns_it_cuts():
+    connection = duckdb.connect(":memory:")
+    relation = connection.sql(
+        "select 1 as n, 'a' as s, 'b'::blob as b, [1] as l, now() as z, date '2020-01-01' as d"
+    )
+    projection = sql_mod._projection(list(relation.columns), list(relation.types))
+    assert projection.nested == [False, False, False, True, False, False]
+    assert projection.cut_columns == 4  # s, b, l and the time-zone cast
+    assert projection.cell_cap == 16384
+    wide = connection.sql("select " + ", ".join(f"'x' as c{i}" for i in range(40)))
+    projection = sql_mod._projection(list(wide.columns), list(wide.types))
+    assert projection.cut_columns == 40 and projection.cell_cap == 65536 // 40
+    assert projection.sql.count("left(") == 40
+
+
+def test_sql_fetch_batches_are_sized_by_bytes_from_the_row_width():
+    worst_char = 4  # a character of a str, in Python's memory, at most
+    for row_chars in (1, 100, 16_384, 65_536, 1_000_000):
+        batch = sql_mod._batch_rows(row_chars)
         assert batch >= 1
-        assert batch == 1 or batch * columns * worst_cell <= 4 * MIB
-    assert sql_mod._batch_rows(1) > sql_mod._batch_rows(30) >= 1
-    assert sql_mod._batch_rows(10_000) == 1
+        assert batch == 1 or batch * row_chars * worst_char <= 4 * MIB
+    assert sql_mod._batch_rows(65_536) == 16
+    assert sql_mod._batch_rows(0) == sql_mod.MAX_FETCH_ROWS  # numbers only: bounded by count
+    assert sql_mod._batch_rows(10_000_000) == 1
 
 
 def test_sql_query_beyond_the_memory_limit_fails_cleanly(tmp_path):
@@ -992,6 +1100,55 @@ def test_sql_query_beyond_the_memory_limit_fails_cleanly(tmp_path):
         tmp_path, "sql", {"query": "select repeat('x', 4000000) || id as s from t"}, csv_rows(3000)
     )
     assert "Out of Memory" in error
+
+
+@pytest.mark.parametrize(
+    ("statement", "expected"),
+    [
+        ("select * from t order by id desc", True),
+        ("SELECT a FROM t ORDER\n  BY a LIMIT 3", True),
+        ("with s as (select * from t order by id) select * from s", True),
+        ("select * from t", False),
+        ("select 'order by' as s from t", False),
+        ('select "order by" from t', False),
+        ("select * from t where name = 'x''order by y'", False),
+        ("select order_by_col from t", False),
+    ],
+)
+def test_sql_asks_duckdb_for_a_limit_only_when_the_query_sorts(statement, expected):
+    assert sql_mod._wants_limit(statement) is expected
+
+
+def test_sql_rows_come_back_in_file_order_across_batches(tmp_path):
+    result = run_ok(tmp_path, "sql", {"query": "select id from t", "maxRows": 2000}, csv_rows(5000))
+    rows = result["result"]["rows"]
+    assert rows == [[i] for i in range(2000)]
+    assert result["result"]["truncated"] is True
+
+
+def test_sql_sorted_query_over_many_rows_returns_the_top_rows(tmp_path):
+    query = "select id from t order by score desc"
+    rows = run_ok(tmp_path, "sql", {"query": query, "maxRows": 40}, csv_rows(60_000))["result"][
+        "rows"
+    ]
+    assert rows == [[i] for i in range(59_999, 59_959, -1)]
+
+
+def test_sql_hint_names_what_ended_the_result(tmp_path):
+    by_rows = run_ok(
+        tmp_path / "r", "sql", {"query": "select id from t", "maxRows": 5}, csv_rows(50)
+    )
+    assert by_rows["result"]["hint"].endswith("or raise maxRows (max 2000)")
+    at_the_ceiling = run_ok(
+        tmp_path / "c", "sql", {"query": "select id from t", "maxRows": 2000}, csv_rows(2100)
+    )["result"]
+    assert at_the_ceiling["rowCount"] == 2000 and at_the_ceiling["truncated"] is True
+    assert "maxRows" not in at_the_ceiling["hint"]
+    wide = "select repeat('x', 16000) as s from t"
+    by_bytes = run_ok(tmp_path / "b", "sql", {"query": wide, "maxRows": 1000}, csv_rows(1000))
+    hint = by_bytes["result"]["hint"]
+    assert by_bytes["result"]["rowCount"] < 1000
+    assert "size limit" in hint and "narrower columns" in hint and "maxRows" not in hint
 
 
 def test_sql_stops_at_the_row_byte_budget(tmp_path):
@@ -1041,6 +1198,67 @@ def test_sql_session_is_configured_and_locked(tmp_path):
     assert row["external"] is False and row["locked"] is True
     assert row["spill"].startswith("4.0 GiB")
     assert row["autoload"] is False and row["replacements"] is False
+
+
+# tracemalloc cannot see DuckDB, which keeps the rows it has produced until they are fetched. So
+# the wide-row cases run in a child process and are judged on its peak RSS: a 2Gi pod has no room
+# for a request that reaches it.
+RSS_CHILD = """
+import json, resource, sys
+from pathlib import Path
+from runwhen_capability.host import run_request
+from runwhen_capability.loader import load_capability
+from runwhen_capability.models import RequestEnvelope
+
+cap_dir, scope, query, max_rows = sys.argv[1], Path(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+capability = load_capability(Path(cap_dir))
+request = RequestEnvelope.model_validate({"version": 1, "tasks": [{"task": "sql", "inputs": {
+    "source": "art_x", "query": query, "maxRows": max_rows, "format": "parquet"}}]})
+(task,) = run_request(capability, request, credentials={}, scope_dir=scope).tasks
+rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+result = task.outputs.get("result") or {}
+print(json.dumps({
+    "status": task.status, "error": task.error, "rows": result.get("rowCount"),
+    "truncated": result.get("truncated"),
+    "rss_mib": rss / (2**20 if sys.platform == "darwin" else 2**10),  # bytes on macOS, KiB on Linux
+}))
+"""
+
+
+def make_wide_parquet(path: Path, columns: int, unit: str, *, cells=17_000, rows=2_100) -> None:
+    """`rows` rows of `columns` text cells, each `cells` characters of `unit`, in row groups of 50
+    (so reading it never needs a giant vector). Compresses to almost nothing."""
+    cols = ", ".join(f"repeat('{unit}', {cells}) || id::varchar AS c{i}" for i in range(columns))
+    batches = " UNION ALL ".join(
+        f"SELECT {cols} FROM range({start}, {min(start + 50, rows)}) t(id)"
+        for start in range(0, rows, 50)
+    )
+    connection = duckdb.connect(":memory:")
+    connection.execute(
+        f"COPY ({batches}) TO '{path}' (FORMAT parquet, ROW_GROUP_SIZE 50, COMPRESSION zstd)"
+    )
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("columns", "unit"),
+    [(30, "x"), (12, "\U0001f600")],
+    ids=["30-ascii-columns", "12-emoji-columns"],
+)
+def test_sql_peak_rss_stays_under_a_gibibyte_for_wide_rows(tmp_path, columns, unit):
+    scope = stage(tmp_path, None)
+    make_wide_parquet(scope / ".rw-artifacts" / "inputs" / "source", columns, unit)
+    child = subprocess.run(
+        [sys.executable, "-c", RSS_CHILD, str(CAP_DIR), str(scope), "select * from t", "2000"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert child.returncode == 0, child.stderr[-2000:]
+    report = json.loads(child.stdout.strip().splitlines()[-1])
+    assert report["status"] == "ok", report["error"]
+    assert report["rows"] >= 1 and report["truncated"] is True
+    assert report["rss_mib"] < 1024, f"peak RSS {report['rss_mib']:.0f} MiB"
 
 
 # --- slice ---------------------------------------------------------------------------------

@@ -9,8 +9,11 @@ count, bytes of rows, size of one cell).
 A cell is bounded where it is produced, not after: DuckDB hands a result to Python
 as full objects, so a text cell is cut by `left()` in the query's projection, a blob
 by `array_slice`, and a list, struct or map is turned into its JSON text and cut the
-same way. Rows are fetched in batches sized from the column count, so one batch
-stays near FETCH_BYTES whatever the data.
+same way. The columns that get cut share one row of ROW_MAX_CHARS characters, so a
+row's width is bounded too however many columns there are. The result is streamed:
+rows are fetched in batches from the running query (never materialised whole), sized
+from the row width so one batch stays near FETCH_BYTES, and the query is stopped as
+soon as the result is full.
 
 DuckDB 1.5.6 lockdown, as found by trying it: `SET allowed_paths=['<the file>']`,
 then `SET enable_external_access=false`, then `SET lock_configuration=true`, in
@@ -27,9 +30,11 @@ import datetime
 import decimal
 import json
 import math
+import re
 import shutil
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -39,12 +44,30 @@ from .models import SqlColumn, SqlResult
 
 CELL_MAX_CHARS = 16 * 1024
 CELL_MAX_BYTES = 16 * 1024
+# The cut columns of a row share this many characters (so each gets at most CELL_MAX_CHARS, and
+# at least MIN_CELL_CHARS however many there are).
+ROW_MAX_CHARS = 64 * 1024
+MIN_CELL_CHARS = 16
 ROW_BUDGET_BYTES = 4 * 1024 * 1024
 FETCH_BYTES = 4 * 1024 * 1024
+MAX_FETCH_ROWS = 256
 SNIFF_BYTES = 4096
+MAX_ROWS_LIMIT = 2000  # the manifest's cap on the maxRows input
 
-# Python holds up to 4 bytes per character of a str; a batch is sized for cells of that kind.
-_CELL_WORST_BYTES = CELL_MAX_CHARS * 4
+# The work directory holds the spooled input, whatever else a request leaves there, and the
+# spill. This is the manifest's `execution.workSizeLimit`; keep the two in step.
+WORK_SIZE_BYTES = 8 * 1024**3
+_WORK_RESERVE_BYTES = 1024**3
+_SPILL_MAX_BYTES = 4 * 1024**3
+_SPILL_MIN_BYTES = 256 * 1024**2
+
+_UTF8_BOM = b"\xef\xbb\xbf"
+
+_QUOTED = re.compile(r"'(?:[^']|'')*'|\"(?:[^\"]|\"\")*\"")
+_ORDER_BY = re.compile(r"\border\s+by\b", re.IGNORECASE)
+
+# Python holds up to 4 bytes per character of a str; a batch is sized for text of that kind.
+_WORST_BYTES_PER_CHAR = 4
 
 # Column types that come back small and are passed through as they are.
 _PASS_THROUGH = frozenset(
@@ -64,7 +87,7 @@ def _sniff_format(path: Path) -> str:
         head = fh.read(SNIFF_BYTES)
     if head.startswith(b"PAR1"):
         return "parquet"
-    stripped = head.lstrip(b" \t\r\n\f\v")
+    stripped = head.removeprefix(_UTF8_BOM).lstrip(b" \t\r\n\f\v")
     if stripped[:1] in (b"{", b"["):
         return "json"
     return "csv"
@@ -93,14 +116,21 @@ def _select_statement(con: duckdb.DuckDBPyConnection, query: str) -> str:
     return statements[0].query
 
 
-def _configure(con: duckdb.DuckDBPyConnection, temp_dir: Path) -> None:
+def _max_temp_bytes(input_bytes: int) -> int:
+    """How much DuckDB may spill: what is left of the work directory after the spooled input and
+    a GiB of other files, but never more than 4 GiB nor less than 256 MiB."""
+    room = WORK_SIZE_BYTES - input_bytes - _WORK_RESERVE_BYTES
+    return max(_SPILL_MIN_BYTES, min(_SPILL_MAX_BYTES, room))
+
+
+def _configure(con: duckdb.DuckDBPyConnection, temp_dir: Path, max_temp_bytes: int) -> None:
     for setting in (
         # Below the pod's share on purpose: two requests can run in one pod (2Gi) beside Python,
         # and DuckDB spills to its temp directory rather than pass this limit.
         "memory_limit='640MB'",
         "threads=2",
         f"temp_directory={_sql_literal(str(temp_dir))}",
-        "max_temp_directory_size='4GiB'",
+        f"max_temp_directory_size='{max_temp_bytes}B'",
         "autoinstall_known_extensions=false",
         "autoload_known_extensions=false",
         "allow_community_extensions=false",
@@ -119,77 +149,107 @@ def _lock_down(con: duckdb.DuckDBPyConnection, path: Path) -> None:
     con.execute("SET lock_configuration=true")
 
 
-def _json_safe(value: Any) -> Any:
-    """`value` as something `json.dumps` writes without error or surprise."""
+def _json_safe(value: Any, cap: int = CELL_MAX_CHARS) -> Any:
+    """`value` as something `json.dumps` writes without error or surprise; a text or blob longer
+    than `cap` (the query leaves one unit over) is cut and marked."""
     if value is None or isinstance(value, bool | int):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else str(value)
     if isinstance(value, str):
-        return value if len(value) <= CELL_MAX_CHARS else value[:CELL_MAX_CHARS] + "…"
+        return value if len(value) <= cap else value[:cap] + "…"
     if isinstance(value, bytes | bytearray | memoryview):
         raw = bytes(value)
-        cut = len(raw) > CELL_MAX_BYTES
-        text = base64.b64encode(raw[:CELL_MAX_BYTES]).decode("ascii")
+        cut = len(raw) > cap
+        text = base64.b64encode(raw[:cap]).decode("ascii")
         return text + "…" if cut else text
     if isinstance(value, datetime.date | datetime.time):  # datetime is a date
         return value.isoformat()
     if isinstance(value, decimal.Decimal | uuid.UUID | datetime.timedelta):
         return str(value)
     if isinstance(value, list | tuple):
-        return [_json_safe(item) for item in value]
+        return [_json_safe(item, cap) for item in value]
     if isinstance(value, dict):
-        return {str(key): _json_safe(item) for key, item in value.items()}
+        return {str(key): _json_safe(item, cap) for key, item in value.items()}
     return str(value)
 
 
-def _nested_cell(text: Any) -> Any:
+def _nested_cell(text: Any, cap: int) -> Any:
     """A list, struct, map or union cell, which arrives as its JSON text (cut by the query): the
     value again when the text is whole, else the cut text, marked like any long cell."""
     if not isinstance(text, str):
-        return _json_safe(text)
-    if len(text) > CELL_MAX_CHARS:
-        return text[:CELL_MAX_CHARS] + "\u2026"
+        return _json_safe(text, cap)
+    if len(text) > cap:
+        return text[:cap] + "\u2026"
     try:
-        return _json_safe(json.loads(text))
+        return _json_safe(json.loads(text), cap)
     except ValueError:
         return text
 
 
-def _projection(columns: list[str], types: list[Any]) -> tuple[str, list[bool]]:
+def _cell_cap(cut_columns: int) -> int:
+    """The longest a cut cell may be: the cut columns of a row share ROW_MAX_CHARS characters."""
+    return min(CELL_MAX_CHARS, max(MIN_CELL_CHARS, ROW_MAX_CHARS // max(cut_columns, 1)))
+
+
+@dataclass
+class _Projection:
+    sql: str  # the projection list, for `rel.project`
+    nested: list[bool]  # per column: arrives as JSON text to read back
+    cut_columns: int  # how many columns the query cuts
+    cell_cap: int  # characters (or bytes) kept of each
+
+    @property
+    def row_chars(self) -> int:
+        """The most text one row can hold."""
+        return self.cut_columns * self.cell_cap
+
+
+def _projection(columns: list[str], types: list[Any]) -> _Projection:
     """Every column by position, with its name kept (a repeated name stays repeated), and
     bounded in size by the query itself:
 
     - numbers, dates, times, intervals and uuids pass through;
-    - VARCHAR (and JSON) becomes `left(col, CELL_MAX_CHARS + 1)`, so a longer cell is one
-      character over and shows as cut;
-    - BLOB becomes `array_slice(col, 1, CELL_MAX_BYTES + 1)`;
-    - LIST, ARRAY, STRUCT, MAP and UNION become `left(to_json(col), ...)`, the JSON text, which
-      `_nested_cell` reads back into a value when it fits (the second result: which columns);
+    - VARCHAR (and JSON) becomes `left(col, cap + 1)`, so a longer cell is one character over
+      and shows as cut;
+    - BLOB becomes `array_slice(col, 1, cap + 1)`;
+    - LIST, ARRAY, STRUCT, MAP and UNION become `left(to_json(col), cap + 1)`, the JSON text,
+      which `_nested_cell` reads back into a value when it fits (`nested` says which);
     - anything else (a time zone, bit string, enum, ...) is cast to VARCHAR and cut.
 
-    The text of a cell arrives in Python as a str, which DuckDB would otherwise build in full
-    (a time zone also needs a timezone package this image does not ship).
+    `cap` is `_cell_cap` of the number of columns that get cut. The text of a cell arrives in
+    Python as a str, which DuckDB would otherwise build in full (a time zone also needs a
+    timezone package this image does not ship).
     """
+    kinds = [type_.id for type_ in types]
+    cut_columns = sum(kind not in _PASS_THROUGH for kind in kinds)
+    cap = _cell_cap(cut_columns)
     items = []
-    nested = []
-    for position, (name, type_) in enumerate(zip(columns, types, strict=True), start=1):
+    for position, (name, kind) in enumerate(zip(columns, kinds, strict=True), start=1):
         alias = '"' + name.replace('"', '""') + '"'
         ref = f"#{position}"
-        kind = type_.id
         if kind in _PASS_THROUGH:
             value = ref
         elif kind == "varchar":
-            value = f"left({ref}, {CELL_MAX_CHARS + 1})"
+            value = f"left({ref}, {cap + 1})"
         elif kind == "blob":
-            value = f"array_slice({ref}, 1, {CELL_MAX_BYTES + 1})"
+            value = f"array_slice({ref}, 1, {cap + 1})"
         elif kind in _NESTED:
-            value = f"left(CAST(to_json({ref}) AS VARCHAR), {CELL_MAX_CHARS + 1})"
+            value = f"left(CAST(to_json({ref}) AS VARCHAR), {cap + 1})"
         else:
-            value = f"left(CAST({ref} AS VARCHAR), {CELL_MAX_CHARS + 1})"
+            value = f"left(CAST({ref} AS VARCHAR), {cap + 1})"
         items.append(f"{value} AS {alias}")
-        nested.append(kind in _NESTED)
-    return ", ".join(items), nested
+    return _Projection(", ".join(items), [kind in _NESTED for kind in kinds], cut_columns, cap)
+
+
+def _wants_limit(statement: str) -> bool:
+    """Whether to ask DuckDB itself for just `max_rows + 1` rows: for a query that sorts, since
+    then it keeps the best few instead of sorting everything (top-N). Not otherwise: with rows
+    that are wide, a LIMIT makes DuckDB hold far more than it returns (it keeps the rows in
+    order until it knows which to drop: 1.5 GiB of RSS for 2001 wide Parquet rows, against 315
+    MiB streaming without it). A false answer either way is harmless: a sort without the LIMIT
+    is slower, and a LIMIT where it was not needed only costs that memory."""
+    return _ORDER_BY.search(_QUOTED.sub("", statement)) is not None
 
 
 def _row_cost(cells: list[Any]) -> int:
@@ -200,10 +260,25 @@ def _row_cost(cells: list[Any]) -> int:
     return max(len(json.dumps(cells)) + 2, held)
 
 
-def _batch_rows(columns: int) -> int:
-    """How many rows to fetch at once: as many as keep a batch of worst-case cells within
-    FETCH_BYTES, but at least one."""
-    return max(1, FETCH_BYTES // (max(columns, 1) * _CELL_WORST_BYTES))
+def _batch_rows(row_chars: int) -> int:
+    """How many rows to fetch at once: as many as keep a batch of worst-case text within
+    FETCH_BYTES (and no more than MAX_FETCH_ROWS), but at least one."""
+    if row_chars <= 0:
+        return MAX_FETCH_ROWS
+    return max(1, min(MAX_FETCH_ROWS, FETCH_BYTES // (row_chars * _WORST_BYTES_PER_CHAR)))
+
+
+def _hint(shown: int, ended_by: str, max_rows: int) -> str:
+    """What to tell a caller whose result was cut, according to what cut it."""
+    if ended_by == "bytes":
+        return (
+            f"returned the first {shown} rows; the result reached its size limit, so select "
+            "fewer or narrower columns, or filter or aggregate in the query"
+        )
+    advice = "filter or aggregate in the query"
+    if max_rows < MAX_ROWS_LIMIT:
+        advice += f", or raise maxRows (max {MAX_ROWS_LIMIT})"
+    return f"returned the first {shown} rows; {advice}"
 
 
 def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
@@ -216,35 +291,42 @@ def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
         path = ctx.artifacts.input_path("source")
         reader, used = _reader(fmt, path)
         temp_dir.mkdir(parents=True, exist_ok=True)
-        _configure(con, temp_dir)
+        _configure(con, temp_dir, _max_temp_bytes(path.stat().st_size))
         con.execute(f"CREATE VIEW t AS SELECT * FROM {reader}")
         _lock_down(con, path)
 
         rel = con.sql(statement)
         names = list(rel.columns)
         types = list(rel.types)
-        projection, nested = _projection(names, types)
-        cursor = rel.project(projection).limit(max_rows + 1).execute()
-        batch_rows = _batch_rows(len(names))
+        projection = _projection(names, types)
+        # Streamed, with no `.execute()` (which holds every row the query produces). The row
+        # limit is applied below as rows arrive, and closing the connection stops the query;
+        # DuckDB is only told the limit when the query sorts (see `_wants_limit`).
+        stream = rel.project(projection.sql)
+        if _wants_limit(statement):
+            stream = stream.limit(max_rows + 1)
+        batch_rows = _batch_rows(projection.row_chars)
 
         rows: list[list[Any]] = []
         used_bytes = 0
-        truncated = False
-        while not truncated:
-            batch = cursor.fetchmany(batch_rows)
+        ended_by = ""
+        while not ended_by:
+            batch = stream.fetchmany(batch_rows)
             if not batch:
                 break
             for row in batch:
                 if len(rows) >= max_rows:
-                    truncated = True  # an extra row exists
+                    ended_by = "rows"  # an extra row exists
                     break
                 cells = [
-                    _nested_cell(cell) if is_nested else _json_safe(cell)
-                    for cell, is_nested in zip(row, nested, strict=True)
+                    _nested_cell(cell, projection.cell_cap)
+                    if is_nested
+                    else _json_safe(cell, projection.cell_cap)
+                    for cell, is_nested in zip(row, projection.nested, strict=True)
                 ]
                 size = _row_cost(cells)
                 if rows and used_bytes + size > ROW_BUDGET_BYTES:
-                    truncated = True
+                    ended_by = "bytes"
                     break
                 rows.append(cells)
                 used_bytes += size
@@ -258,12 +340,7 @@ def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
         ],
         rows=rows,
         rowCount=len(rows),
-        truncated=truncated,
-        hint=(
-            f"returned the first {len(rows)} rows; filter or aggregate in the query, "
-            "or raise maxRows (max 2000)"
-            if truncated
-            else None
-        ),
+        truncated=bool(ended_by),
+        hint=_hint(len(rows), ended_by, max_rows) if ended_by else None,
         format=used,
     )

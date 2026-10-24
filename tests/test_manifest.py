@@ -54,6 +54,12 @@ def test_shipped_manifest_resources_and_work_size_limit(capability_dir):
     assert isinstance(manifest["execution"]["workSizeLimit"], str)
 
 
+def test_rw_checks_declares_max_result_bytes():
+    # A quantity string: the platform rejects a bare integer here.
+    manifest = load_manifest(CAPABILITIES / "rw-checks")
+    assert manifest["execution"]["maxResultBytes"] == "32Mi"
+
+
 def run_manifest_label(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(MANIFEST_LABEL_SCRIPT), *args],

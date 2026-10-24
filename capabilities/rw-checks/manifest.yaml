@@ -30,6 +30,9 @@ execution:
     memoryRequest: "512Mi"
     memoryLimit: "1Gi"
   workSizeLimit: "2Gi"
+  # The largest inline result a run may return. Findings come back inline,
+  # and a large repo produces a lot of them.
+  maxResultBytes: "32Mi"
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------
 # No `where` at this level: this is now a multi-language check set (secret

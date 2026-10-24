@@ -33,19 +33,19 @@ CAPABILITIES = REPO_ROOT / "capabilities"
 MANIFEST_LABEL_SCRIPT = REPO_ROOT / "scripts" / "manifest_label.py"
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_shipped_manifest_loads_without_egress(capability_dir):
     manifest = load_manifest(CAPABILITIES / capability_dir)
     assert "egress" not in manifest["needs"]
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_shipped_manifest_has_no_image_key(capability_dir):
     manifest = load_manifest(CAPABILITIES / capability_dir)
     assert "image" not in manifest
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_shipped_manifest_resources_and_work_size_limit(capability_dir):
     manifest = load_manifest(CAPABILITIES / capability_dir)
     resources = manifest["execution"]["resources"]
@@ -63,7 +63,7 @@ def run_manifest_label(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_manifest_label_script_round_trips_manifest_bytes(capability_dir):
     result = run_manifest_label(f"capabilities/{capability_dir}")
     assert result.returncode == 0, result.stderr
@@ -202,6 +202,10 @@ def test_manifest_label_script_schemas_deterministic():
     ("capability_dir", "expected_keys"),
     [
         ("rw-checks", {"schemas/findings.v1.json"}),
+        (
+            "artifact-tools",
+            {"schemas/grep.v1.json", "schemas/jq.v1.json", "schemas/sql.v1.json"},
+        ),
         (
             "rw-worktree",
             {

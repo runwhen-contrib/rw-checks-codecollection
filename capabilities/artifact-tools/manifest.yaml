@@ -1,0 +1,192 @@
+# Capability manifest for artifact-tools: four read-only tools that each run over
+# ONE artifact -- the stored output of an earlier run, possibly many gigabytes --
+# and hand back a bounded answer or a new artifact. grep (ripgrep), jq, sql (a
+# SELECT, run by DuckDB) and slice (a range of lines).
+#
+# It is called with no target (appliesTo is empty): every task takes a required
+# `source` input of kind artifact, and the call runs against the target of the run
+# that produced that artifact. It needs no credentials and no network.
+#
+# There is no `image` key here -- see rw-checks/manifest.yaml's comment: an image
+# cannot know its own digest, so this manifest rides the image itself, as the OCI
+# label com.runwhen.capability.manifest.v1.
+#
+# Input ranges and defaults are written into each description, because this file
+# has no field for them; the task code enforces them and rejects a value out of
+# range rather than clamping it.
+apiVersion: capability/v1
+capability: artifact-tools
+version: "0.1.0"
+description: Read-only search, query and slicing of a stored artifact (grep, jq, sql, slice)
+
+# --- generic scheduling knobs; the platform forwards these to the runner verbatim ----
+execution:
+  mode: stateless
+  maxPodsPerPool: 2
+  maxConcurrentPerPod: 2
+  idleTtlSeconds: 900
+  requestTimeoutSeconds: 600
+  resources:
+    cpuRequest: "250m"
+    cpuLimit: "2"
+    memoryRequest: "512Mi"
+    memoryLimit: "2Gi"
+  # The artifact is spooled into the work dir for sql, and DuckDB may spill there.
+  workSizeLimit: "8Gi"
+  # The largest inline result. grep keeps its answer under half of this; jq and sql
+  # outputs spill to an artifact when they grow past the inline threshold.
+  maxResultBytes: "1Mi"
+
+# --- no target: the artifact input says which run this belongs to ---------------------
+appliesTo: []
+
+needs: {}
+
+# --- the tasks themselves -- all read-only ---------------------------------------------
+tasks:
+  - name: grep
+    description: >-
+      Search an artifact for a regular expression. Returns the first matching lines
+      (with optional context) and the count of all of them.
+    readOnly: true
+    inputs:
+      source:
+        from: request
+        kind: artifact
+        type: string
+        description: The artifact to search
+      pattern:
+        from: request
+        type: string
+        description: Regular expression, ripgrep syntax (case-sensitive unless ignoreCase is set)
+      ignoreCase:
+        from: request
+        type: boolean
+        optional: true
+        description: Match case-insensitively. Default false.
+      context:
+        from: request
+        type: integer
+        optional: true
+        description: Lines of context before and after each match, 0 to 5. Default 0.
+      maxMatches:
+        from: request
+        type: integer
+        optional: true
+        description: >-
+          Matching lines to return, 1 to 500. Default 50. totalMatches counts every
+          matching line either way.
+      saveAll:
+        from: request
+        type: boolean
+        optional: true
+        description: >-
+          Also write every matching line, as "<line number>:<line>", to the matches
+          artifact. Default false.
+    outputs:
+      result:
+        kind: rw.artifact_grep.v1
+        schema: ./schemas/grep.v1.json
+      matches:
+        kind: artifact
+        contentType: text/plain
+        maxSize: "1Gi"                   # written only when saveAll is true
+
+  - name: jq
+    description: >-
+      Run a jq filter over a JSON or JSONL artifact; the output is capped at 64 KiB.
+      When lines is omitted, the input counts as JSONL if its first line, up to 1 MiB,
+      parses as one JSON value. Pass lines=true or lines=false when you know; an
+      explicit value always wins.
+    readOnly: true
+    inputs:
+      source:
+        from: request
+        kind: artifact
+        type: string
+        description: The JSON or JSONL artifact to filter
+      filter:
+        from: request
+        type: string
+        description: The jq filter
+      lines:
+        from: request
+        type: boolean
+        optional: true
+        description: >-
+          true if every line is one JSON value (JSONL), false if the input is one
+          document. When omitted, the input counts as JSONL if its first line, up to
+          1 MiB, parses as one JSON value. Pass lines=true or lines=false when you
+          know; an explicit value always wins. A non-JSONL document over 512 MiB is
+          refused.
+    outputs:
+      result:
+        kind: rw.artifact_jq.v1
+        schema: ./schemas/jq.v1.json
+        spill: auto
+
+  - name: sql
+    description: >-
+      Run one SELECT over an artifact (CSV, JSON, JSONL or Parquet) with DuckDB.
+      The artifact is the table t.
+    readOnly: true
+    inputs:
+      source:
+        from: request
+        kind: artifact
+        type: string
+        description: The artifact to query, as the table t
+      query:
+        from: request
+        type: string
+        description: A single SELECT statement over the table t
+      format:
+        from: request
+        type: string
+        optional: true
+        enum: [auto, csv, json, jsonl, parquet]
+        description: >-
+          How to read the artifact. auto looks at the first bytes (Parquet magic,
+          then a leading { or [ for JSON, else CSV). Default auto.
+      maxRows:
+        from: request
+        type: integer
+        optional: true
+        description: Rows to return, 1 to 2000. Default 200.
+    outputs:
+      result:
+        kind: rw.artifact_sql.v1
+        schema: ./schemas/sql.v1.json
+        spill: auto
+
+  - name: slice
+    description: >-
+      Copy lines fromLine up to (not including) toLine of an artifact into a new
+      artifact.
+    readOnly: true
+    inputs:
+      source:
+        from: request
+        kind: artifact
+        type: string
+        description: The artifact to slice
+      fromLine:
+        from: request
+        type: integer
+        description: First line to copy, counting from 1
+      toLine:
+        from: request
+        type: integer
+        description: >-
+          The line after the last one to copy, so fromLine 10 and toLine 20 copy ten
+          lines. At most 10000000 lines from fromLine.
+    outputs:
+      slice:
+        kind: artifact
+        contentType: text/plain
+        maxSize: "5Gi"
+
+retention:
+  pod: on_failure                        # all | on_failure | none
+  result: 7d
+  artifacts: 7d

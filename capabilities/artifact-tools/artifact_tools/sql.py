@@ -40,6 +40,8 @@ from typing import Any
 
 import duckdb
 
+from .deadline import Deadline
+from .errors import ToolError
 from .models import SqlColumn, SqlResult
 
 CELL_MAX_CHARS = 16 * 1024
@@ -286,12 +288,15 @@ def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
     `max_rows` rows."""
     con = duckdb.connect(":memory:")
     temp_dir = Path(ctx.workdir) / ".duckdb-tmp"
+    watch = Deadline(ctx, "filter earlier, avoid joins that multiply rows, or query less")
     try:
+        watch.arm(con.interrupt)
         statement = _select_statement(con, query)
         path = ctx.artifacts.input_path("source")
         reader, used = _reader(fmt, path)
         temp_dir.mkdir(parents=True, exist_ok=True)
         _configure(con, temp_dir, _max_temp_bytes(path.stat().st_size))
+        watch.check()
         con.execute(f"CREATE VIEW t AS SELECT * FROM {reader}")
         _lock_down(con, path)
 
@@ -311,6 +316,7 @@ def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
         used_bytes = 0
         ended_by = ""
         while not ended_by:
+            watch.check()  # an interrupt only reaches a query that is running
             batch = stream.fetchmany(batch_rows)
             if not batch:
                 break
@@ -330,7 +336,14 @@ def run_sql(ctx: Any, *, query: str, fmt: str, max_rows: int) -> SqlResult:
                     break
                 rows.append(cells)
                 used_bytes += size
+    except ToolError:
+        raise
+    except Exception as exc:
+        if watch.expired:
+            raise watch.error() from exc  # the interrupt, or what it left behind
+        raise
     finally:
+        watch.cancel()
         con.close()
         shutil.rmtree(temp_dir, ignore_errors=True)
 

@@ -16,6 +16,7 @@ import subprocess
 from collections.abc import Iterator
 from typing import Any
 
+from .deadline import Deadline
 from .errors import ToolError
 from .models import JqResult
 from .procs import (
@@ -117,19 +118,24 @@ def run_jq(ctx: Any, *, program: str, lines: bool | None) -> JqResult:
         if not lines and declared is not None and declared > MAX_DOCUMENT_BYTES:
             raise _too_large(declared)
 
+        watch = Deadline(ctx, "narrow the filter (first, limit) or use a smaller input")
         proc = spawn(["jq", "-c", "--", program])
-        _limit_address_space(ctx, proc)
-        stderr = StderrTail(proc.stderr)
-        feeder = Feeder(
-            _pieces(head, source, lines=lines), proc.stdin, on_error=lambda _exc: kill(proc)
-        )
-        feeder.start()
+        stderr = feeder = None
         try:
+            _limit_address_space(ctx, proc)
+            stderr = StderrTail(proc.stderr)
+            feeder = Feeder(
+                _pieces(head, source, lines=lines), proc.stdin, on_error=lambda _exc: kill(proc)
+            )
+            feeder.start()
+            watch.arm(lambda: kill(proc))
             data = proc.stdout.read(MAX_OUTPUT_BYTES + 1)
             truncated = len(data) > MAX_OUTPUT_BYTES
             if truncated:
                 kill(proc)
             returncode = proc.wait()
+            if watch.expired and returncode != 0 and not truncated:
+                raise watch.error()  # killed at the deadline
             if not truncated:
                 feeder.join()
             if feeder.error is not None:
@@ -137,6 +143,7 @@ def run_jq(ctx: Any, *, program: str, lines: bool | None) -> JqResult:
             if returncode != 0 and not truncated:
                 raise RuntimeError(f"jq exited with status {returncode}: {stderr.text()}")
         finally:
+            watch.cancel()
             shutdown(proc, feeder, stderr)
 
     if truncated:

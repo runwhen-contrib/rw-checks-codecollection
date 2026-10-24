@@ -24,6 +24,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
+from .deadline import Deadline
 from .models import GrepMatch, GrepResult
 from .procs import (
     Feeder,
@@ -279,15 +280,18 @@ def run_grep(
             stack.enter_context(ctx.artifacts.open("matches", "text/plain")) if save_all else None
         )
         collector = _Collector(context, max_matches, writer)
+        watch = Deadline(ctx, "search a smaller part of the artifact (slice it first)")
         proc = spawn(argv)
-        stderr = StderrTail(proc.stderr)
-        feeder = Feeder(
-            cut_long_lines(read_chunks(source), MAX_LINE_BYTES, stats),
-            proc.stdin,
-            on_error=lambda _exc: kill(proc),
-        )
-        feeder.start()
+        stderr = feeder = None
         try:
+            stderr = StderrTail(proc.stderr)
+            feeder = Feeder(
+                cut_long_lines(read_chunks(source), MAX_LINE_BYTES, stats),
+                proc.stdin,
+                on_error=lambda _exc: kill(proc),
+            )
+            feeder.start()
+            watch.arm(lambda: kill(proc))
             try:
                 for raw in bounded_lines(proc.stdout, EVENT_MAX_BYTES):
                     collector.feed(raw)
@@ -298,6 +302,8 @@ def run_grep(
                     "narrow the pattern"
                 ) from None
             returncode = proc.wait()
+            if watch.expired and returncode not in (0, 1):
+                raise watch.error()  # killed at the deadline
             feeder.join()
             if feeder.error is not None:
                 raise feeder.error
@@ -305,6 +311,7 @@ def run_grep(
                 raise RuntimeError(f"ripgrep failed (exit status {returncode}): {stderr.text()}")
             collector.finish()
         finally:
+            watch.cancel()
             shutdown(proc, feeder, stderr)
     ref = writer.ref if writer is not None else None
 

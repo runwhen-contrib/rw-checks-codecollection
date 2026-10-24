@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .deadline import Deadline
 from .procs import read_chunks
 
 MAX_LINES = 10_000_000
@@ -63,8 +64,10 @@ def run_slice(ctx: Any, *, from_line: int, to_line: int) -> Any:
     empty artifact; an unterminated last line is written as it is."""
     check_range(from_line, to_line)
     line = 1  # the number of the line the next chunk starts in
+    watch = Deadline(ctx, "slice a shorter range, or one nearer the start")
     with ctx.artifacts.input("source") as source, ctx.artifacts.open("slice", "text/plain") as out:
         for chunk in read_chunks(source, READ_BYTES):
+            watch.check()
             newlines = chunk.count(b"\n")
             if _copy_lines(chunk, newlines, line, from_line, to_line, out):
                 break

@@ -16,7 +16,7 @@ from typing import BinaryIO
 CHUNK_BYTES = 1 << 20
 STDERR_TAIL_BYTES = 4096
 # How long to wait for a helper thread to notice its pipe is gone, once the process was killed.
-_JOIN_TIMEOUT_SECONDS = 10
+_JOIN_TIMEOUT_SECONDS = 3
 
 
 class LineTooLong(Exception):
@@ -69,15 +69,20 @@ def kill(proc: subprocess.Popen) -> None:
         pass
 
 
-def shutdown(proc: subprocess.Popen, feeder: Feeder, stderr: StderrTail) -> None:
+def shutdown(
+    proc: subprocess.Popen, feeder: Feeder | None = None, stderr: StderrTail | None = None
+) -> None:
     """Leaves nothing running: kills the process if it is still alive, reaps it, stops and
-    joins the feeder and the stderr drain (they end once the process is gone), and closes the
-    pipes. Safe to call after a normal finish."""
+    joins the feeder and the stderr drain (they end once the process is gone; either may be
+    None if setup failed before it was made), and closes the pipes. Safe to call after a
+    normal finish."""
     kill(proc)
     proc.wait()
-    feeder.stop()
-    feeder.join(timeout=_JOIN_TIMEOUT_SECONDS)
-    stderr.text()
+    if feeder is not None:
+        feeder.stop()
+        feeder.join(timeout=_JOIN_TIMEOUT_SECONDS)
+    if stderr is not None:
+        stderr.text()
     for pipe in (proc.stdin, proc.stdout, proc.stderr):
         if pipe is not None:
             try:

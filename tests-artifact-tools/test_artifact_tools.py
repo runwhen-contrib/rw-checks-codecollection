@@ -24,6 +24,8 @@ import random
 import shutil
 import subprocess
 import sys
+import threading
+import time
 import tracemalloc
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,6 +61,7 @@ REPO = Path(__file__).resolve().parent.parent
 CAP_DIR = REPO / "capabilities" / "artifact-tools"
 sys.path.insert(0, str(CAP_DIR))
 
+from artifact_tools import deadline as deadline_mod  # noqa: E402
 from artifact_tools import grep as grep_mod  # noqa: E402
 from artifact_tools import jq as jq_mod  # noqa: E402
 from artifact_tools import slice as slice_mod  # noqa: E402
@@ -83,7 +86,9 @@ def stage(tmp_path: Path, data: bytes | None) -> Path:
     return scope
 
 
-def invoke(scope: Path, task: str, inputs: dict, *, outputs=(), input_artifacts=()):
+def invoke(
+    scope: Path, task: str, inputs: dict, *, outputs=(), input_artifacts=(), deadline_seconds=None
+):
     request = RequestEnvelope.model_validate(
         {"version": 1, "tasks": [{"task": task, "inputs": {"source": "art_test", **inputs}}]}
     )
@@ -94,6 +99,7 @@ def invoke(scope: Path, task: str, inputs: dict, *, outputs=(), input_artifacts=
         scope_dir=scope,
         outputs=outputs,
         input_artifacts=input_artifacts,
+        deadline_seconds=deadline_seconds,
     )
     (task_result,) = result.tasks
     return task_result
@@ -1378,6 +1384,191 @@ def test_grep_python_memory_stays_bounded_for_a_huge_line(tmp_path):
     assert result["totalMatches"] == 3
     assert [m["lineNumber"] for m in result["matches"][:2]] == [1, 2]
     assert peak < 8 * MIB, f"python peak {peak / MIB:.1f} MiB"
+
+
+# --- the request deadline ------------------------------------------------------------------
+# `rwtask serve` takes one request at a time and does not kill the pod at the deadline, so each
+# task stops itself: the SDK puts the deadline on `ctx.deadline_at`, and a task stops a few
+# seconds early (MARGIN_SECONDS) so its error reaches the caller before the lease runs out.
+
+
+@pytest.fixture
+def no_margin(monkeypatch):
+    """Stop exactly at the deadline, so a 2 s deadline in a test is a 2 s wait."""
+    monkeypatch.setattr(deadline_mod, "MARGIN_SECONDS", 0.0)
+
+
+def timed(call):
+    started = time.monotonic()
+    outcome = call()
+    return outcome, time.monotonic() - started
+
+
+def test_jq_stops_a_runaway_filter_at_the_deadline(tmp_path, no_margin):
+    scope = stage(tmp_path, b"1\n")
+    task_result, seconds = timed(
+        lambda: invoke(
+            scope, "jq", {"filter": "last(range(1e18))", "lines": True}, deadline_seconds=2
+        )
+    )
+    assert task_result.status == "failed"
+    assert task_result.error.startswith("E_DEADLINE:"), task_result.error
+    assert "after 2 s" in task_result.error
+    assert 1.5 < seconds < 6, f"{seconds:.1f} s"
+
+
+def test_sql_interrupts_a_runaway_query_at_the_deadline(tmp_path, no_margin):
+    data = b"id\n" + b"\n".join(b"%d" % i for i in range(200_000)) + b"\n"
+    scope = stage(tmp_path, data)
+    query = "select count(*) from t a, t b where a.id + b.id = -1"
+    task_result, seconds = timed(lambda: invoke(scope, "sql", {"query": query}, deadline_seconds=2))
+    assert task_result.status == "failed"
+    assert task_result.error.startswith("E_DEADLINE:"), task_result.error
+    assert 1.5 < seconds < 6, f"{seconds:.1f} s"
+    assert not (scope / ".duckdb-tmp").exists()
+
+
+class SlowSource(io.RawIOBase):
+    """An input that trickles: a small chunk every `pause` seconds, for a long time."""
+
+    def __init__(self, pause: float, chunks: int = 1000) -> None:
+        self.pause = pause
+        self.left = chunks
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        if self.left <= 0:
+            return b""
+        self.left -= 1
+        time.sleep(self.pause)
+        return b"nothing to see here\n" * 50
+
+    def readline(self, size: int = -1) -> bytes:
+        return self.read(size)
+
+
+class DiscardingOutput(io.BytesIO):
+    ref = "discarded"
+
+
+def slow_ctx(deadline_in: float | None, pause: float = 0.2):
+    ctx = fake_ctx(SlowSource(pause))
+    ctx.artifacts.open = lambda name, content_type=None: DiscardingOutput()
+    ctx.deadline_at = None if deadline_in is None else time.monotonic() + deadline_in
+    ctx.workdir = Path(".")
+    return ctx
+
+
+def test_grep_stops_a_slow_search_at_the_deadline(no_margin):
+    ctx = slow_ctx(2)
+    started = time.monotonic()
+    with pytest.raises(deadline_mod.ToolError, match="^E_DEADLINE: stopped at the request"):
+        grep_mod.run_grep(
+            ctx, pattern="needle", ignore_case=False, context=0, max_matches=5, save_all=False
+        )
+    assert 1.5 < time.monotonic() - started < 6
+
+
+def test_jq_stops_a_slow_input_at_the_deadline(no_margin):
+    ctx = slow_ctx(2)
+    started = time.monotonic()
+    with pytest.raises(deadline_mod.ToolError, match="^E_DEADLINE:"):
+        jq_mod.run_jq(ctx, program=".", lines=True)
+    assert 1.5 < time.monotonic() - started < 6
+
+
+def test_slice_checks_the_deadline_between_chunks(no_margin):
+    ctx = slow_ctx(1)
+    started = time.monotonic()
+    with pytest.raises(deadline_mod.ToolError, match="^E_DEADLINE:"):
+        slice_mod.run_slice(ctx, from_line=10**9, to_line=10**9 + 5)
+    assert 0.8 < time.monotonic() - started < 5
+
+
+@pytest.mark.parametrize(
+    ("task", "inputs"),
+    [
+        ("grep", {"pattern": "x"}),
+        ("jq", {"filter": "."}),
+        ("sql", {"query": "select 1"}),
+        ("slice", {"fromLine": 1, "toLine": 2}),
+    ],
+)
+def test_a_deadline_inside_the_margin_stops_the_task_at_once(tmp_path, task, inputs):
+    # The default margin is 5 s: a deadline 1 s away is already too close to start.
+    assert deadline_mod.MARGIN_SECONDS == 5.0
+    scope = stage(tmp_path, b"x\n")
+    task_result, seconds = timed(lambda: invoke(scope, task, inputs, deadline_seconds=1))
+    assert task_result.status == "failed"
+    assert task_result.error.startswith("E_DEADLINE:"), task_result.error
+    assert seconds < 3
+
+
+def test_no_deadline_means_no_timer(tmp_path):
+    before = threading.active_count()
+    watch = deadline_mod.Deadline(SimpleNamespace(deadline_at=None), "advice")
+    watch.arm(lambda: pytest.fail("fired"))
+    watch.check()
+    watch.cancel()
+    assert not watch.expired and threading.active_count() == before
+
+
+def test_the_timer_is_cancelled_when_the_work_finishes_first(tmp_path):
+    scope = stage(tmp_path, b"1\n2\n")
+    task_result = invoke(scope, "jq", {"filter": "."}, deadline_seconds=3600)
+    assert task_result.status == "ok", task_result.error
+    assert not [t for t in threading.enumerate() if isinstance(t, threading.Timer)]
+
+
+def test_a_finished_task_is_not_failed_by_a_late_deadline(tmp_path, no_margin):
+    # The deadline passes just after the answer is complete: the answer stands.
+    scope = stage(tmp_path, b"hit\n")
+    result = invoke(scope, "grep", {"pattern": "hit"}, deadline_seconds=30)
+    assert result.status == "ok"
+
+
+def test_grep_reaps_ripgrep_when_setup_after_the_spawn_fails(monkeypatch):
+    spawned = []
+    real_spawn = grep_mod.spawn
+
+    def spawn_and_note(argv):
+        proc = real_spawn(argv)
+        spawned.append(proc)
+        return proc
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("setup broke")
+
+    monkeypatch.setattr(grep_mod, "spawn", spawn_and_note)
+    monkeypatch.setattr(grep_mod, "StderrTail", broken)
+    ctx = fake_ctx(io.BytesIO(b"needle\n"))
+    with pytest.raises(RuntimeError, match="setup broke"):
+        grep_mod.run_grep(
+            ctx, pattern="needle", ignore_case=False, context=0, max_matches=5, save_all=False
+        )
+    assert spawned and spawned[0].poll() is not None, "ripgrep was left running"
+
+
+def test_jq_reaps_jq_when_setup_after_the_spawn_fails(monkeypatch):
+    spawned = []
+    real_spawn = jq_mod.spawn
+
+    def spawn_and_note(argv):
+        proc = real_spawn(argv)
+        spawned.append(proc)
+        return proc
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("setup broke")
+
+    monkeypatch.setattr(jq_mod, "spawn", spawn_and_note)
+    monkeypatch.setattr(jq_mod, "_limit_address_space", broken)
+    ctx = fake_ctx(io.BytesIO(b"1\n"))
+    with pytest.raises(RuntimeError, match="setup broke"):
+        jq_mod.run_jq(ctx, program=".", lines=True)
+    assert spawned and spawned[0].poll() is not None, "jq was left running"
 
 
 # --- parameter validation ------------------------------------------------------------------

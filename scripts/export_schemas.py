@@ -15,7 +15,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "sdk"))
+# artifact-tools' result models are pydantic-only, so they import here without its SDK.
+sys.path.insert(0, str(REPO_ROOT / "capabilities" / "artifact-tools"))
 
+import artifact_tools.models as artifact_models  # noqa: E402
 from pydantic import TypeAdapter  # noqa: E402
 from runwhen_capability.models import (  # noqa: E402
     FindingsResult,
@@ -47,10 +50,22 @@ QUERY_RESULT_SCHEMA_VERSION = 1
 # ({findings, truncated}), not a bare list of Finding, so a capped result
 # can say so. rw-worktree's read/grep/ls each declare a single `result`
 # output with their own kind and schema file, and so does `query`.
+# artifact-tools' grep/jq/sql each declare a single `result` output the same way.
 CAPABILITY_SCHEMAS: dict[str, dict[str, object]] = {
     "rw-checks": {
         f"findings.v{FINDINGS_RESULT_SCHEMA_VERSION}.json": TypeAdapter(
             FindingsResult
+        ).json_schema(),
+    },
+    "artifact-tools": {
+        f"grep.v{artifact_models.GREP_RESULT_SCHEMA_VERSION}.json": TypeAdapter(
+            artifact_models.GrepResult
+        ).json_schema(),
+        f"jq.v{artifact_models.JQ_RESULT_SCHEMA_VERSION}.json": TypeAdapter(
+            artifact_models.JqResult
+        ).json_schema(),
+        f"sql.v{artifact_models.SQL_RESULT_SCHEMA_VERSION}.json": TypeAdapter(
+            artifact_models.SqlResult
         ).json_schema(),
     },
     "rw-worktree": {

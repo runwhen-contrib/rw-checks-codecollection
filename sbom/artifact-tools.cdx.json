@@ -1,0 +1,105 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "container",
+      "name": "artifact-tools-codecollection",
+      "description": "Search tools bundled into the artifact-tools capability image"
+    },
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "gen_tool_sbom.py",
+          "version": "1.0"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "application",
+      "name": "jq",
+      "version": "1.8.2",
+      "purl": "pkg:github/jqlang/jq@jq-1.8.2",
+      "scope": "required",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-amd64",
+          "comment": "linux/amd64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "b1c22172dd303f3be49e935aa56aa48a8b7a46e0bc838b4997d3bb451495870f"
+            }
+          ]
+        },
+        {
+          "type": "distribution",
+          "url": "https://github.com/jqlang/jq/releases/download/jq-1.8.2/jq-linux-arm64",
+          "comment": "linux/arm64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "8b85c817833814ddca00a144c33705546355afccf0cf39b188f3cdb48b852309"
+            }
+          ]
+        }
+      ],
+      "properties": [
+        {
+          "name": "rw:archive-kind",
+          "value": "binary"
+        },
+        {
+          "name": "rw:binary-name",
+          "value": "jq"
+        }
+      ]
+    },
+    {
+      "type": "application",
+      "name": "ripgrep",
+      "version": "15.2.0",
+      "purl": "pkg:github/BurntSushi/ripgrep@15.2.0",
+      "scope": "required",
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-x86_64-unknown-linux-musl.tar.gz",
+          "comment": "linux/amd64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "33e15bcf1624b25cdd2a55813a47a2f95dbe126268203e76aa6a585d1e7b149c"
+            }
+          ]
+        },
+        {
+          "type": "distribution",
+          "url": "https://github.com/BurntSushi/ripgrep/releases/download/15.2.0/ripgrep-15.2.0-aarch64-unknown-linux-musl.tar.gz",
+          "comment": "linux/arm64",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "800b1e7206afe799dfb5a6901f23147cfaabe0e52210538100f61e86e1740915"
+            }
+          ]
+        }
+      ],
+      "properties": [
+        {
+          "name": "rw:archive-kind",
+          "value": "tar.gz"
+        },
+        {
+          "name": "rw:binary-name",
+          "value": "rg"
+        }
+      ]
+    }
+  ]
+}

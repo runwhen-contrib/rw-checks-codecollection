@@ -1,0 +1,22 @@
+# Python dependencies of the artifact-tools image: DuckDB, plus the runtime
+# dependencies of the capability SDK (copied from its pyproject.toml).
+#
+# The SDK is installed with --no-deps from requirements-artifact-tools-sdk.txt,
+# because a git requirement cannot be installed under --require-hashes. So its
+# dependencies are listed here, where they get pinned and hashed with everything
+# else. If the SDK's dependency list changes, `pip check` in the image build and
+# in `make artifact-tools-venv` fails until this list catches up.
+#
+# requirements-artifact-tools.txt is GENERATED from this file. --exclude-newer
+# keeps every resolved package at least two weeks old; move the date forward to
+# take newer releases:
+#
+#   uv pip compile requirements-artifact-tools.in --generate-hashes --universal \
+#       --python-version 3.12 --exclude-newer 2026-10-10 \
+#       --output-file requirements-artifact-tools.txt
+duckdb==1.5.6
+pydantic>=2,<3
+PyYAML>=6
+requests>=2.31
+urllib3>=2
+jsonschema>=4.18

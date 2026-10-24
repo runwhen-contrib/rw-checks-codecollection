@@ -92,7 +92,8 @@ needs none -- `ctx.git.checkout()` degrades to an anonymous fetch when no creden
 Image == capability, 1:1 (`sdk/runwhen_capability/loader.py`'s `discover_capability_dir`
 docstring): `rw-checks` and `rw-worktree` are different execution modes (stateless vs.
 stateful) and must be separate executor pools, so each gets its own Dockerfile, built from
-the same SDK layer.
+the same SDK layer. `artifact-tools` has a Dockerfile of its own as well, but on a different SDK
+(see below).
 
 ```
 docker build -f Dockerfile.rw-checks -t rw-checks:dev .
@@ -103,23 +104,46 @@ docker run --rm rw-checks:dev gitleaks version
 docker build -f Dockerfile.rw-worktree -t rw-worktree:dev .
 docker run --rm rw-worktree:dev rwtask --help
 docker run --rm rw-worktree:dev git --version
+
+docker build -f Dockerfile.artifact-tools -t artifact-tools:dev .
+docker run --rm artifact-tools:dev rwtask --help
+docker run --rm artifact-tools:dev rg --version
+docker run --rm artifact-tools:dev jq --version
 ```
 
-In production neither image is driven directly: `rwtask serve --relay <url> --pool <poolId>`
+`artifact-tools` is four read-only tasks -- `grep`, `jq`, `sql` and `slice` -- that each run over
+one stored artifact, with no target. It runs on the standalone `runwhen_capability` SDK (the
+vendored `sdk/` has no artifact API), installed from its pinned v0.4.0 release tag into a
+virtualenv in the image, with DuckDB and the SDK's dependencies hash-locked in
+`requirements-artifact-tools.txt`. Its `rg` and `jq` are pinned release binaries:
+`tools/artifact-tools.yaml` lists them, and `sbom/artifact-tools.cdx.json` records their sha256,
+which `scripts/install_tools.sh` verifies at build time. That pair of files is separate from
+`tools/tools.yaml` because `install_tools.sh` installs every component of the SBOM it is given, so
+listing them there would ship them in the `rw-checks` image too. After editing the yaml, regenerate
+the SBOM:
+
+```
+python3 scripts/gen_tool_sbom.py --tools tools/artifact-tools.yaml --sbom sbom/artifact-tools.cdx.json
+```
+
+The image carries a copy at `/usr/share/artifact-tools/tools.cdx.json` and ships no `git`, `curl`
+or lint tooling.
+
+In production none of the images is driven directly: `rwtask serve --relay <url> --pool <poolId>`
 long-polls the runner as a warm executor (see `EXECUTOR-CONTRACT.md`'s "Wire 2"), executing one
 request (`setup` + N tasks) at a time and posting the result back. Each image's `CMD` already
 bakes in its own `--capability-dir` so it never has to guess which capability it is serving.
 
 ## Manifest label
 
-Neither `manifest.yaml` declares an `image:` key -- an image cannot know its own digest. Instead
+No `manifest.yaml` declares an `image:` key -- an image cannot know its own digest. Instead
 each image carries its own manifest as an OCI label, `com.runwhen.capability.manifest.v1`: the
 base64 (no line breaks) of that capability's `manifest.yaml`, verbatim. CI computes it at build
 time with `scripts/manifest_label.py` and bakes it in via the `CAPABILITY_MANIFEST_B64` build
 arg, so the codecollection catalog can discover a capability's manifest straight off the pushed
 image, without a platform release.
 
-To inspect the label on a published image (no pull needed; both images are multi-arch, and the
+To inspect the label on a published image (no pull needed; the images are multi-arch, and the
 label is identical on every platform):
 
 ```
@@ -165,6 +189,16 @@ make test        # python -m pytest -q
 make lint         # ruff check .
 make fmt-check    # ruff format --check .
 make schemas      # regenerate capabilities/*/schemas/*.v<N>.json from the SDK's models
+```
+
+`artifact-tools` has its own behaviour tests in `tests-artifact-tools/`. They need the standalone
+SDK, which cannot share a virtualenv with the vendored one, so they get a venv of their own, and
+they run the real `rg`, `jq` and DuckDB: both binaries must be on `PATH`, or the tests fail rather
+than skip (CI installs the pinned ones from `sbom/artifact-tools.cdx.json`).
+
+```
+make artifact-tools-venv    # .venv-artifact-tools, from the hash-locked requirements (PYTHON=python3.12)
+make test-artifact-tools    # python -m pytest -q tests-artifact-tools, in that venv
 ```
 
 ```

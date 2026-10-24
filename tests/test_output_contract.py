@@ -87,7 +87,7 @@ def _wrapper_call(fn: ast.FunctionDef, output_name: str) -> str | None:
     return None
 
 
-@pytest.mark.parametrize("capability", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_every_declared_output_is_actually_returned(capability):
     """A task must return a dict carrying every output key its manifest declares."""
     functions = _task_functions(capability)
@@ -102,7 +102,7 @@ def test_every_declared_output_is_actually_returned(capability):
         )
 
 
-@pytest.mark.parametrize("capability", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_findings_outputs_return_the_envelope_not_a_bare_list(capability):
     """`rw.findings.v1` is the {findings, truncated} envelope, so every task
     declaring it must wrap its value in `ctx.findings.cap(...)`.

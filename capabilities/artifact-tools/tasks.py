@@ -38,7 +38,7 @@ def grep(
 ):
     result, matches = run_grep(
         ctx,
-        pattern=as_text("pattern", pattern),
+        pattern=as_text("pattern", pattern, allow_blank=True),
         ignore_case=as_bool("ignoreCase", ignore_case),
         context=as_int("context", context, minimum=0, maximum=5, default=0),
         max_matches=as_int("maxMatches", max_matches, minimum=1, maximum=500, default=50),

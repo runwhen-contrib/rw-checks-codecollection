@@ -20,6 +20,7 @@ import inspect
 import io
 import json
 import logging
+import os
 import random
 import shutil
 import subprocess
@@ -534,7 +535,80 @@ def test_jq_refuses_huge_single_document(tmp_path, monkeypatch):
 def test_jq_too_large_message_states_the_real_limit_and_size():
     message = str(jq_mod._too_large(3 * 1024**3))
     assert message.startswith("E_TOO_LARGE_FOR_JQ:")
-    assert "3221225472 bytes" in message and "limit 512 MiB" in message
+    assert "3221225472 bytes" in message and "limit 128 MiB" in message
+    # Which tool to use instead depends on the shape of the document.
+    assert "array of records" in message and "use sql with format=json" in message
+    assert "one big object" in message and "grep or slice" in message and "16 MiB" in message
+    assert "lines=true" in message
+
+
+def test_jq_document_limit_matches_what_jq_can_hold():
+    # jq needs about six times a pretty-printed document, and its address space is capped at
+    # 1 GiB, so a document much over 150 MiB would die inside jq.
+    assert jq_mod.MAX_DOCUMENT_BYTES == 128 * 1024 * 1024
+    assert jq_mod.MAX_DOCUMENT_BYTES * 6 < jq_mod.ADDRESS_SPACE_BYTES
+
+
+def test_the_manifest_states_the_limit_the_code_enforces():
+    manifest = (CAP_DIR / "manifest.yaml").read_text()
+    limit = f"{jq_mod.MAX_DOCUMENT_BYTES // MIB} MiB"
+    assert f"over {limit} is" in " ".join(manifest.split())
+
+
+@pytest.mark.parametrize(
+    "stderr", ["jq: error: cannot allocate memory", "jq: error: out of memory"]
+)
+def test_jq_running_out_of_memory_is_reported_as_too_large(tmp_path, monkeypatch, stderr):
+    # What jq prints when its allocation fails (the address-space limit makes it fail rather than
+    # the pod being killed), standing in for a real document too big for it.
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    stub = stub_dir / "jq"
+    stub.write_text(f"#!/bin/sh\ncat > /dev/null\necho '{stderr}' >&2\nexit 134\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{stub_dir}{os.pathsep}{os.environ['PATH']}")
+    error = run_fails(tmp_path / "run", "jq", {"filter": ".", "lines": False}, b'{"a": 1}\n')
+    assert error.startswith("E_TOO_LARGE_FOR_JQ:"), error
+    assert "use sql with format=json" in error
+
+
+def test_jq_other_failures_are_still_plain_errors(tmp_path):
+    error = run_fails(tmp_path, "jq", {"filter": ".a.b"}, b'{"a": 1}\n')
+    assert not error.startswith("E_TOO_LARGE_FOR_JQ")
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        'import "a" as $x {search: "/etc"}; $x',
+        'include "a"; .',
+        'import "a" as $x; $x',
+        '# a comment first\nimport "a" as $x; 1',
+        'import\n  "a" as $x;\n.',
+        'module {version: 1}; import "a" as $x; .',
+        'import"a" as $x; .',
+    ],
+)
+def test_jq_refuses_to_import_or_include_modules(tmp_path, program):
+    error = run_fails(tmp_path, "jq", {"filter": program}, b'{"a": 1}\n')
+    assert error == "jq filters may not import or include modules"
+
+
+@pytest.mark.parametrize(
+    ("program", "output"),
+    [
+        ('{"import": .a, "include": 2}', '{"import":1,"include":2}'),
+        ("{import: .a}", '{"import":1}'),
+        ('"import \\"x\\" as $y; 1"', '"import \\"x\\" as $y; 1"'),
+        ('"include"', '"include"'),
+        ('[{"name": "include"}] | map(select(.name == "include")) | length', "1"),
+        ('{"a": 1} | .a as $import | $import', "1"),
+        ('# import "x" as $y;\n.a', "1"),
+    ],
+)
+def test_jq_allows_the_words_as_data(tmp_path, program, output):
+    result = run_ok(tmp_path, "jq", {"filter": program}, b'{"a": 1}\n')["result"]
+    assert result["output"] == output
 
 
 def test_jq_large_jsonl_is_not_refused_by_the_document_limit(tmp_path, monkeypatch):
@@ -1587,6 +1661,7 @@ def test_jq_reaps_jq_when_setup_after_the_spawn_fails(monkeypatch):
         ("grep", {"pattern": "x", "ignoreCase": 1}, "ignoreCase"),
         ("grep", {"pattern": "x", "saveAll": "yes"}, "saveAll"),
         ("grep", {"pattern": ""}, "pattern"),
+        ("jq", {"filter": "   "}, "filter"),
         ("grep", {"pattern": 5}, "pattern"),
         ("jq", {"filter": ""}, "filter"),
         ("jq", {"filter": ".", "lines": "perhaps"}, "lines"),
@@ -1599,6 +1674,12 @@ def test_jq_reaps_jq_when_setup_after_the_spawn_fails(monkeypatch):
 )
 def test_parameter_validation_rejects_instead_of_clamping(tmp_path, task, inputs, needle):
     assert needle in run_fails(tmp_path, task, inputs, b"x\n")
+
+
+def test_grep_pattern_of_one_space_is_a_valid_regex(tmp_path):
+    data = b"no-space\nhas a space\nnone\n"
+    result = run_ok(tmp_path, "grep", {"pattern": " "}, data)["result"]
+    assert [m["text"] for m in result["matches"]] == ["has a space"]
 
 
 def test_parameters_accept_strings_agents_send(tmp_path):

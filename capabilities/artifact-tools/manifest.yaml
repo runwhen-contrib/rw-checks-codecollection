@@ -23,6 +23,9 @@ description: Read-only search, query and slicing of a stored artifact (grep, jq,
 execution:
   mode: stateless
   maxPodsPerPool: 2
+  # Headroom, not parallelism, today: `rwtask serve` handles one request at a time, so a pod
+  # handed two leases runs them one after the other. The second slot is for an executor that
+  # does run requests side by side, and the resources below leave room for two sql sessions.
   maxConcurrentPerPod: 2
   idleTtlSeconds: 900
   requestTimeoutSeconds: 600
@@ -117,7 +120,7 @@ tasks:
           true if every line is one JSON value (JSONL), false if the input is one
           document. When omitted, the input counts as JSONL if its first line, up to
           1 MiB, parses as one JSON value. Pass lines=true or lines=false when you
-          know; an explicit value always wins. A non-JSONL document over 512 MiB is
+          know; an explicit value always wins. A non-JSONL document over 128 MiB is
           refused.
     outputs:
       result:

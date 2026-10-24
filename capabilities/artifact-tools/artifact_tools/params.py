@@ -13,9 +13,10 @@ from typing import Any
 _DECIMAL = re.compile(r"[+-]?[0-9]+")
 
 
-def as_text(name: str, value: Any) -> str:
-    """A required, non-blank string input."""
-    if not isinstance(value, str) or not value.strip():
+def as_text(name: str, value: Any, *, allow_blank: bool = False) -> str:
+    """A required string input. Blank (only whitespace) is refused unless `allow_blank`, as for
+    a regular expression, where a single space is a pattern; the empty string never is."""
+    if not isinstance(value, str) or not value or (not allow_blank and not value.strip()):
         raise ValueError(f"{name} must be a non-empty string")
     return value
 

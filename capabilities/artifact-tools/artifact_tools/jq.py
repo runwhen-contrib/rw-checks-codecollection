@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import resource
 import subprocess
 from collections.abc import Iterator
@@ -28,7 +29,9 @@ from .procs import (
     spawn,
 )
 
-MAX_DOCUMENT_BYTES = 512 * 1024 * 1024
+# jq holds about six times a pretty-printed document, and its address space is capped at
+# ADDRESS_SPACE_BYTES (1 GiB), so a larger document would die inside jq with a worse error.
+MAX_DOCUMENT_BYTES = 128 * 1024 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
 SNIFF_BYTES = 1 << 20
 ADDRESS_SPACE_BYTES = 1 << 30
@@ -54,19 +57,43 @@ def _declared_size(ctx: Any) -> int | None:
     return None
 
 
-def _too_large(size: int | None) -> ToolError:
+def _too_large(size: int | None, *, out_of_memory: bool = False) -> ToolError:
     limit = (
         f"{MAX_DOCUMENT_BYTES // _MIB} MiB"
         if MAX_DOCUMENT_BYTES % _MIB == 0
         else f"{MAX_DOCUMENT_BYTES} bytes"
     )
-    how_big = f"is {size} bytes" if size is not None else f"is larger than {limit}"
+    if out_of_memory:
+        how_big = "made jq run out of memory"
+    elif size is not None:
+        how_big = f"is {size} bytes"
+    else:
+        how_big = f"is larger than {limit}"
     return ToolError(
         "E_TOO_LARGE_FOR_JQ",
         f"the input {how_big}, and jq loads a whole non-JSONL document into memory "
-        f"(limit {limit}); use sql with format=json instead. "
-        "If every line is one JSON value, pass lines=true.",
+        f"(limit {limit}). For an array of records, use sql with format=json. For one big "
+        "object, use grep or slice (DuckDB's JSON reader takes a single object of at most "
+        "16 MiB). If every line is one JSON value, pass lines=true.",
     )
+
+
+# What jq says on stderr, before it aborts, when an allocation fails (jq 1.6 to 1.8).
+_OUT_OF_MEMORY = ("cannot allocate memory", "out of memory")
+
+_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|#[^\n]*|[A-Za-z_][A-Za-z0-9_]*|\S', re.DOTALL)
+
+
+def check_program(program: str) -> None:
+    """Refuses a filter that imports or includes a module, which would read files from a
+    directory the caller names. Strings, comments, object keys (`{import: 1}`) and field
+    names (`.import`) are not module directives: a directive is `import` or `include` followed
+    by a string. Tokenised just enough to tell those apart; anything unclear is refused."""
+    tokens = [t for t in _TOKEN.findall(program) if not t.startswith("#")]
+    for index, token in enumerate(tokens[:-1]):
+        if token in ("import", "include") and tokens[index + 1].startswith('"'):
+            if index == 0 or tokens[index - 1] not in (".", "$"):
+                raise ValueError("jq filters may not import or include modules")
 
 
 def _pieces(head: bytes, source: Any, *, lines: bool) -> Iterator[bytes]:
@@ -109,6 +136,7 @@ def _cut_output(data: bytes) -> bytes:
 def run_jq(ctx: Any, *, program: str, lines: bool | None) -> JqResult:
     """Runs the jq `program` over the `source` input. `lines` None means "decide from the first
     line"."""
+    check_program(program)
     with ctx.artifacts.input("source") as source:
         head = b""
         if lines is None:
@@ -141,7 +169,10 @@ def run_jq(ctx: Any, *, program: str, lines: bool | None) -> JqResult:
             if feeder.error is not None:
                 raise feeder.error
             if returncode != 0 and not truncated:
-                raise RuntimeError(f"jq exited with status {returncode}: {stderr.text()}")
+                tail = stderr.text()
+                if any(message in tail.lower() for message in _OUT_OF_MEMORY):
+                    raise _too_large(_declared_size(ctx), out_of_memory=True)
+                raise RuntimeError(f"jq exited with status {returncode}: {tail}")
         finally:
             watch.cancel()
             shutdown(proc, feeder, stderr)

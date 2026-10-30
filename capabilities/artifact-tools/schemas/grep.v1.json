@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "GrepLine": {
+      "description": "One line of the input, 1-based `lineNumber`, without its line ending. `text` is cut to\n1024 characters, and `textTruncated` says so.",
+      "properties": {
+        "lineNumber": {
+          "title": "Linenumber",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "textTruncated": {
+          "default": false,
+          "title": "Texttruncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "lineNumber",
+        "text"
+      ],
+      "title": "GrepLine",
+      "type": "object"
+    },
+    "GrepMatch": {
+      "description": "A matching line with the `context` lines before and after it that did not match.",
+      "properties": {
+        "lineNumber": {
+          "title": "Linenumber",
+          "type": "integer"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "textTruncated": {
+          "default": false,
+          "title": "Texttruncated",
+          "type": "boolean"
+        },
+        "before": {
+          "items": {
+            "$ref": "#/$defs/GrepLine"
+          },
+          "title": "Before",
+          "type": "array"
+        },
+        "after": {
+          "items": {
+            "$ref": "#/$defs/GrepLine"
+          },
+          "title": "After",
+          "type": "array"
+        }
+      },
+      "required": [
+        "lineNumber",
+        "text"
+      ],
+      "title": "GrepMatch",
+      "type": "object"
+    }
+  },
+  "description": "Output of the `grep` task. `matches` holds the first matching lines in file order;\n`totalMatches` counts every matching line, kept or not. `longLines` is how many input\nlines over 64 KiB were searched only in their first 64 KiB, and `bytesScanned` the bytes\nsearched.",
+  "properties": {
+    "matches": {
+      "items": {
+        "$ref": "#/$defs/GrepMatch"
+      },
+      "title": "Matches",
+      "type": "array"
+    },
+    "totalMatches": {
+      "title": "Totalmatches",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "hint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hint"
+    },
+    "longLines": {
+      "default": 0,
+      "title": "Longlines",
+      "type": "integer"
+    },
+    "bytesScanned": {
+      "default": 0,
+      "title": "Bytesscanned",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "totalMatches"
+  ],
+  "title": "GrepResult",
+  "type": "object"
+}

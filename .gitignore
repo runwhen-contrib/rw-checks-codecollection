@@ -8,6 +8,7 @@ build
 .DS_Store
 .vscode/settings.json
 .venv
+.venv-*/
 
 # rwtask run's local scope directories, if left with --keep-workdir
 rwtask-run-*/

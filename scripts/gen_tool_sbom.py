@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate sbom/tools.cdx.json from tools/tools.yaml.
+"""Regenerate an SBOM from a tools yaml (default: sbom/tools.cdx.json from tools/tools.yaml).
 
 Downloads every declared artifact, for every declared architecture, and
 records its sha256. Emits a CycloneDX 1.6 SBOM (ECMA-424) -- the format
@@ -8,6 +8,14 @@ Trivy, Grype, osv-scanner and Dependency-Track all consume natively.
 Run this whenever tools/tools.yaml changes:
 
     python3 scripts/gen_tool_sbom.py
+
+Another image keeps its own pair of files, because scripts/install_tools.sh
+installs every component of the SBOM it is given. Name them with --tools and
+--sbom, and put a top-level `component:` mapping (name, description) in the
+yaml to name the SBOM's subject:
+
+    python3 scripts/gen_tool_sbom.py \\
+        --tools tools/artifact-tools.yaml --sbom sbom/artifact-tools.cdx.json
 
 Why a real SBOM instead of a bespoke lock file: a statically linked binary
 installed into /usr/local/bin is invisible to any scanner that works off a
@@ -23,6 +31,7 @@ version bumped there but not re-hashed here cannot reach an image.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import sys
@@ -35,6 +44,12 @@ ROOT = Path(__file__).resolve().parent.parent
 TOOLS_YAML = ROOT / "tools" / "tools.yaml"
 SBOM_PATH = ROOT / "sbom" / "tools.cdx.json"
 CHUNK = 1 << 20
+
+# metadata.component when the yaml has no `component:` mapping of its own.
+DEFAULT_COMPONENT = {
+    "name": "rw-checks-codecollection",
+    "description": "Static-check tools bundled into the rw-checks capability image",
+}
 
 
 def fetch_sha256(url: str) -> tuple[str, int]:
@@ -90,11 +105,19 @@ def build_component(tool: dict, known: dict[str, str] | None = None) -> dict:
     }
 
 
-def load_known_hashes() -> dict[str, tuple[str, int]]:
+def display(path: Path) -> str:
+    """`path` relative to the repo root when it lives there, else as given."""
+    try:
+        return str(path.resolve().relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def load_known_hashes(sbom_path: Path) -> dict[str, str]:
     """url -> sha256 from the existing SBOM, for --reuse-hashes."""
-    if not SBOM_PATH.exists():
+    if not sbom_path.exists():
         return {}
-    sbom = json.loads(SBOM_PATH.read_text())
+    sbom = json.loads(sbom_path.read_text())
     known = {}
     for comp in sbom.get("components", []):
         for ref in comp.get("externalReferences", []):
@@ -104,17 +127,39 @@ def load_known_hashes() -> dict[str, tuple[str, int]]:
     return known
 
 
-def main() -> int:
-    reuse = "--reuse-hashes" in sys.argv
-    known = load_known_hashes() if reuse else {}
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--tools",
+        type=Path,
+        default=TOOLS_YAML,
+        help="tools yaml to read (default: tools/tools.yaml)",
+    )
+    parser.add_argument(
+        "--sbom",
+        type=Path,
+        default=SBOM_PATH,
+        help="SBOM json to write (default: sbom/tools.cdx.json)",
+    )
+    parser.add_argument(
+        "--reuse-hashes",
+        action="store_true",
+        help="reuse the hashes already recorded in --sbom for unchanged URLs",
+    )
+    args = parser.parse_args(argv)
+    tools_yaml: Path = args.tools
+    sbom_path: Path = args.sbom
+
+    reuse = args.reuse_hashes
+    known = load_known_hashes(sbom_path) if reuse else {}
     if reuse:
         print(
             "--reuse-hashes: reusing recorded hashes for unchanged URLs.\n"
             "  For metadata-only edits. A release asset CAN be replaced in place,\n"
             "  and only a full re-run would catch that -- do one before shipping.\n"
         )
-    spec = yaml.safe_load(TOOLS_YAML.read_text())
-    print(f"hashing {len(spec['tools'])} tools from {TOOLS_YAML.relative_to(ROOT)}")
+    spec = yaml.safe_load(tools_yaml.read_text())
+    print(f"hashing {len(spec['tools'])} tools from {display(tools_yaml)}")
 
     components = []
     failures = []
@@ -130,6 +175,8 @@ def main() -> int:
         print("SBOM NOT written -- a partial SBOM would silently drop tools.", file=sys.stderr)
         return 1
 
+    component = {**DEFAULT_COMPONENT, **(spec.get("component") or {})}
+
     sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.6",
@@ -141,8 +188,8 @@ def main() -> int:
             # build's own attestation, not in the checked-in source SBOM.
             "component": {
                 "type": "container",
-                "name": "rw-checks-codecollection",
-                "description": "Static-check tools bundled into the rw-checks capability image",
+                "name": component["name"],
+                "description": component["description"],
             },
             "tools": {
                 "components": [
@@ -153,9 +200,9 @@ def main() -> int:
         "components": sorted(components, key=lambda c: c["name"]),
     }
 
-    SBOM_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SBOM_PATH.write_text(json.dumps(sbom, indent=2, sort_keys=False) + "\n")
-    print(f"\nwrote {SBOM_PATH.relative_to(ROOT)} ({len(components)} components)")
+    sbom_path.parent.mkdir(parents=True, exist_ok=True)
+    sbom_path.write_text(json.dumps(sbom, indent=2, sort_keys=False) + "\n")
+    print(f"\nwrote {display(sbom_path)} ({len(components)} components)")
     return 0
 
 

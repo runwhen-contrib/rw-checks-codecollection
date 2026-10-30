@@ -9,7 +9,9 @@ build
 *egg-info
 .DS_Store
 .venv
+.venv-*
 tests
+tests-artifact-tools
 docs
 *.sarif
 *.sarif.json

@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "SqlColumn": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "SqlColumn",
+      "type": "object"
+    }
+  },
+  "description": "Output of the `sql` task. `rows` are JSON-safe values in `columns` order; `format` is\nthe reader that was used on the artifact (csv, json, jsonl or parquet).",
+  "properties": {
+    "columns": {
+      "items": {
+        "$ref": "#/$defs/SqlColumn"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "rows": {
+      "items": {
+        "items": {},
+        "type": "array"
+      },
+      "title": "Rows",
+      "type": "array"
+    },
+    "rowCount": {
+      "title": "Rowcount",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "hint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hint"
+    },
+    "format": {
+      "title": "Format",
+      "type": "string"
+    }
+  },
+  "required": [
+    "rowCount",
+    "format"
+  ],
+  "title": "SqlResult",
+  "type": "object"
+}

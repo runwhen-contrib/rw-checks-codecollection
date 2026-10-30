@@ -1,0 +1,161 @@
+# artifact-tools-codecollection: the artifact-tools capability image, not a
+# Robot codebundle image.
+#
+# Image == capability, 1:1 (see Dockerfile.rw-checks and Dockerfile.rw-worktree
+# for the other two). artifact-tools is stateless and has no target: its tasks
+# (grep, jq, sql, slice) each run over one stored artifact. It only ever COPYs
+# its own capabilities/artifact-tools/ directory.
+#
+# It ships:
+#   - the standalone runwhen_capability SDK and its rwtask task host, in a
+#     virtualenv at /opt/venv (the SDK vendored under sdk/ has no artifact API)
+#   - the artifact-tools capability's tasks (capabilities/artifact-tools/)
+#   - DuckDB (the sql task), ripgrep (grep) and jq (jq)
+# and NOTHING else: no git, no curl, no apt jq, no lint tooling.
+#
+# Every dependency that ends up in the final image is pinned, and all but the
+# SDK's own source are also hash-verified, by the mechanism standard for each
+# ecosystem:
+#
+#   PyPI -> requirements-artifact-tools.txt, installed with
+#     `pip --require-hashes --only-binary=:all:`, which refuses anything whose
+#     artifact hash is not listed, requires the full transitive closure to be
+#     pinned, and never builds an sdist.
+#   The SDK -> requirements-artifact-tools-sdk.txt, pinned to the SDK's v0.4.0 release
+#     tag, but not checked against a sha256. A git requirement cannot be installed
+#     under --require-hashes, so it goes in separately with --no-deps; its own
+#     dependencies are in the lock above, and `pip check` below fails the build
+#     if the two ever disagree. Building it uses pip's build isolation, which
+#     fetches the SDK's build backend (setuptools, wheel) from PyPI unpinned
+#     and unhashed. That happens in the build stage only, and none of it is
+#     copied into the final image.
+#   GitHub release binaries -> sbom/artifact-tools.cdx.json (CycloneDX 1.6),
+#     installed by scripts/install_tools.sh, which verifies each download's
+#     sha256 against the SBOM. It is a file of its own, not sbom/tools.cdx.json,
+#     because install_tools.sh installs every component of the SBOM it is given,
+#     so adding rg and jq to the rw-checks SBOM would ship them in that image
+#     too. The SBOM's PURL per component is what makes these statically linked
+#     binaries visible to CVE scanners.
+#
+# The build is two stages so the final image carries none of the build tools:
+# `build` has curl, git and jq (install_tools.sh needs curl and jq to read and
+# fetch the SBOM, pip needs git for the SDK pin) and the final stage copies
+# out only the installed binaries and the virtualenv.
+FROM python:3.12-slim AS build
+
+# Populated by buildx for the platform currently being built (amd64/arm64).
+# Used below to pick the right release artifact for each pinned binary.
+ARG TARGETARCH
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# ca-certificates and curl: install_tools.sh fetching the pinned release
+# artifacts. jq: install_tools.sh reading the SBOM. git: pip's VCS install of
+# the SDK pin. All build-time only; none of them reaches the final stage.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# GitHub-release binaries, sha256-verified against the SBOM. Installing from
+# the SBOM rather than from tools/artifact-tools.yaml is deliberate: a version
+# bumped in the yaml but not re-hashed by scripts/gen_tool_sbom.py still
+# carries the old URL and hash here, so it cannot reach an image.
+COPY sbom/artifact-tools.cdx.json /build/sbom/artifact-tools.cdx.json
+COPY scripts/install_tools.sh /build/scripts/install_tools.sh
+RUN mkdir -p /opt/tools/bin \
+    && TARGETARCH="${TARGETARCH}" SBOM=/build/sbom/artifact-tools.cdx.json DEST=/opt/tools/bin \
+       sh /build/scripts/install_tools.sh
+
+# Python side. The virtualenv lives at the same path in the final stage, so the
+# console scripts' shebangs stay valid after the copy.
+RUN python -m venv /opt/venv
+COPY requirements-artifact-tools.txt requirements-artifact-tools-sdk.txt /build/
+RUN /opt/venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: \
+        -r /build/requirements-artifact-tools.txt \
+    && /opt/venv/bin/pip install --no-cache-dir --no-deps \
+        -r /build/requirements-artifact-tools-sdk.txt \
+    && /opt/venv/bin/pip check
+
+
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# The virtualenv first on PATH: `rwtask` resolves to it, and so does `python3`,
+# which is therefore the interpreter that has PyYAML and DuckDB. CI's smoke
+# test relies on both.
+ENV PATH=/opt/venv/bin:$PATH
+
+COPY --from=build /opt/tools/bin/ /usr/local/bin/
+COPY --from=build /opt/venv /opt/venv
+
+# --- OCI image annotations (opencontainers.org/image-spec) -------------------
+# Placed after the heavy layers above, so a REVISION/CREATED/manifest-label
+# rebuild never busts the dependency-install cache. See Dockerfile.rw-checks's
+# own comment for what these keys are and why they matter to scanners.
+ARG REVISION=unknown
+ARG CREATED=unknown
+LABEL org.opencontainers.image.title="artifact-tools" \
+      org.opencontainers.image.description="Artifact search and query capability image for the RunWhen platform" \
+      org.opencontainers.image.source="https://github.com/runwhen-contrib/rw-checks-codecollection" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.created="${CREATED}" \
+      io.runwhen.capability="artifact-tools" \
+      io.runwhen.sbom="/usr/share/artifact-tools/tools.cdx.json"
+
+# Keep the tool SBOM IN the image, not only in the repo. A scanner handed the
+# image alone (the normal case for a registry scan) otherwise has no way to
+# learn about the statically linked binaries in /usr/local/bin -- they have no
+# dpkg or pip record. This is the file that makes them visible.
+COPY sbom/artifact-tools.cdx.json /usr/share/artifact-tools/tools.cdx.json
+
+# Base64 of capabilities/artifact-tools/manifest.yaml, produced at build time by
+# scripts/manifest_label.py. This is how the catalog discovers this
+# capability's manifest without a platform release: it reads the label off the
+# pushed image, never a repo checkout. Declared after the heavy layers, not with
+# the labels above: every RUN after an ARG is a cache miss when its value
+# changes, and this one changes on every manifest edit.
+ARG CAPABILITY_MANIFEST_B64=""
+LABEL com.runwhen.capability.manifest.v1="${CAPABILITY_MANIFEST_B64}"
+
+# Base64 of a JSON object holding EVERY file under
+# capabilities/artifact-tools/schemas/ -- not only the ones the current manifest
+# references, so an image always publishes its full schema history -- keyed
+# "schemas/<filename>", produced by `scripts/manifest_label.py --schemas`
+# (see README.md's "Schemas label"). Same cache reasoning as
+# CAPABILITY_MANIFEST_B64 above.
+ARG CAPABILITY_SCHEMAS_B64=""
+LABEL com.runwhen.capability.schemas.v1="${CAPABILITY_SCHEMAS_B64}"
+
+# Only capabilities/artifact-tools/, so this image ships exactly one
+# manifest.yaml and rwtask's own single-capability auto-discovery (the CI smoke
+# test relies on it) is unambiguous by construction, not by luck.
+WORKDIR /app
+COPY capabilities/artifact-tools /app/capabilities/artifact-tools
+
+# Non-root. /work is rwtask serve's default --workdir -- every request's
+# scope directory (<workdir>/<scopeId>/) is created and wiped under it, so
+# it's the one directory this user needs to write.
+RUN useradd --create-home --uid 1000 --shell /usr/sbin/nologin runwhen \
+    && mkdir -p /work \
+    && chown -R runwhen:runwhen /work /app
+USER runwhen
+
+# rwtask's argv IS the container command -- no Robot runtime, nothing to
+# reset. ENTRYPOINT [] is kept explicit (rather than simply absent) so a
+# `docker run <image> <anything>` never surprises anyone who expects the
+# rw-base-runtime convention from this org's other collections.
+#
+# --capability-dir is baked in explicitly rather than left to
+# discover_capability_dir's default: this image's own argv must never rely
+# on "there happens to be exactly one capabilities/*/manifest.yaml" being
+# true -- that auto-discovery stays a local-dev convenience only (see
+# `rwtask run`, README.md).
+ENTRYPOINT []
+CMD ["rwtask", "serve", "--capability-dir", "/app/capabilities/artifact-tools"]

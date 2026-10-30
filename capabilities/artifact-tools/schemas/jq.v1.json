@@ -1,0 +1,41 @@
+{
+  "description": "Output of the `jq` task: the filter's output, one compact JSON value per line, without a\ntrailing newline. `lines` is the input mode used (one JSON value per line, or one whole\ndocument).",
+  "properties": {
+    "output": {
+      "title": "Output",
+      "type": "string"
+    },
+    "outputLines": {
+      "title": "Outputlines",
+      "type": "integer"
+    },
+    "truncated": {
+      "default": false,
+      "title": "Truncated",
+      "type": "boolean"
+    },
+    "hint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Hint"
+    },
+    "lines": {
+      "title": "Lines",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "output",
+    "outputLines",
+    "lines"
+  ],
+  "title": "JqResult",
+  "type": "object"
+}

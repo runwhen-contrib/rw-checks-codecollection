@@ -33,25 +33,31 @@ CAPABILITIES = REPO_ROOT / "capabilities"
 MANIFEST_LABEL_SCRIPT = REPO_ROOT / "scripts" / "manifest_label.py"
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_shipped_manifest_loads_without_egress(capability_dir):
     manifest = load_manifest(CAPABILITIES / capability_dir)
     assert "egress" not in manifest["needs"]
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_shipped_manifest_has_no_image_key(capability_dir):
     manifest = load_manifest(CAPABILITIES / capability_dir)
     assert "image" not in manifest
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_shipped_manifest_resources_and_work_size_limit(capability_dir):
     manifest = load_manifest(CAPABILITIES / capability_dir)
     resources = manifest["execution"]["resources"]
     assert resources.keys() == {"cpuRequest", "cpuLimit", "memoryRequest", "memoryLimit"}
     assert all(isinstance(v, str) for v in resources.values())
     assert isinstance(manifest["execution"]["workSizeLimit"], str)
+
+
+def test_rw_checks_declares_max_result_bytes():
+    # A quantity string: the platform rejects a bare integer here.
+    manifest = load_manifest(CAPABILITIES / "rw-checks")
+    assert manifest["execution"]["maxResultBytes"] == "32Mi"
 
 
 def run_manifest_label(*args: str) -> subprocess.CompletedProcess:
@@ -63,7 +69,7 @@ def run_manifest_label(*args: str) -> subprocess.CompletedProcess:
     )
 
 
-@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree"])
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
 def test_manifest_label_script_round_trips_manifest_bytes(capability_dir):
     result = run_manifest_label(f"capabilities/{capability_dir}")
     assert result.returncode == 0, result.stderr
@@ -203,6 +209,10 @@ def test_manifest_label_script_schemas_deterministic():
     [
         ("rw-checks", {"schemas/findings.v1.json"}),
         (
+            "artifact-tools",
+            {"schemas/grep.v1.json", "schemas/jq.v1.json", "schemas/sql.v1.json"},
+        ),
+        (
             "rw-worktree",
             {
                 "schemas/grep.v1.json",
@@ -227,6 +237,7 @@ def test_manifest_label_script_schemas_real_manifests_produce_expected_keys(
     [
         ("Dockerfile.rw-checks", "rw-checks"),
         ("Dockerfile.rw-worktree", "rw-worktree"),
+        ("Dockerfile.artifact-tools", "artifact-tools"),
     ],
 )
 def test_dockerfile_carries_schemas_label(dockerfile, capability_dir):

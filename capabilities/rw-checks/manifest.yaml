@@ -30,6 +30,11 @@ execution:
     memoryRequest: "512Mi"
     memoryLimit: "1Gi"
   workSizeLimit: "2Gi"
+  # The largest inline result a run may return; the platform clamps it to
+  # its install maximum. Findings come back inline, and 32Mi is the findings
+  # budget MAX_FINDINGS_PER_RESULT is sized against
+  # (sdk/runwhen_capability/findings.py).
+  maxResultBytes: "32Mi"
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------
 # No `where` at this level: this is now a multi-language check set (secret

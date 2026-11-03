@@ -6,7 +6,7 @@ against (rule_id, level, rule_properties) tuples pulled straight out of each
 fixture, independent of path resolution -- these tools' captured SARIF
 carries the ORIGINAL capture machine's absolute file:// paths, which never
 resolve under any local worktree, and that is a path-normalisation concern
-(sdk/runwhen_capability/sarif.py), not a severity one.
+(runwhen_capability/sarif.py), not a severity one.
 
 severity.py itself is only BUILDERS now (from_level/by_rule_prefix/constant)
 that close over a tool module's own SEVERITY map -- the map is the

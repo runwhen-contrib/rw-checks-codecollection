@@ -100,6 +100,7 @@ setup:
 tasks:
   - name: read
     description: Read a slice of a file from the checked-out tree
+    readOnly: true
     inputs:
       tree:      { from: "${setup.tree}" }
       path:      { from: request }
@@ -112,6 +113,7 @@ tasks:
 
   - name: grep
     description: Search the checked-out tree for a pattern
+    readOnly: true
     inputs:
       tree:       { from: "${setup.tree}" }
       pattern:    { from: request }
@@ -125,6 +127,7 @@ tasks:
 
   - name: ls
     description: List a directory in the checked-out tree
+    readOnly: true
     inputs:
       tree:  { from: "${setup.tree}" }
       path:  { from: request, optional: true }
@@ -136,6 +139,7 @@ tasks:
 
   - name: query
     description: Run a batch of grep/read/ls/defs/refs operations against the checked-out tree
+    readOnly: true
     inputs:
       tree: { from: "${setup.tree}" }
       ops:  { from: request }              # JSON array of ops, answered in order

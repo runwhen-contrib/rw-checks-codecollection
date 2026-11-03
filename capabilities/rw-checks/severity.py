@@ -1,5 +1,5 @@
 """Builders for `ctx.sarif.parse`'s optional `severity` callback
-(sdk/runwhen_capability/sarif.py). SARIF's `level` means a different thing
+(runwhen_capability/sarif.py). SARIF's `level` means a different thing
 -- or nothing at all -- for every tool: ruff marks EVERY result "error"
 regardless of triviality, gitleaks' results carry no `level` key at all, and
 checkov marks all 39 of its captured results "error". Feeding any of those

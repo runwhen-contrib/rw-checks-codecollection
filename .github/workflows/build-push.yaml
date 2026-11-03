@@ -11,17 +11,17 @@ name: Build And Push
 #   sanitized-ref = github.ref_name with '/' -> '-' (e.g. "main", "feature-foo", "pr-42")
 #   cc_sha7       = first 7 chars of github.sha (this repo's commit)
 #
-# Image == capability, 1:1 (sdk/runwhen_capability/loader.py's
-# discover_capability_dir docstring): rw-checks and rw-worktree are
+# Image == capability, 1:1 (runwhen_capability/loader.py's
+# discover_capability_dir docstring, in the runwhen-capability SDK): rw-checks and rw-worktree are
 # different execution modes (stateless vs. stateful, manifest.yaml's
 # `execution.mode`) and the runner keys an executor pool per image digest,
 # so they can never be merged into one image even though they live in one
 # repo. Each capability gets its own Dockerfile (Dockerfile.rw-checks,
 # Dockerfile.rw-worktree, Dockerfile.artifact-tools) and its own published
 # image name (rw-checks-codecollection, rw-worktree-codecollection,
-# artifact-tools-codecollection); all share this workflow. The first two
-# share the vendored SDK layer; artifact-tools runs on the standalone SDK
-# (installed from its pinned v0.4.0 release tag) and has a test job of its own.
+# artifact-tools-codecollection); all share this workflow. All three install the
+# runwhen-capability SDK from the one release tag pinned in requirements-sdk.txt
+# (v0.4.0); artifact-tools has a test job of its own.
 #
 # Unlike this org's Robot codecollections, none of the images is built FROM
 # rw-base-runtime -- there is no runtime sha to embed in the tag, and no
@@ -61,7 +61,7 @@ name: Build And Push
 #                     pushed image, never a build artifact.
 #
 # `test` and `test-artifact-tools` run independently and gate `build`: the
-# SDK's own pytest/ruff suite and artifact-tools' behaviour tests are cheap
+# repo's own pytest/ruff suite and artifact-tools' behaviour tests are cheap
 # and fast, and a broken task host or task should never reach an image push.
 #
 # Build triggers:
@@ -128,8 +128,9 @@ permissions:
 
 jobs:
   # ===========================================================================
-  # test — the SDK's own suite. Independent of prepare/build so it starts
-  # immediately; `build` depends on it so a broken task host never reaches
+  # test — the repo's own suite (pytest, ruff, schema checks), run against the
+  # pinned SDK that `pip install -e ".[dev]"` pulls from requirements-sdk.txt.
+  # Independent of prepare/build so it starts immediately; `build` depends on it so a broken task host never reaches
   # an image push, for any capability.
   # ===========================================================================
   test:
@@ -219,10 +220,9 @@ jobs:
 
   # ===========================================================================
   # test-artifact-tools — the artifact-tools capability's behaviour tests. They
-  # run the real tasks against the real rg, jq and DuckDB, on the standalone
-  # capability SDK. That SDK has the same distribution name as the one
-  # vendored under sdk/ and cannot share `test`'s environment, so this job
-  # builds a venv of its own (`make artifact-tools-venv`). The tests fail, not
+  # run the real tasks against the real rg, jq and DuckDB, in the same
+  # hash-locked venv the image ships (`make artifact-tools-venv`), not in
+  # `test`'s editable dev install. The tests fail, not
   # skip, when rg or jq is missing, so the pinned binaries -- the ones the
   # image ships -- are put on PATH first. Gates `build`, like `test`.
   # ===========================================================================

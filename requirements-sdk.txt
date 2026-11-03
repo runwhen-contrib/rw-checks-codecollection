@@ -1,0 +1,12 @@
+# The runwhen-capability SDK (the `runwhen_capability` package and its `rwtask` task host)
+# for every image and test environment in this repo, pinned to its v0.4.0 release tag.
+# This is the one place the pin lives: pyproject.toml reads its dependency from this file,
+# and the Dockerfiles install it from here.
+#
+# Images install it with --no-deps; its dependencies (pydantic, PyYAML, requests, urllib3>=2,
+# jsonschema>=4.18) come hash-checked from the image's own lock file, and `pip check` fails the
+# build if that lock has drifted from what the SDK needs:
+#   rw-checks      -> requirements-tools.txt
+#   rw-worktree    -> requirements-sdk-deps.txt
+#   artifact-tools -> requirements-artifact-tools.txt
+runwhen-capability @ git+https://github.com/runwhen-contrib/runwhen-capability@v0.4.0

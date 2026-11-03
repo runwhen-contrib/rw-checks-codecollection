@@ -8,7 +8,9 @@ codebundle collection.
 
 This repository ships:
 
-- **`sdk/runwhen_capability/`** -- a small, Robot-free Python SDK. Tasks are plain Python
+- **the `runwhen_capability` SDK** -- a small, Robot-free Python SDK, from the
+  [`runwhen-capability`](https://github.com/runwhen-contrib/runwhen-capability) repo, pinned to
+  its v0.4.0 release tag in `requirements-sdk.txt`. Tasks are plain Python
   functions; the SDK owns every boundary (inputs, outputs, credentials, subprocesses, SARIF
   parsing). It also provides `rwtask`, the task host: `rwtask serve` long-polls
   a runner over plain HTTP/JSON, and `rwtask run` is the same code path against the local
@@ -89,11 +91,10 @@ needs none -- `ctx.git.checkout()` degrades to an anonymous fetch when no creden
 
 ## Running the image directly
 
-Image == capability, 1:1 (`sdk/runwhen_capability/loader.py`'s `discover_capability_dir`
+Image == capability, 1:1 (`runwhen_capability/loader.py`'s `discover_capability_dir`
 docstring): `rw-checks` and `rw-worktree` are different execution modes (stateless vs.
-stateful) and must be separate executor pools, so each gets its own Dockerfile, built from
-the same SDK layer. `artifact-tools` has a Dockerfile of its own as well, but on a different SDK
-(see below).
+stateful) and must be separate executor pools, so each gets its own Dockerfile, all three
+installing the same pinned SDK (`requirements-sdk.txt`).
 
 ```
 docker build -f Dockerfile.rw-checks -t rw-checks:dev .
@@ -112,8 +113,7 @@ docker run --rm artifact-tools:dev jq --version
 ```
 
 `artifact-tools` is four read-only tasks -- `grep`, `jq`, `sql` and `slice` -- that each run over
-one stored artifact, with no target. It runs on the standalone `runwhen_capability` SDK (the
-vendored `sdk/` has no artifact API), installed from its pinned v0.4.0 release tag into a
+one stored artifact, with no target. It installs the SDK from `requirements-sdk.txt` into a
 virtualenv in the image, with DuckDB and the SDK's dependencies hash-locked in
 `requirements-artifact-tools.txt`. Its `rg` and `jq` are pinned release binaries:
 `tools/artifact-tools.yaml` lists them, and `sbom/artifact-tools.cdx.json` records their sha256,

@@ -26,6 +26,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 from runwhen_capability.loader import load_manifest
 
 REPO_ROOT = Path(__file__).parent.parent
@@ -58,6 +59,18 @@ def test_rw_checks_declares_max_result_bytes():
     # A quantity string: the platform rejects a bare integer here.
     manifest = load_manifest(CAPABILITIES / "rw-checks")
     assert manifest["execution"]["maxResultBytes"] == "32Mi"
+
+
+@pytest.mark.parametrize("capability_dir", ["rw-checks", "rw-worktree", "artifact-tools"])
+def test_every_task_declares_read_only(capability_dir):
+    # A task that omits `readOnly` defaults to false on the platform (wiki CAP-12),
+    # so a read-only task must say so. Read from the raw file, not load_manifest's
+    # compiled view, so this checks exactly what the image ships. Every task in these
+    # capabilities is read-only: local scope writes only; osv-scanner reads api.osv.dev.
+    raw = yaml.safe_load((CAPABILITIES / capability_dir / "manifest.yaml").read_text())
+    assert raw["tasks"], "a capability with no tasks cannot be checked"
+    missing = [t["name"] for t in raw["tasks"] if t.get("readOnly") is not True]
+    assert not missing, f"tasks without `readOnly: true`: {missing}"
 
 
 def run_manifest_label(*args: str) -> subprocess.CompletedProcess:

@@ -3,7 +3,7 @@ one checked-out tree, answered in request order under one 256 KiB response
 budget.
 
 The task itself is a thin wrapper, so almost everything here exercises the
-pure `run_query(worktree, ops)` in sdk/runwhen_capability/repo_query.py; the
+pure `run_query(worktree, ops)` in runwhen_capability/repo_query.py; the
 host-level tests at the bottom prove the wiring (the task's input names and
 the TREE_NOT_MATERIALIZED -> not_materialized conversion papi retries on).
 """

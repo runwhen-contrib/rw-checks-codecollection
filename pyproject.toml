@@ -2,21 +2,18 @@
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# This repo's own dev/test environment (`pip install -e ".[dev]"`), not a published
+# package: it holds capabilities, scripts and tests, no importable code. What it installs
+# is the runwhen-capability SDK at the tag pinned in requirements-sdk.txt (the one place
+# the pin lives), plus the test tools.
 [project]
-name = "runwhen-capability"
-version = "0.1.0"
-description = "SDK and task host (rwtask) for RunWhen capability images"
+name = "rw-checks-codecollection"
+version = "0.0.0"
+description = "RunWhen capability images: rw-checks, rw-worktree, artifact-tools"
 requires-python = ">=3.12"
 readme = "README.md"
 license = { file = "LICENSE" }
-dependencies = [
-    "pydantic>=2,<3",
-    "PyYAML>=6",
-    "requests>=2.31",
-]
-
-[project.scripts]
-rwtask = "runwhen_capability.cli:main"
+dynamic = ["dependencies"]
 
 [project.optional-dependencies]
 dev = [
@@ -25,8 +22,11 @@ dev = [
     "ruff>=0.16",
 ]
 
-[tool.setuptools.packages.find]
-where = ["sdk"]
+[tool.setuptools]
+packages = []
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements-sdk.txt"] }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

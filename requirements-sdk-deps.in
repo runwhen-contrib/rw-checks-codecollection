@@ -1,0 +1,17 @@
+# The runtime dependencies of the runwhen-capability SDK (requirements-sdk.txt), for the
+# rw-worktree image, which ships nothing else from PyPI. Copied from the SDK's pyproject.toml
+# at the pinned tag; if that list changes, `pip check` in the image build fails until this one
+# catches up. (rw-checks gets the same packages from requirements-tools.txt, artifact-tools from
+# requirements-artifact-tools.txt.)
+#
+# requirements-sdk-deps.txt is GENERATED from this file. --exclude-newer keeps every resolved
+# package at least two weeks old; move the date forward to take newer releases:
+#
+#   uv pip compile requirements-sdk-deps.in --generate-hashes --universal \
+#       --python-version 3.12 --exclude-newer 2026-10-10 \
+#       --output-file requirements-sdk-deps.txt
+pydantic>=2,<3
+PyYAML>=6
+requests>=2.31
+urllib3>=2
+jsonschema>=4.18

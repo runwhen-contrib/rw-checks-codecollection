@@ -1,7 +1,7 @@
 # Python dependencies of the artifact-tools image: DuckDB, plus the runtime
 # dependencies of the capability SDK (copied from its pyproject.toml).
 #
-# The SDK is installed with --no-deps from requirements-artifact-tools-sdk.txt,
+# The SDK is installed with --no-deps from requirements-sdk.txt,
 # because a git requirement cannot be installed under --require-hashes. So its
 # dependencies are listed here, where they get pinned and hashed with everything
 # else. If the SDK's dependency list changes, `pip check` in the image build and

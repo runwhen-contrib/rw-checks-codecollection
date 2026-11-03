@@ -6,10 +6,9 @@ DuckDB. Inputs are staged where a local (relay-less) run of the standalone
 capability SDK reads them, `<scope>/.rw-artifacts/inputs/source`, and outputs
 land under `<scope>/.rw-artifacts/`.
 
-They live outside `tests/` on purpose. artifact-tools needs the standalone
-`runwhen-capability` SDK (its `ctx.artifacts` API), which is the same
-distribution name as the SDK vendored under `sdk/` and cannot share a
-virtualenv with it. `make artifact-tools-venv` builds a venv of its own and
+They live outside `tests/` on purpose. artifact-tools needs the `runwhen-capability` SDK's
+`ctx.artifacts` API and DuckDB, and runs in the same hash-locked venv the image ships rather
+than in `tests/`'s editable dev install. `make artifact-tools-venv` builds that venv and
 `make test-artifact-tools` runs this directory in it.
 """
 

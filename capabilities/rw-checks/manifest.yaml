@@ -33,7 +33,7 @@ execution:
   # The largest inline result a run may return; the platform clamps it to
   # its install maximum. Findings come back inline, and 32Mi is the findings
   # budget MAX_FINDINGS_PER_RESULT is sized against
-  # (sdk/runwhen_capability/findings.py).
+  # (runwhen_capability/findings.py).
   maxResultBytes: "32Mi"
 
 # --- which subjects this capability applies to; ANY entry matching => applies ----------
@@ -75,6 +75,7 @@ setup:
 tasks:
   - name: ruff
     description: Python lint and static analysis
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -85,6 +86,7 @@ tasks:
 
   - name: gitleaks
     description: Secret scanning
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -94,6 +96,7 @@ tasks:
   - name: osv_scanner                    # must equal the tasks.py function name: the host
                                           # looks up registry.tasks by this exact string
     description: Open-source dependency vulnerability scanning
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -102,6 +105,7 @@ tasks:
 
   - name: checkov
     description: Infrastructure-as-code static analysis
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -110,6 +114,7 @@ tasks:
 
   - name: zizmor
     description: GitHub Actions workflow security scanning
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -118,6 +123,7 @@ tasks:
 
   - name: tflint
     description: Terraform lint and static analysis
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -126,6 +132,7 @@ tasks:
 
   - name: shellcheck
     description: Shell script lint and static analysis
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -134,6 +141,7 @@ tasks:
 
   - name: hadolint
     description: Dockerfile lint and best-practice analysis
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -142,6 +150,7 @@ tasks:
 
   - name: yamllint
     description: YAML lint
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -150,6 +159,7 @@ tasks:
 
   - name: actionlint
     description: GitHub Actions workflow lint
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -158,6 +168,7 @@ tasks:
 
   - name: pylint
     description: Python lint and static analysis
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -166,6 +177,7 @@ tasks:
 
   - name: sqlfluff
     description: SQL lint
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -174,6 +186,7 @@ tasks:
 
   - name: biome
     description: JavaScript/TypeScript lint
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -183,6 +196,7 @@ tasks:
   - name: ast_grep                       # must equal the tasks.py function name: the host
                                           # looks up registry.tasks by this exact string
     description: Structural code pattern lint via ast-grep
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -191,6 +205,7 @@ tasks:
 
   - name: regal
     description: Rego (OPA policy) lint
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -199,6 +214,7 @@ tasks:
 
   - name: vale
     description: Prose style lint for documentation
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -207,6 +223,7 @@ tasks:
 
   - name: flake8
     description: Python lint and style checking
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -216,6 +233,7 @@ tasks:
   - name: dotenv_linter                  # must equal the tasks.py function name: the host
                                           # looks up registry.tasks by this exact string
     description: .env file lint
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }
@@ -224,6 +242,7 @@ tasks:
 
   - name: buf
     description: Protocol Buffers lint
+    readOnly: true
     inputs:
       tree:    { from: "${setup.tree}" }
       changed: { from: "${setup.changed}" }

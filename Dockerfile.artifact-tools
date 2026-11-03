@@ -8,7 +8,7 @@
 #
 # It ships:
 #   - the standalone runwhen_capability SDK and its rwtask task host, in a
-#     virtualenv at /opt/venv (the SDK vendored under sdk/ has no artifact API)
+#     virtualenv at /opt/venv (the SDK pinned in requirements-sdk.txt)
 #   - the artifact-tools capability's tasks (capabilities/artifact-tools/)
 #   - DuckDB (the sql task), ripgrep (grep) and jq (jq)
 # and NOTHING else: no git, no curl, no apt jq, no lint tooling.
@@ -21,7 +21,7 @@
 #     `pip --require-hashes --only-binary=:all:`, which refuses anything whose
 #     artifact hash is not listed, requires the full transitive closure to be
 #     pinned, and never builds an sdist.
-#   The SDK -> requirements-artifact-tools-sdk.txt, pinned to the SDK's v0.4.0 release
+#   The SDK -> requirements-sdk.txt, pinned to the SDK's v0.4.0 release
 #     tag, but not checked against a sha256. A git requirement cannot be installed
 #     under --require-hashes, so it goes in separately with --no-deps; its own
 #     dependencies are in the lock above, and `pip check` below fails the build
@@ -73,11 +73,11 @@ RUN mkdir -p /opt/tools/bin \
 # Python side. The virtualenv lives at the same path in the final stage, so the
 # console scripts' shebangs stay valid after the copy.
 RUN python -m venv /opt/venv
-COPY requirements-artifact-tools.txt requirements-artifact-tools-sdk.txt /build/
+COPY requirements-artifact-tools.txt requirements-sdk.txt /build/
 RUN /opt/venv/bin/pip install --no-cache-dir --require-hashes --only-binary=:all: \
         -r /build/requirements-artifact-tools.txt \
     && /opt/venv/bin/pip install --no-cache-dir --no-deps \
-        -r /build/requirements-artifact-tools-sdk.txt \
+        -r /build/requirements-sdk.txt \
     && /opt/venv/bin/pip check
 
 

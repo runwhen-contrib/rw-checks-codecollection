@@ -1,8 +1,9 @@
 .PHONY: install schemas test lint fmt fmt-check artifact-tools-venv test-artifact-tools
 
-# artifact-tools runs against the standalone capability SDK, which cannot share
-# a virtualenv with the vendored sdk/ that `make install` puts in place. Its
-# behaviour tests (tests-artifact-tools/) therefore get a venv of their own.
+# artifact-tools' behaviour tests (tests-artifact-tools/) run in a venv of their own:
+# it is built from the same hash-checked lock as the image (and so needs neither
+# the dev tools nor the other capabilities' dependencies), which `make install`'s
+# editable dev install is not.
 ARTIFACT_TOOLS_VENV ?= .venv-artifact-tools
 # The interpreter that creates that venv. It must be Python 3.12 (the image's).
 PYTHON ?= python3.12
@@ -32,7 +33,7 @@ fmt-check:
 artifact-tools-venv:
 	$(PYTHON) -m venv $(ARTIFACT_TOOLS_VENV)
 	$(ARTIFACT_TOOLS_VENV)/bin/python -m pip install --require-hashes --only-binary=:all: -r requirements-artifact-tools.txt
-	$(ARTIFACT_TOOLS_VENV)/bin/python -m pip install --no-deps -r requirements-artifact-tools-sdk.txt
+	$(ARTIFACT_TOOLS_VENV)/bin/python -m pip install --no-deps -r requirements-sdk.txt
 	$(ARTIFACT_TOOLS_VENV)/bin/python -m pip check
 	$(ARTIFACT_TOOLS_VENV)/bin/python -m pip install pytest
 

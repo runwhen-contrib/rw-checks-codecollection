@@ -439,8 +439,8 @@ def test_serve_rereads_the_token_immediately_before_posting_the_result(tmp_path,
     token_file = tmp_path / "token"
     token_file.write_text("token-old")
 
-    def rotate_after_running(capability, request, credentials, scope_dir, log=None):
-        result = real_run_request(capability, request, credentials, scope_dir, log=log)
+    def rotate_after_running(*args, **kwargs):
+        result = real_run_request(*args, **kwargs)
         # The rotation happens AFTER the request ran but BEFORE the result
         # is posted -- exactly the window _post_result must re-read across.
         token_file.write_text("token-new")
@@ -492,8 +492,8 @@ def test_serve_falls_back_to_the_polls_token_when_the_token_file_is_unreadable_a
     token_file = tmp_path / "token"
     token_file.write_text("token-old")
 
-    def remove_token_after_running(capability, request, credentials, scope_dir, log=None):
-        result = real_run_request(capability, request, credentials, scope_dir, log=log)
+    def remove_token_after_running(*args, **kwargs):
+        result = real_run_request(*args, **kwargs)
         token_file.unlink()  # transient unreadable-ness right before the POST
         return result
 
